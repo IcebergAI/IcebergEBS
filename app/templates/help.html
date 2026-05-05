@@ -1,0 +1,143 @@
+{% extends "base.html" %}
+{% block title %}Marvin — Help{% endblock %}
+{% block nav_help %}active{% endblock %}
+
+{% block content %}
+<div style="max-width:720px;min-width:0;overflow:hidden">
+  <h1 style="font-size:1rem;color:var(--gb-yellow-b);font-weight:400;margin:0 0 20px">help</h1>
+
+  <div class="card">
+    <div class="section-title">what is marvin?</div>
+    <p style="font-size:0.85rem;color:var(--gb-fg2);line-height:1.6">
+      Marvin tracks browser and editor extensions and scores them for risk. It downloads
+      the actual extension package and inspects the code, combined with store metadata,
+      to produce a 0–100 risk score.
+    </p>
+  </div>
+
+  <div class="card">
+    <div class="section-title">adding extensions</div>
+    <p style="font-size:0.85rem;color:var(--gb-fg2);margin-bottom:12px">
+      Paste either a full store URL or a bare extension ID on the
+      <a href="/extensions/add">add page</a>. The store is auto-detected from URLs.
+    </p>
+    <div style="overflow-x:auto">
+    <table>
+      <thead><tr><th>store</th><th>ID format</th><th>example</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><span class="badge badge-chrome">chrome</span></td>
+          <td style="font-size:0.8rem">32-char alphanumeric</td>
+          <td><code style="font-size:0.75rem;color:var(--gb-fg4)">cjpalhdlnbpafiamejdnhcphjbkeiagm</code></td>
+        </tr>
+        <tr>
+          <td><span class="badge badge-vscode">vscode</span></td>
+          <td style="font-size:0.8rem">publisher.extensionName</td>
+          <td><code style="font-size:0.75rem;color:var(--gb-fg4)">ms-python.python</code></td>
+        </tr>
+        <tr>
+          <td><span class="badge badge-edge">edge</span></td>
+          <td style="font-size:0.8rem">GUID-like string</td>
+          <td><code style="font-size:0.75rem;color:var(--gb-fg4)">jmjflgjpcpepeafmmgdpfkogkghcpiha</code></td>
+        </tr>
+      </tbody>
+    </table>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="section-title">risk score methodology</div>
+    <p style="font-size:0.85rem;color:var(--gb-fg2);margin-bottom:12px">
+      Each extension is scored 0–100 across six signals. Higher = riskier.
+    </p>
+    <div style="overflow-x:auto">
+    <table>
+      <thead><tr><th>signal</th><th>max</th><th>source</th><th>what it measures</th></tr></thead>
+      <tbody>
+        <tr>
+          <td>permissions</td><td>25</td><td>package</td>
+          <td style="font-size:0.78rem;color:var(--gb-fg4)">Tiered danger: critical (&lt;all_urls&gt;, debugger, nativeMessaging) → 25; high (cookies, history, tabs) → 15; medium → 7</td>
+        </tr>
+        <tr>
+          <td>popularity</td><td>20</td><td>store</td>
+          <td style="font-size:0.78rem;color:var(--gb-fg4)">&lt;100 installs → 16; &lt;1k → 8; &lt;10k → 4. Sudden drop &gt;30% → +10</td>
+        </tr>
+        <tr>
+          <td>publisher</td><td>15</td><td>store</td>
+          <td style="font-size:0.78rem;color:var(--gb-fg4)">Publisher changed between fetches → +8; unverified → +4; generic name → +3</td>
+        </tr>
+        <tr>
+          <td>staleness</td><td>15</td><td>store</td>
+          <td style="font-size:0.78rem;color:var(--gb-fg4)">3+ years old → 15; 2+ → 11; 1+ → 7; 6+ months → 4</td>
+        </tr>
+        <tr>
+          <td>code behaviour</td><td>15</td><td>package</td>
+          <td style="font-size:0.78rem;color:var(--gb-fg4)">eval() / new Function() → +8; remote fetch calls → +5; obfuscation score ≥6 → +5</td>
+        </tr>
+        <tr>
+          <td>external domains</td><td>10</td><td>package</td>
+          <td style="font-size:0.78rem;color:var(--gb-fg4)">0 unknown domains → 0; 1–2 → 3; 3–5 → 6; 6+ → 10</td>
+        </tr>
+      </tbody>
+    </table>
+    </div>
+    <div style="margin-top:12px;display:flex;gap:8px;font-size:0.78rem;flex-wrap:wrap">
+      <span><span class="badge badge-low">low</span> 0–24</span>
+      <span><span class="badge badge-medium">medium</span> 25–49</span>
+      <span><span class="badge badge-high">high</span> 50–74</span>
+      <span><span class="badge badge-critical">critical</span> 75–100</span>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="section-title">background refresh</div>
+    <p style="font-size:0.85rem;color:var(--gb-fg2);line-height:1.6">
+      Extensions on the watchlist are automatically re-fetched every
+      <code>MARVIN_FETCH_INTERVAL_MINUTES</code> minutes (default: 60). Re-scoring detects
+      publisher changes, install count drops, and new code patterns. Toggle watchlist
+      per extension on the detail page.
+    </p>
+  </div>
+
+  <div class="card">
+    <div class="section-title">configuration</div>
+    <div style="overflow-x:auto">
+    <table style="word-break:break-word">
+      <thead><tr><th>env var</th><th>default</th><th>description</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><code>MARVIN_ADMIN_USERNAME</code></td>
+          <td style="color:var(--gb-fg4)">—</td>
+          <td style="font-size:0.78rem;color:var(--gb-fg4)">required</td>
+        </tr>
+        <tr>
+          <td><code>MARVIN_ADMIN_PASSWORD</code></td>
+          <td style="color:var(--gb-fg4)">—</td>
+          <td style="font-size:0.78rem;color:var(--gb-fg4)">required</td>
+        </tr>
+        <tr>
+          <td><code>MARVIN_SECRET_KEY</code></td>
+          <td style="color:var(--gb-fg4)">—</td>
+          <td style="font-size:0.78rem;color:var(--gb-fg4)">required — generate with<br><code style="font-size:0.72rem">python -c "import secrets; print(secrets.token_hex(32))"</code></td>
+        </tr>
+        <tr>
+          <td><code>MARVIN_DATABASE_URL</code></td>
+          <td style="font-size:0.78rem;color:var(--gb-fg4);word-break:break-all">sqlite+aiosqlite:///./marvin.db</td>
+          <td style="font-size:0.78rem;color:var(--gb-fg4)"></td>
+        </tr>
+        <tr>
+          <td><code>MARVIN_SESSION_MAX_AGE</code></td>
+          <td style="color:var(--gb-fg4)">86400</td>
+          <td style="font-size:0.78rem;color:var(--gb-fg4)">session lifetime in seconds</td>
+        </tr>
+        <tr>
+          <td><code>MARVIN_FETCH_INTERVAL_MINUTES</code></td>
+          <td style="color:var(--gb-fg4)">60</td>
+          <td style="font-size:0.78rem;color:var(--gb-fg4)">background refresh cadence</td>
+        </tr>
+      </tbody>
+    </table>
+    </div>
+  </div>
+</div>
+{% endblock %}

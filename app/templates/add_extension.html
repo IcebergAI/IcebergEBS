@@ -1,0 +1,95 @@
+{% extends "base.html" %}
+{% block title %}Marvin — Add Extension{% endblock %}
+{% block nav_add %}active{% endblock %}
+
+{% block content %}
+<div style="max-width:560px">
+  <h1 style="font-size:1rem;color:var(--gb-fg4);font-weight:400;margin:0 0 20px">
+    <span style="color:var(--gb-yellow-b)">add extension</span>
+  </h1>
+
+  <div class="card" x-data="{
+    store: '',
+    extensionId: '',
+    loading: false,
+    error: '',
+    detectStore() {
+      const v = this.extensionId.trim();
+      if (v.includes('chromewebstore.google.com') || v.includes('chrome.google.com/webstore')) {
+        this.store = 'chrome';
+      } else if (v.includes('marketplace.visualstudio.com')) {
+        this.store = 'vscode';
+      } else if (v.includes('microsoftedge.microsoft.com')) {
+        this.store = 'edge';
+      }
+    },
+    async submit() {
+      this.error = '';
+      if (!this.store) { this.error = 'Select a store'; return; }
+      if (!this.extensionId.trim()) { this.error = 'Enter an extension ID or URL'; return; }
+      this.loading = true;
+      try {
+        const r = await fetch('/api/extensions', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({ store: this.store, extension_id: this.extensionId.trim() })
+        });
+        const data = await r.json();
+        if (r.ok) {
+          window.location.href = '/extensions/' + data.id;
+        } else {
+          this.error = data.detail || 'Failed to add extension';
+        }
+      } catch(e) {
+        this.error = 'Network error';
+      } finally {
+        this.loading = false;
+      }
+    }
+  }">
+
+    <div style="margin-bottom:16px">
+      <label style="display:block;font-size:0.72rem;color:var(--gb-fg4);margin-bottom:4px">EXTENSION ID OR URL</label>
+      <input
+        type="text"
+        x-model="extensionId"
+        @input.debounce.300ms="detectStore()"
+        placeholder="e.g. cjpalhdlnbpafiamejdnhcphjbkeiagm or full store URL"
+        style="font-size:0.8rem"
+      >
+    </div>
+
+    <div style="margin-bottom:20px">
+      <label style="display:block;font-size:0.72rem;color:var(--gb-fg4);margin-bottom:8px">STORE</label>
+      <div style="display:flex;gap:12px">
+        <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:0.85rem">
+          <input type="radio" x-model="store" value="chrome"> Chrome
+        </label>
+        <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:0.85rem">
+          <input type="radio" x-model="store" value="vscode"> VS Code
+        </label>
+        <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:0.85rem">
+          <input type="radio" x-model="store" value="edge"> Edge
+        </label>
+      </div>
+    </div>
+
+    <div x-show="error" style="color:var(--gb-red-b);font-size:0.8rem;margin-bottom:12px" x-text="error"></div>
+
+    <div style="display:flex;gap:8px">
+      <button class="btn btn-primary" @click="submit()" :disabled="loading">
+        <span x-show="!loading">fetch &amp; analyse</span>
+        <span x-show="loading">fetching...</span>
+      </button>
+      <a href="/" class="btn btn-ghost">cancel</a>
+    </div>
+
+    <div style="margin-top:20px;padding-top:16px;border-top:1px solid var(--gb-bg2);font-size:0.72rem;color:var(--gb-fg4)">
+      <div style="margin-bottom:6px;color:var(--gb-fg4)">ID FORMAT EXAMPLES</div>
+      <div><span class="badge badge-chrome">chrome</span> &nbsp;<code>cjpalhdlnbpafiamejdnhcphjbkeiagm</code></div>
+      <div style="margin-top:4px"><span class="badge badge-vscode">vscode</span> &nbsp;<code>ms-python.python</code></div>
+      <div style="margin-top:4px"><span class="badge badge-edge">edge</span> &nbsp;<code>jmjflgjpcpepeafmmgdpfkogkghcpiha</code></div>
+    </div>
+  </div>
+</div>
+{% endblock %}

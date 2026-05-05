@@ -1,0 +1,7 @@
+/.env
+/.env.example
+/.pytest_cache
+/marvin.db
+/marvin.db-shm
+/marvin.db-wal
+/venv

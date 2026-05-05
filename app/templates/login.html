@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Marvin — Login</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/css/app.css">
+</head>
+<body>
+<div class="login-wrap">
+  <div class="login-card">
+    <div class="login-title">[ MARVIN ]</div>
+    <div class="login-sub">paranoid about extensions</div>
+
+    {% if error %}
+    <div style="color:var(--gb-red-b);font-size:0.8rem;margin-bottom:14px;padding:6px 10px;background:var(--gb-bg);border-left:2px solid var(--gb-red)">
+      {{ error }}
+    </div>
+    {% endif %}
+
+    <form method="post" action="/login">
+      <div style="margin-bottom:12px">
+        <label style="display:block;font-size:0.72rem;color:var(--gb-fg4);margin-bottom:4px">USERNAME</label>
+        <input type="text" name="username" autocomplete="username" autofocus>
+      </div>
+      <div style="margin-bottom:20px">
+        <label style="display:block;font-size:0.72rem;color:var(--gb-fg4);margin-bottom:4px">PASSWORD</label>
+        <input type="password" name="password" autocomplete="current-password">
+      </div>
+      <button type="submit" class="btn btn-primary" style="width:100%">login</button>
+    </form>
+  </div>
+</div>
+</body>
+</html>

@@ -1,0 +1,15 @@
+fastapi
+uvicorn[standard]
+sqlmodel
+aiosqlite
+httpx
+pydantic-settings
+itsdangerous
+jinja2
+python-multipart
+beautifulsoup4
+apscheduler
+# test dependencies
+respx
+pytest
+pytest-asyncio

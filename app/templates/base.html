@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Marvin{% endblock %}</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+  <link rel="stylesheet" href="/static/css/app.css">
+</head>
+<body>
+
+{% block nav %}
+<nav>
+  <a href="/" class="nav-brand">[ MARVIN ]</a>
+  <a href="/" class="nav-link {% block nav_dashboard %}{% endblock %}">dashboard</a>
+  <a href="/extensions/add" class="nav-link {% block nav_add %}{% endblock %}">+ add</a>
+  <a href="/help" class="nav-link {% block nav_help %}{% endblock %}">help</a>
+  <span class="nav-spacer"></span>
+  <form method="post" action="/logout" style="margin:0">
+    <button type="submit" class="btn btn-ghost btn-sm">logout</button>
+  </form>
+</nav>
+{% endblock %}
+
+<div class="container">
+  {% if flash %}
+  <div class="flash">{{ flash }}</div>
+  {% endif %}
+
+  {% block content %}{% endblock %}
+</div>
+
+</body>
+</html>
