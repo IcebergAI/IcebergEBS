@@ -68,8 +68,11 @@ API-first design. All data flows through FastAPI endpoints; the UI consumes them
 - Uses the undocumented product details API discovered via browser XHR inspection:
   `GET https://microsoftedge.microsoft.com/addons/getproductdetailsbycrxid/{extension_id}?hl=en-US`
 - Response fields used: `name`, `developer` (publisher), `version`, `activeInstallCount`, `lastUpdateDate` (Unix timestamp), `description`
-- The response also includes the full `manifest` JSON string and `averageRating`/`ratingCount` (not currently used)
-- Downloads CRX from `edge.microsoft.com/extensionwebstorebase/v1/crx`
+- The response also includes the full `manifest` JSON string (with `permissions`, `host_permissions`) and `averageRating`/`ratingCount` (not currently used)
+- `fetch()` is overridden to use a two-stage package strategy:
+  1. **Guaranteed baseline**: the `manifest` string from the API response is wrapped in a minimal in-memory zip and passed to the inspector — permissions are always available
+  2. **Upgrade attempt**: the CRX download is tried (`edge.microsoft.com/extensionwebstorebase/v1/crx`) for full JS static analysis; if it succeeds, the full package replaces the baseline
+- CRX download URL format: `?x=id%3D{id}%26installsource%3Dondemand&response=redirect` — the `installsource=ondemand` parameter (URL-encoded within the `x` value) is required; other formats (`%26uc`, `installsource=webstore`) return HTTP 500
 
 ### Package inspection (`app/inspector.py`)
 - Handles both CRX (header already stripped by fetcher) and VSIX (plain zip)

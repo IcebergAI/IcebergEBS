@@ -1,8 +1,11 @@
 import io
+import logging
 import zipfile
 from datetime import datetime, timezone
 
 from app.fetchers.base import BaseFetcher, ExtensionMetadata, FetchError
+
+logger = logging.getLogger(__name__)
 
 _API_URL = (
     "https://microsoftedge.microsoft.com/addons/getproductdetailsbycrxid"
@@ -11,7 +14,7 @@ _API_URL = (
 _DETAIL_URL = "https://microsoftedge.microsoft.com/addons/detail/{extension_id}"
 _DOWNLOAD_URL = (
     "https://edge.microsoft.com/extensionwebstorebase/v1/crx"
-    "?response=redirect&x=id%3D{extension_id}%26uc"
+    "?x=id%3D{extension_id}%26installsource%3Dondemand&response=redirect"
 )
 _CRX_MAGIC = b"PK\x03\x04"
 
@@ -34,7 +37,9 @@ def _manifest_to_zip(manifest_str: str) -> bytes:
 class EdgeFetcher(BaseFetcher):
     async def fetch_metadata(self, extension_id: str) -> ExtensionMetadata:
         url = _API_URL.format(extension_id=extension_id)
+        logger.debug("Edge API request: %s", url)
         resp = await self.client.get(url, follow_redirects=True)
+        logger.debug("Edge API response: %s", resp.status_code)
         if resp.status_code == 404:
             raise FetchError(f"Extension not found: {extension_id}")
         if resp.status_code != 200:
@@ -43,7 +48,14 @@ class EdgeFetcher(BaseFetcher):
 
     async def download_package(self, extension_id: str) -> bytes:
         url = _DOWNLOAD_URL.format(extension_id=extension_id)
+        logger.debug("Edge CRX download: %s", url)
         resp = await self.client.get(url, follow_redirects=True)
+        logger.debug(
+            "Edge CRX response: %s content-type=%s size=%d",
+            resp.status_code,
+            resp.headers.get("content-type", "unknown"),
+            len(resp.content),
+        )
         if resp.status_code != 200:
             raise FetchError(f"CRX download returned {resp.status_code}")
         return _strip_crx_header(resp.content)
@@ -54,7 +66,9 @@ class EdgeFetcher(BaseFetcher):
         falls back to the manifest-only package if the download fails.
         """
         url = _API_URL.format(extension_id=extension_id)
+        logger.debug("Edge API request: %s", url)
         resp = await self.client.get(url, follow_redirects=True)
+        logger.debug("Edge API response: %s", resp.status_code)
         if resp.status_code == 404:
             raise FetchError(f"Extension not found: {extension_id}")
         if resp.status_code != 200:
@@ -62,20 +76,35 @@ class EdgeFetcher(BaseFetcher):
 
         data = resp.json()
         metadata = _parse_response(data, extension_id)
+        logger.info(
+            "Edge metadata fetched: %s v%s by %s, installs=%s",
+            metadata.name, metadata.version, metadata.publisher, metadata.install_count,
+        )
 
-        # Use the manifest embedded in the API response as a guaranteed baseline.
-        # This ensures permissions and host_permissions are always extracted even
-        # if the CRX download endpoint is unavailable.
         manifest_str = data.get("manifest", "")
-        pkg_bytes: bytes | None = _manifest_to_zip(manifest_str) if manifest_str else None
+        if manifest_str:
+            pkg_bytes: bytes | None = _manifest_to_zip(manifest_str)
+            logger.debug("Edge manifest-only package built (%d bytes)", len(pkg_bytes))
+        else:
+            pkg_bytes = None
+            logger.warning("Edge API response for %s contained no manifest field", extension_id)
 
-        # Attempt a full CRX download for deeper JS analysis (eval detection,
-        # obfuscation scoring, external domain scanning). Silently fall back to
-        # the manifest-only package on failure.
         try:
             pkg_bytes = await self.download_package(extension_id)
-        except Exception:
-            pass
+            logger.info("Edge CRX downloaded for %s (%d bytes)", extension_id, len(pkg_bytes))
+        except FetchError as exc:
+            # edge.microsoft.com/extensionwebstorebase currently returns HTTP 500 for all
+            # GET requests regardless of User-Agent or query parameters — server-side fault.
+            # Permissions are still available from the manifest embedded in the API response.
+            logger.warning(
+                "Edge CRX unavailable for %s (%s) — JS analysis skipped, using manifest-only package",
+                extension_id, exc,
+            )
+        except Exception as exc:
+            logger.warning(
+                "Edge CRX download error for %s: %s — JS analysis skipped, using manifest-only package",
+                extension_id, exc,
+            )
 
         return metadata, pkg_bytes
 
