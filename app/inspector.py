@@ -133,7 +133,7 @@ def _analyse_js(source: str, analysis: PackageAnalysis) -> None:
     for m in _URL_RE.finditer(source):
         domain = m.group(1).lower()
         # Strip www prefix for comparison
-        base_domain = domain.lstrip("www.")
+        base_domain = domain.removeprefix("www.")
         if not _is_safe_domain(base_domain):
             analysis.external_domains.append(domain)
 

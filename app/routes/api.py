@@ -1,6 +1,5 @@
 import json
-import re
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Annotated, Literal
 from urllib.parse import urlparse, parse_qs
 
@@ -13,12 +12,8 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 from app.auth import require_auth
 from app.database import get_session
 from app.fetchers.base import FetchError
-from app.fetchers.chrome import ChromeFetcher
-from app.fetchers.edge import EdgeFetcher
-from app.fetchers.vscode import VSCodeFetcher
-from app.inspector import InspectorError, PackageAnalysis, inspect_package
 from app.models import Extension, FetchLog, InstallCountHistory
-from app.scoring import RiskDetail, compute_risk_score
+from app.services import fetch_and_store
 
 router = APIRouter()
 
@@ -133,18 +128,6 @@ def normalise_extension_id(store: StoreType, raw: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Fetcher factory
-# ---------------------------------------------------------------------------
-
-def _get_fetcher(store: StoreType, client: httpx.AsyncClient):
-    if store == "chrome":
-        return ChromeFetcher(client)
-    if store == "vscode":
-        return VSCodeFetcher(client)
-    return EdgeFetcher(client)
-
-
-# ---------------------------------------------------------------------------
 # Core fetch-and-score helper (used by add + refresh)
 # ---------------------------------------------------------------------------
 
@@ -153,13 +136,11 @@ async def _fetch_and_score(
     session: AsyncSession,
     client: httpx.AsyncClient,
 ) -> Extension:
-    fetcher = _get_fetcher(ext.store, client)
     score_before = ext.risk_score
-
     try:
-        metadata, pkg_bytes = await fetcher.fetch(ext.extension_id)
+        ext = await fetch_and_store(ext, session, client)
     except FetchError as exc:
-        await session.add(FetchLog(
+        session.add(FetchLog(
             extension_id=ext.id,
             success=False,
             error_message=str(exc),
@@ -167,91 +148,6 @@ async def _fetch_and_score(
         ))
         await session.commit()
         raise HTTPException(status_code=502, detail=str(exc))
-
-    # Record install count history
-    if metadata.install_count is not None:
-        session.add(InstallCountHistory(
-            extension_id=ext.id,
-            install_count=metadata.install_count,
-        ))
-
-    # Load install history for popularity trend scoring
-    history_rows = (await session.exec(
-        select(InstallCountHistory)
-        .where(InstallCountHistory.extension_id == ext.id)
-        .order_by(InstallCountHistory.recorded_at)
-    )).all()
-    history = [r.install_count for r in history_rows]
-
-    # Run package inspection
-    analysis: PackageAnalysis | None = None
-    if pkg_bytes:
-        try:
-            analysis = inspect_package(pkg_bytes)
-        except InspectorError:
-            pass
-
-    # Permissions come from the package manifest, falling back to empty
-    permissions: list[str] = []
-    host_permissions: list[str] = []
-    if analysis:
-        permissions = analysis.permissions
-        host_permissions = analysis.host_permissions
-
-    # For stores that can't serve metadata from static HTML (Edge SPA),
-    # fill gaps from the downloaded package manifest.
-    if analysis:
-        if not metadata.version and analysis.version:
-            metadata.version = analysis.version
-        if not metadata.publisher and analysis.author:
-            metadata.publisher = analysis.author
-
-    publisher_changed = bool(ext.last_fetched_at and ext.publisher and ext.publisher != metadata.publisher)
-
-    risk = compute_risk_score(
-        permissions=permissions,
-        host_permissions=host_permissions,
-        install_count=metadata.install_count,
-        install_history=history,
-        publisher=metadata.publisher,
-        publisher_changed=publisher_changed,
-        publisher_verified=metadata.publisher_verified,
-        last_updated=metadata.last_updated,
-        analysis=analysis,
-    )
-
-    # Update extension record
-    ext.name = metadata.name
-    ext.publisher = metadata.publisher
-    ext.description = metadata.description
-    ext.version = metadata.version
-    ext.install_count = metadata.install_count
-    ext.last_updated = metadata.last_updated
-    ext.permissions = json.dumps(permissions)
-    ext.last_fetched_at = datetime.now(timezone.utc)
-    ext.risk_score = risk.total
-    ext.risk_detail = json.dumps(risk._asdict())
-    if analysis:
-        ext.package_analysis = json.dumps({
-            "permissions": analysis.permissions,
-            "host_permissions": analysis.host_permissions,
-            "external_domains": analysis.external_domains,
-            "uses_eval": analysis.uses_eval,
-            "uses_remote_code": analysis.uses_remote_code,
-            "obfuscation_score": analysis.obfuscation_score,
-            "file_count": analysis.file_count,
-            "total_size_bytes": analysis.total_size_bytes,
-            "has_minified_code": analysis.has_minified_code,
-            "manifest_version": analysis.manifest_version,
-        })
-
-    session.add(ext)
-    session.add(FetchLog(
-        extension_id=ext.id,
-        success=True,
-        risk_score_before=score_before,
-        risk_score_after=risk.total,
-    ))
     await session.commit()
     await session.refresh(ext)
     return ext

@@ -45,7 +45,7 @@ async def test_list_extensions_empty(client):
 
 
 async def test_add_extension(client):
-    with patch("app.routes.api.VSCodeFetcher") as MockFetcher:
+    with patch("app.fetchers.VSCodeFetcher") as MockFetcher:
         instance = MockFetcher.return_value
         instance.fetch = AsyncMock(return_value=(_fake_metadata(), _fake_vsix()))
 
@@ -64,7 +64,7 @@ async def test_add_extension(client):
 
 
 async def test_add_extension_duplicate(client):
-    with patch("app.routes.api.VSCodeFetcher") as MockFetcher:
+    with patch("app.fetchers.VSCodeFetcher") as MockFetcher:
         instance = MockFetcher.return_value
         instance.fetch = AsyncMock(return_value=(_fake_metadata(), _fake_vsix()))
 
@@ -81,7 +81,7 @@ async def test_add_extension_duplicate(client):
 
 
 async def test_get_extension(client):
-    with patch("app.routes.api.VSCodeFetcher") as MockFetcher:
+    with patch("app.fetchers.VSCodeFetcher") as MockFetcher:
         instance = MockFetcher.return_value
         instance.fetch = AsyncMock(return_value=(_fake_metadata(), _fake_vsix()))
         r = await client.post("/api/extensions", json={
@@ -96,7 +96,7 @@ async def test_get_extension(client):
 
 
 async def test_delete_extension(client):
-    with patch("app.routes.api.VSCodeFetcher") as MockFetcher:
+    with patch("app.fetchers.VSCodeFetcher") as MockFetcher:
         instance = MockFetcher.return_value
         instance.fetch = AsyncMock(return_value=(_fake_metadata(), _fake_vsix()))
         r = await client.post("/api/extensions", json={
@@ -114,7 +114,7 @@ async def test_delete_extension(client):
 
 
 async def test_refresh_extension(client):
-    with patch("app.routes.api.VSCodeFetcher") as MockFetcher:
+    with patch("app.fetchers.VSCodeFetcher") as MockFetcher:
         instance = MockFetcher.return_value
         instance.fetch = AsyncMock(return_value=(_fake_metadata(), _fake_vsix()))
         r = await client.post("/api/extensions", json={
@@ -123,7 +123,7 @@ async def test_refresh_extension(client):
         })
     ext_id = r.json()["id"]
 
-    with patch("app.routes.api.VSCodeFetcher") as MockFetcher2:
+    with patch("app.fetchers.VSCodeFetcher") as MockFetcher2:
         instance2 = MockFetcher2.return_value
         meta2 = _fake_metadata()
         instance2.fetch = AsyncMock(return_value=(meta2, _fake_vsix()))
@@ -134,7 +134,7 @@ async def test_refresh_extension(client):
 
 
 async def test_toggle_watchlist(client):
-    with patch("app.routes.api.VSCodeFetcher") as MockFetcher:
+    with patch("app.fetchers.VSCodeFetcher") as MockFetcher:
         instance = MockFetcher.return_value
         instance.fetch = AsyncMock(return_value=(_fake_metadata(), _fake_vsix()))
         r = await client.post("/api/extensions", json={
@@ -150,7 +150,7 @@ async def test_toggle_watchlist(client):
 
 
 async def test_get_history_empty(client):
-    with patch("app.routes.api.VSCodeFetcher") as MockFetcher:
+    with patch("app.fetchers.VSCodeFetcher") as MockFetcher:
         instance = MockFetcher.return_value
         instance.fetch = AsyncMock(return_value=(_fake_metadata(), None))
         r = await client.post("/api/extensions", json={

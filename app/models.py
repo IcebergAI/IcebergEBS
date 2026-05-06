@@ -1,7 +1,9 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 from sqlmodel import Field, SQLModel, UniqueConstraint
+
+_utcnow = lambda: datetime.now(timezone.utc)
 
 
 class Extension(SQLModel, table=True):
@@ -18,7 +20,7 @@ class Extension(SQLModel, table=True):
     last_updated: Optional[datetime] = None
     permissions: str = "[]"  # JSON-encoded list
     store_url: str
-    added_at: datetime = Field(default_factory=datetime.utcnow)
+    added_at: datetime = Field(default_factory=_utcnow)
     last_fetched_at: Optional[datetime] = None
     watchlist: bool = True
     risk_score: Optional[int] = None
@@ -29,7 +31,7 @@ class Extension(SQLModel, table=True):
 class FetchLog(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     extension_id: int = Field(foreign_key="extension.id")
-    fetched_at: datetime = Field(default_factory=datetime.utcnow)
+    fetched_at: datetime = Field(default_factory=_utcnow)
     success: bool
     error_message: Optional[str] = None
     risk_score_before: Optional[int] = None
@@ -39,5 +41,5 @@ class FetchLog(SQLModel, table=True):
 class InstallCountHistory(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     extension_id: int = Field(foreign_key="extension.id")
-    recorded_at: datetime = Field(default_factory=datetime.utcnow)
+    recorded_at: datetime = Field(default_factory=_utcnow)
     install_count: int

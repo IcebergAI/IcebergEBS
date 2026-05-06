@@ -193,69 +193,61 @@ async def test_chrome_fetch_404():
 
 
 # ---------------------------------------------------------------------------
-# Edge fetcher — Edge is a React SPA; static HTML has title + userInteractionCount only
+# Edge fetcher — uses the getproductdetailsbycrxid JSON API
 # ---------------------------------------------------------------------------
 
-# Mirrors what the real Edge Add-ons store serves for server-rendered HTML
-EDGE_HTML = """
-<html>
-<head>
-  <meta charset="utf-8">
-  <meta name="description" content="A password manager">
-  <title>Bitwarden Password Manager - Microsoft Edge Add-ons</title>
-  <meta itemprop="userInteractionCount" content="2703365" />
-</head>
-<body>
-  <div id="root"></div>
-</body>
-</html>
-"""
+EDGE_API_RESPONSE = {
+    "name": "Bitwarden Password Manager",
+    "developer": "Bitwarden Inc.",
+    "version": "2024.1.0",
+    "activeInstallCount": 2_703_365,
+    "lastUpdateDate": 1704067200.0,  # 2024-01-01 00:00:00 UTC
+    "description": "A secure password manager.",
+    "shortDescription": "Password manager",
+    "crxId": "testid",
+}
 
-# Variant where the itemprop uses mixed-case "itemProp" attribute
-EDGE_HTML_ITEMPROP_MIXED_CASE = """
-<html>
-<head>
-  <title>Test Extension - Microsoft Edge Add-ons</title>
-  <meta itemProp="userInteractionCount" content="42000" />
-</head>
-<body><div id="root"></div></body>
-</html>
-"""
+_EDGE_API_BASE = "https://microsoftedge.microsoft.com/addons/getproductdetailsbycrxid"
 
 
 @respx.mock
 async def test_edge_fetch_metadata():
-    """Name from <title>, install count from itemprop meta; publisher/version/date left empty."""
-    respx.get("https://microsoftedge.microsoft.com/addons/detail/testid").mock(
-        return_value=httpx.Response(200, text=EDGE_HTML)
+    respx.get(f"{_EDGE_API_BASE}/testid?hl=en-US").mock(
+        return_value=httpx.Response(200, json=EDGE_API_RESPONSE)
     )
     async with httpx.AsyncClient() as client:
         fetcher = EdgeFetcher(client)
         meta = await fetcher.fetch_metadata("testid")
     assert meta.name == "Bitwarden Password Manager"
+    assert meta.publisher == "Bitwarden Inc."
+    assert meta.version == "2024.1.0"
     assert meta.install_count == 2_703_365
-    assert meta.publisher == ""
-    assert meta.version == ""
-    assert meta.last_updated is None
-    assert meta.description == "A password manager"
+    assert meta.last_updated is not None
+    assert meta.last_updated.year == 2024
+    assert meta.last_updated.month == 1
+    assert meta.last_updated.day == 1
+    assert meta.description == "A secure password manager."
 
 
 @respx.mock
-async def test_edge_fetch_metadata_itemprop_mixed_case():
-    """userInteractionCount is found regardless of attribute capitalisation."""
-    respx.get("https://microsoftedge.microsoft.com/addons/detail/testid2").mock(
-        return_value=httpx.Response(200, text=EDGE_HTML_ITEMPROP_MIXED_CASE)
+async def test_edge_fetch_metadata_missing_optional_fields():
+    """API response with only required fields — optional fields default gracefully."""
+    respx.get(f"{_EDGE_API_BASE}/minimalid?hl=en-US").mock(
+        return_value=httpx.Response(200, json={"name": "Minimal Ext", "crxId": "minimalid"})
     )
     async with httpx.AsyncClient() as client:
         fetcher = EdgeFetcher(client)
-        meta = await fetcher.fetch_metadata("testid2")
-    assert meta.name == "Test Extension"
-    assert meta.install_count == 42_000
+        meta = await fetcher.fetch_metadata("minimalid")
+    assert meta.name == "Minimal Ext"
+    assert meta.publisher == ""
+    assert meta.version == ""
+    assert meta.install_count is None
+    assert meta.last_updated is None
 
 
 @respx.mock
 async def test_edge_fetch_404():
-    respx.get("https://microsoftedge.microsoft.com/addons/detail/doesnotexist").mock(
+    respx.get(f"{_EDGE_API_BASE}/doesnotexist?hl=en-US").mock(
         return_value=httpx.Response(404)
     )
     async with httpx.AsyncClient() as client:

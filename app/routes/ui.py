@@ -1,10 +1,10 @@
 import json
-from datetime import datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
+from itsdangerous import BadSignature, URLSafeTimedSerializer
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
@@ -24,15 +24,13 @@ def _get_flash(request: Request) -> str | None:
     if not raw:
         return None
     try:
-        from itsdangerous import URLSafeTimedSerializer, BadSignature
         s = URLSafeTimedSerializer(settings.secret_key)
         return s.loads(raw, max_age=10)
-    except Exception:
+    except (BadSignature, Exception):
         return None
 
 
 def _set_flash(response, message: str) -> None:
-    from itsdangerous import URLSafeTimedSerializer
     s = URLSafeTimedSerializer(settings.secret_key)
     response.set_cookie(
         key=_FLASH_COOKIE,
@@ -150,7 +148,9 @@ async def extension_detail(
 ):
     ext = await session.get(Extension, ext_id)
     if not ext:
-        return _render(request, "dashboard.html", {"error": "Extension not found", "extensions": [], "high_risk_count": 0})
+        response = RedirectResponse("/", status_code=303)
+        _set_flash(response, "Extension not found")
+        return response
 
     fetch_logs = (await session.exec(
         select(FetchLog)
