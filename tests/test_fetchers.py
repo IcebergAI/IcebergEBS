@@ -193,74 +193,72 @@ async def test_chrome_fetch_404():
 
 
 # ---------------------------------------------------------------------------
-# Edge fetcher (HTML scraping)
+# Edge fetcher — Edge is a React SPA; static HTML has title + userInteractionCount only
 # ---------------------------------------------------------------------------
 
+# Mirrors what the real Edge Add-ons store serves for server-rendered HTML
 EDGE_HTML = """
 <html>
 <head>
-  <meta name="description" content="Block ads">
-  <meta property="og:title" content="uBlock Origin">
-  <title>uBlock Origin - Microsoft Edge Addons</title>
+  <meta charset="utf-8">
+  <meta name="description" content="A password manager">
+  <title>Bitwarden Password Manager - Microsoft Edge Add-ons</title>
+  <meta itemprop="userInteractionCount" content="2703365" />
 </head>
 <body>
-<h1>Some nav heading</h1>
-<dl>
-  <dt>Offered by</dt><dd>Raymond Hill</dd>
-  <dt>Version</dt><dd>1.54.0</dd>
-  <dt>Users</dt><dd>5,000,000</dd>
-  <dt>Last updated</dt><dd>January 10, 2024</dd>
-</dl>
-</body></html>
+  <div id="root"></div>
+</body>
+</html>
 """
 
-EDGE_HTML_UPDATED_LABEL = """
+# Variant where the itemprop uses mixed-case "itemProp" attribute
+EDGE_HTML_ITEMPROP_MIXED_CASE = """
 <html>
 <head>
-  <title>Test Extension - Microsoft Edge Addons</title>
+  <title>Test Extension - Microsoft Edge Add-ons</title>
+  <meta itemProp="userInteractionCount" content="42000" />
 </head>
-<body>
-<dl>
-  <dt>Developer</dt><dd>Some Dev</dd>
-  <dt>Version</dt><dd>2.0.0</dd>
-  <dt>Users</dt><dd>1,000</dd>
-  <dt>Updated</dt><dd>01/10/2024</dd>
-</dl>
-</body></html>
+<body><div id="root"></div></body>
+</html>
 """
 
 
 @respx.mock
 async def test_edge_fetch_metadata():
+    """Name from <title>, install count from itemprop meta; publisher/version/date left empty."""
     respx.get("https://microsoftedge.microsoft.com/addons/detail/testid").mock(
         return_value=httpx.Response(200, text=EDGE_HTML)
     )
     async with httpx.AsyncClient() as client:
         fetcher = EdgeFetcher(client)
         meta = await fetcher.fetch_metadata("testid")
-    # Name should come from og:title, not the nav <h1>
-    assert meta.name == "uBlock Origin"
-    assert meta.publisher == "Raymond Hill"
-    assert meta.version == "1.54.0"
-    assert meta.install_count == 5_000_000
-    assert meta.last_updated is not None
-    assert meta.last_updated.year == 2024
-    assert meta.last_updated.month == 1
-    assert meta.last_updated.day == 10
+    assert meta.name == "Bitwarden Password Manager"
+    assert meta.install_count == 2_703_365
+    assert meta.publisher == ""
+    assert meta.version == ""
+    assert meta.last_updated is None
+    assert meta.description == "A password manager"
 
 
 @respx.mock
-async def test_edge_fetch_metadata_updated_label_and_mmddyyyy():
-    """Edge sometimes uses 'Updated' label and MM/DD/YYYY date format."""
+async def test_edge_fetch_metadata_itemprop_mixed_case():
+    """userInteractionCount is found regardless of attribute capitalisation."""
     respx.get("https://microsoftedge.microsoft.com/addons/detail/testid2").mock(
-        return_value=httpx.Response(200, text=EDGE_HTML_UPDATED_LABEL)
+        return_value=httpx.Response(200, text=EDGE_HTML_ITEMPROP_MIXED_CASE)
     )
     async with httpx.AsyncClient() as client:
         fetcher = EdgeFetcher(client)
         meta = await fetcher.fetch_metadata("testid2")
-    # Name should fall back to <title> stripping the suffix
     assert meta.name == "Test Extension"
-    assert meta.last_updated is not None
-    assert meta.last_updated.year == 2024
-    assert meta.last_updated.month == 1
-    assert meta.last_updated.day == 10
+    assert meta.install_count == 42_000
+
+
+@respx.mock
+async def test_edge_fetch_404():
+    respx.get("https://microsoftedge.microsoft.com/addons/detail/doesnotexist").mock(
+        return_value=httpx.Response(404)
+    )
+    async with httpx.AsyncClient() as client:
+        fetcher = EdgeFetcher(client)
+        with pytest.raises(FetchError):
+            await fetcher.fetch_metadata("doesnotexist")

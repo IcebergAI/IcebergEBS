@@ -198,6 +198,14 @@ async def _fetch_and_score(
         permissions = analysis.permissions
         host_permissions = analysis.host_permissions
 
+    # For stores that can't serve metadata from static HTML (Edge SPA),
+    # fill gaps from the downloaded package manifest.
+    if analysis:
+        if not metadata.version and analysis.version:
+            metadata.version = analysis.version
+        if not metadata.publisher and analysis.author:
+            metadata.publisher = analysis.author
+
     publisher_changed = bool(ext.last_fetched_at and ext.publisher and ext.publisher != metadata.publisher)
 
     risk = compute_risk_score(

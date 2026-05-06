@@ -17,6 +17,9 @@ class PackageAnalysis:
     total_size_bytes: int = 0
     has_minified_code: bool = False
     manifest_version: int = 2
+    # Fields extracted from the manifest that may fill gaps in store metadata
+    version: str = ""
+    author: str = ""  # present in some Chrome/Edge manifests as "author" field
 
 
 class InspectorError(Exception):
@@ -89,6 +92,12 @@ def _load_manifest(zf: zipfile.ZipFile) -> dict | None:
 
 def _extract_manifest_fields(manifest: dict, analysis: PackageAnalysis) -> None:
     analysis.manifest_version = manifest.get("manifest_version", 2)
+    analysis.version = str(manifest.get("version", ""))
+    # "author" may be a string or {"email": ..., "url": ...} dict
+    raw_author = manifest.get("author", "")
+    if isinstance(raw_author, dict):
+        raw_author = raw_author.get("name", "")
+    analysis.author = str(raw_author)
 
     # Chrome/Edge manifest
     permissions = manifest.get("permissions", [])

@@ -67,6 +67,12 @@ async def _refresh_one(ext: Extension, session: AsyncSession, client: httpx.Asyn
     permissions = analysis.permissions if analysis else []
     host_permissions = analysis.host_permissions if analysis else []
 
+    if analysis:
+        if not metadata.version and analysis.version:
+            metadata.version = analysis.version
+        if not metadata.publisher and analysis.author:
+            metadata.publisher = analysis.author
+
     publisher_changed = bool(
         ext.last_fetched_at and ext.publisher and ext.publisher != metadata.publisher
     )
