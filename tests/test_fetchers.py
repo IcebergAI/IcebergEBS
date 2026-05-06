@@ -196,6 +196,20 @@ async def test_chrome_fetch_404():
 # Edge fetcher — uses the getproductdetailsbycrxid JSON API
 # ---------------------------------------------------------------------------
 
+import json as _json
+import zipfile as _zipfile
+
+_EDGE_API_BASE = "https://microsoftedge.microsoft.com/addons/getproductdetailsbycrxid"
+_EDGE_CRX_BASE = "https://edge.microsoft.com/extensionwebstorebase/v1/crx"
+
+_FAKE_MANIFEST = {
+    "manifest_version": 3,
+    "name": "Bitwarden Password Manager",
+    "version": "2024.1.0",
+    "permissions": ["storage", "tabs"],
+    "host_permissions": ["https://*/*"],
+}
+
 EDGE_API_RESPONSE = {
     "name": "Bitwarden Password Manager",
     "developer": "Bitwarden Inc.",
@@ -204,10 +218,9 @@ EDGE_API_RESPONSE = {
     "lastUpdateDate": 1704067200.0,  # 2024-01-01 00:00:00 UTC
     "description": "A secure password manager.",
     "shortDescription": "Password manager",
+    "manifest": _json.dumps(_FAKE_MANIFEST),
     "crxId": "testid",
 }
-
-_EDGE_API_BASE = "https://microsoftedge.microsoft.com/addons/getproductdetailsbycrxid"
 
 
 @respx.mock
@@ -227,6 +240,45 @@ async def test_edge_fetch_metadata():
     assert meta.last_updated.month == 1
     assert meta.last_updated.day == 1
     assert meta.description == "A secure password manager."
+
+
+@respx.mock
+async def test_edge_fetch_uses_manifest_when_crx_unavailable():
+    """When the CRX download fails, permissions still come from the API manifest."""
+    respx.get(f"{_EDGE_API_BASE}/testid?hl=en-US").mock(
+        return_value=httpx.Response(200, json=EDGE_API_RESPONSE)
+    )
+    respx.get(url__regex=r".*extensionwebstorebase.*").mock(
+        return_value=httpx.Response(405)
+    )
+    async with httpx.AsyncClient() as client:
+        fetcher = EdgeFetcher(client)
+        meta, pkg_bytes = await fetcher.fetch("testid")
+
+    assert meta.name == "Bitwarden Password Manager"
+    assert pkg_bytes is not None
+    # Verify the fallback zip contains the manifest with permissions
+    with _zipfile.ZipFile(io.BytesIO(pkg_bytes)) as zf:
+        manifest = _json.loads(zf.read("manifest.json"))
+    assert manifest["permissions"] == ["storage", "tabs"]
+    assert manifest["host_permissions"] == ["https://*/*"]
+
+
+@respx.mock
+async def test_edge_fetch_upgrades_to_crx_when_available():
+    """When the CRX download succeeds, the full package is returned instead of manifest-only zip."""
+    respx.get(f"{_EDGE_API_BASE}/testid?hl=en-US").mock(
+        return_value=httpx.Response(200, json=EDGE_API_RESPONSE)
+    )
+    crx_zip = _make_zip()
+    respx.get(url__regex=r".*extensionwebstorebase.*").mock(
+        return_value=httpx.Response(200, content=crx_zip)
+    )
+    async with httpx.AsyncClient() as client:
+        fetcher = EdgeFetcher(client)
+        meta, pkg_bytes = await fetcher.fetch("testid")
+
+    assert pkg_bytes == crx_zip  # got the real package, not the manifest fallback
 
 
 @respx.mock
