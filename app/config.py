@@ -10,6 +10,7 @@ class Settings(BaseSettings):
     session_max_age: int = 86400
     fetch_interval_minutes: int = 60
     httpx_timeout: float = 15.0
+    app_base_url: str = ""  # e.g. "https://marvin.example.com" — used in webhook payloads
 
     model_config = SettingsConfigDict(env_file=".env", env_prefix="MARVIN_")
 

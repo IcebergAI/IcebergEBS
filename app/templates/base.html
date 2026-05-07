@@ -19,10 +19,27 @@
   <a href="/" class="nav-link {% block nav_dashboard %}{% endblock %}">dashboard</a>
   <a href="/extensions/add" class="nav-link {% block nav_add %}{% endblock %}">+ add</a>
   <a href="/help" class="nav-link {% block nav_help %}{% endblock %}">help</a>
+  {% if is_admin %}
+  <a href="/admin/users" class="nav-link {% block nav_admin %}{% endblock %}">admin</a>
+  {% endif %}
   <span class="nav-spacer"></span>
-  <form method="post" action="/logout" style="margin:0">
-    <button type="submit" class="btn btn-ghost btn-sm">logout</button>
-  </form>
+  {% if username %}
+  <div style="position:relative" x-data="{open:false}">
+    <button @click="open=!open" class="btn btn-ghost btn-sm" style="display:flex;align-items:center;gap:5px">
+      <span>{{ username }}</span>
+      <span style="font-size:0.55rem;opacity:0.5;line-height:1">▾</span>
+    </button>
+    <div x-show="open" @click.outside="open=false" x-cloak
+         style="position:absolute;right:0;top:calc(100% + 6px);background:var(--gb-bg1);border:1px solid var(--gb-bg3);border-radius:3px;min-width:160px;z-index:100;padding:4px 0;box-shadow:0 4px 12px rgba(0,0,0,0.4)">
+      <a href="/account" style="display:block;padding:7px 14px;font-size:0.8rem;color:var(--gb-fg4)" @click="open=false">preferences</a>
+      <a href="/account/password" style="display:block;padding:7px 14px;font-size:0.8rem;color:var(--gb-fg4)" @click="open=false">change password</a>
+      <div style="border-top:1px solid var(--gb-bg2);margin:4px 0"></div>
+      <form method="post" action="/logout" style="margin:0">
+        <button type="submit" style="display:block;width:100%;padding:7px 14px;font-size:0.8rem;color:var(--gb-fg4);background:none;border:none;cursor:pointer;text-align:left;font-family:'JetBrains Mono',monospace">logout</button>
+      </form>
+    </div>
+  </div>
+  {% endif %}
 </nav>
 {% endblock %}
 

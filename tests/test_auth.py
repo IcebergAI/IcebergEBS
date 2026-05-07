@@ -1,22 +1,35 @@
-import pytest
-from app.auth import verify_credentials, create_session_cookie, get_current_user
 from unittest.mock import MagicMock
 
+import pytest
+from sqlmodel.ext.asyncio.session import AsyncSession
 
-def test_verify_credentials_correct():
-    assert verify_credentials("testadmin", "testpass") is True
-
-
-def test_verify_credentials_wrong_password():
-    assert verify_credentials("testadmin", "wrong") is False
+from app.auth import create_session_cookie, get_current_user, verify_credentials
+from app.models import User
 
 
-def test_verify_credentials_wrong_username():
-    assert verify_credentials("notadmin", "testpass") is False
+async def test_verify_credentials_correct(test_db, admin_user):
+    async with AsyncSession(test_db) as session:
+        user = await verify_credentials("testadmin", "testpass", session)
+    assert user is not None
+    assert user.username == "testadmin"
 
 
-def test_verify_credentials_both_wrong():
-    assert verify_credentials("x", "y") is False
+async def test_verify_credentials_wrong_password(test_db, admin_user):
+    async with AsyncSession(test_db) as session:
+        result = await verify_credentials("testadmin", "wrong", session)
+    assert result is None
+
+
+async def test_verify_credentials_wrong_username(test_db, admin_user):
+    async with AsyncSession(test_db) as session:
+        result = await verify_credentials("notadmin", "testpass", session)
+    assert result is None
+
+
+async def test_verify_credentials_both_wrong(test_db, admin_user):
+    async with AsyncSession(test_db) as session:
+        result = await verify_credentials("x", "y", session)
+    assert result is None
 
 
 def test_get_current_user_valid_cookie():
@@ -45,7 +58,7 @@ async def test_login_get(anon_client):
     assert b"MARVIN" in r.content
 
 
-async def test_login_correct_credentials(anon_client):
+async def test_login_correct_credentials(anon_client, admin_user):
     r = await anon_client.post(
         "/login",
         data={"username": "testadmin", "password": "testpass"},
@@ -57,7 +70,7 @@ async def test_login_correct_credentials(anon_client):
     assert settings.session_cookie_name in r.cookies
 
 
-async def test_login_wrong_credentials(anon_client):
+async def test_login_wrong_credentials(anon_client, admin_user):
     r = await anon_client.post(
         "/login",
         data={"username": "testadmin", "password": "badpass"},

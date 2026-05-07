@@ -19,7 +19,8 @@ os.environ.setdefault("MARVIN_SECRET_KEY", "test-secret-key-for-testing-only-32c
 from app.main import app
 from app.config import settings
 from app.database import get_session
-from app.auth import create_session_cookie
+from app.auth import create_session_cookie, hash_password
+from app.models import User
 
 
 def make_fake_vsix(manifest: dict | None = None) -> bytes:
@@ -87,7 +88,22 @@ async def session(test_db):
 
 
 @pytest_asyncio.fixture
-async def client(test_db):
+async def admin_user(test_db) -> User:
+    """Insert the testadmin user into the in-memory DB."""
+    async with AsyncSession(test_db) as s:
+        user = User(
+            username="testadmin",
+            password_hash=hash_password("testpass"),
+            is_admin=True,
+        )
+        s.add(user)
+        await s.commit()
+        await s.refresh(user)
+        return user
+
+
+@pytest_asyncio.fixture
+async def client(test_db, admin_user):
     """Authenticated test client with in-memory DB."""
     async def override_session():
         async with AsyncSession(test_db) as s:

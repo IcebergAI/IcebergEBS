@@ -10,6 +10,8 @@ from app.config import settings
 from app.database import init_db
 from app.routes import api as api_routes
 from app.routes import ui as ui_routes
+from app.routes import users as users_routes
+from app.routes import alerts as alerts_routes
 from app.scheduler import create_scheduler
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
@@ -18,6 +20,9 @@ logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(messag
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await init_db()
+
+    from app.auth import seed_admin
+    await seed_admin()
 
     client = httpx.AsyncClient(
         timeout=settings.httpx_timeout,
@@ -42,6 +47,8 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 
 app.include_router(ui_routes.router)
 app.include_router(api_routes.router, prefix="/api")
+app.include_router(users_routes.router, prefix="/api")
+app.include_router(alerts_routes.router, prefix="/api")
 
 
 @app.exception_handler(303)

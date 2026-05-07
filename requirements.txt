@@ -9,6 +9,7 @@ jinja2
 python-multipart
 beautifulsoup4
 apscheduler
+bcrypt
 # test dependencies
 respx
 pytest

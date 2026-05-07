@@ -1,0 +1,137 @@
+import json
+import logging
+from dataclasses import dataclass
+from typing import Any
+
+import httpx
+from sqlalchemy import or_
+from sqlmodel import select
+from sqlmodel.ext.asyncio.session import AsyncSession
+
+from app.config import settings
+from app.models import AlertDestination, AlertLog, AlertRule, Extension
+
+logger = logging.getLogger(__name__)
+
+
+@dataclass
+class ChangeEvent:
+    event_type: str
+    old_value: Any
+    new_value: Any
+
+
+def _risk_level(score: int | None) -> str | None:
+    if score is None:
+        return None
+    if score >= 75:
+        return "critical"
+    if score >= 50:
+        return "high"
+    if score >= 25:
+        return "medium"
+    return "low"
+
+
+def detect_changes(old: Extension, new: Extension) -> list[ChangeEvent]:
+    """Compare two Extension snapshots and return triggered change events.
+
+    Returns an empty list on the first fetch (old.last_fetched_at is None)
+    since there is no prior state to compare against.
+    """
+    if old.last_fetched_at is None:
+        return []
+
+    events: list[ChangeEvent] = []
+
+    old_level = _risk_level(old.risk_score)
+    new_level = _risk_level(new.risk_score)
+    if old_level is not None and new_level is not None and old_level != new_level:
+        events.append(ChangeEvent("risk_level_change", old_level, new_level))
+
+    if old.publisher and new.publisher and old.publisher != new.publisher:
+        events.append(ChangeEvent("publisher_change", old.publisher, new.publisher))
+
+    old_perms = frozenset(json.loads(old.permissions or "[]"))
+    new_perms = frozenset(json.loads(new.permissions or "[]"))
+    if old_perms != new_perms:
+        events.append(ChangeEvent("permission_change", sorted(old_perms), sorted(new_perms)))
+
+    if old.version and new.version and old.version != new.version:
+        events.append(ChangeEvent("new_version", old.version, new.version))
+
+    return events
+
+
+async def fire_alerts(
+    events: list[ChangeEvent],
+    extension: Extension,
+    session: AsyncSession,
+    client: httpx.AsyncClient,
+) -> None:
+    """Find alert rules matching the given events and POST webhook payloads."""
+    if not events or extension.user_id is None:
+        return
+
+    event_map = {e.event_type: e for e in events}
+    event_types = list(event_map.keys())
+
+    rules = (await session.exec(
+        select(AlertRule).where(
+            AlertRule.user_id == extension.user_id,
+            AlertRule.enabled == True,  # noqa: E712
+            AlertRule.event_type.in_(event_types),
+            or_(AlertRule.extension_id == None, AlertRule.extension_id == extension.id),  # noqa: E711
+        )
+    )).all()
+
+    if not rules:
+        return
+
+    ext_payload = {
+        "id": extension.id,
+        "name": extension.name,
+        "store": extension.store,
+        "store_url": extension.store_url,
+    }
+    if settings.app_base_url:
+        ext_payload["marvin_url"] = f"{settings.app_base_url.rstrip('/')}/extensions/{extension.id}"
+
+    for rule in rules:
+        dest = await session.get(AlertDestination, rule.destination_id)
+        if not dest or not dest.enabled:
+            continue
+
+        event = event_map[rule.event_type]
+        payload = {
+            "event": event.event_type,
+            "extension": ext_payload,
+            "change": {"old": event.old_value, "new": event.new_value},
+            "risk_score": extension.risk_score,
+        }
+
+        success = True
+        error: str | None = None
+        try:
+            resp = await client.post(dest.target, json=payload, timeout=10.0)
+            resp.raise_for_status()
+            logger.info(
+                "Alert webhook fired: event=%s ext=%d dest=%d status=%d",
+                event.event_type, extension.id, dest.id, resp.status_code,
+            )
+        except Exception as exc:
+            success = False
+            error = str(exc)
+            logger.warning(
+                "Alert webhook failed: event=%s ext=%d dest=%d error=%s",
+                event.event_type, extension.id, dest.id, exc,
+            )
+
+        session.add(AlertLog(
+            rule_id=rule.id,
+            extension_id=extension.id,
+            event_type=event.event_type,
+            detail=json.dumps({"old": event.old_value, "new": event.new_value}),
+            success=success,
+            error=error,
+        ))

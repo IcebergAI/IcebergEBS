@@ -12,7 +12,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 from app.auth import require_auth
 from app.database import get_session
 from app.fetchers.base import FetchError
-from app.models import Extension, FetchLog, InstallCountHistory
+from app.models import Extension, FetchLog, InstallCountHistory, User
 from app.services import fetch_and_store
 
 router = APIRouter()
@@ -159,10 +159,14 @@ async def _fetch_and_score(
 
 @router.get("/extensions", response_model=list[ExtensionOut])
 async def list_extensions(
-    _: Annotated[str, Depends(require_auth)],
+    current_user: Annotated[User, Depends(require_auth)],
     session: Annotated[AsyncSession, Depends(get_session)],
 ):
-    rows = (await session.exec(select(Extension).order_by(Extension.added_at.desc()))).all()
+    rows = (await session.exec(
+        select(Extension)
+        .where(Extension.user_id == current_user.id)
+        .order_by(Extension.added_at.desc())
+    )).all()
     return [ExtensionOut.from_db(r) for r in rows]
 
 
@@ -170,13 +174,14 @@ async def list_extensions(
 async def add_extension(
     body: ExtensionIn,
     request: Request,
-    _: Annotated[str, Depends(require_auth)],
+    current_user: Annotated[User, Depends(require_auth)],
     session: Annotated[AsyncSession, Depends(get_session)],
 ):
     extension_id = normalise_extension_id(body.store, body.extension_id)
 
     existing = (await session.exec(
         select(Extension).where(
+            Extension.user_id == current_user.id,
             Extension.store == body.store,
             Extension.extension_id == extension_id,
         )
@@ -185,6 +190,7 @@ async def add_extension(
         raise HTTPException(status_code=409, detail="Extension already tracked")
 
     ext = Extension(
+        user_id=current_user.id,
         store=body.store,
         extension_id=extension_id,
         name=extension_id,
@@ -203,11 +209,11 @@ async def add_extension(
 @router.get("/extensions/{ext_id}", response_model=ExtensionOut)
 async def get_extension(
     ext_id: int,
-    _: Annotated[str, Depends(require_auth)],
+    current_user: Annotated[User, Depends(require_auth)],
     session: Annotated[AsyncSession, Depends(get_session)],
 ):
     ext = await session.get(Extension, ext_id)
-    if not ext:
+    if not ext or ext.user_id != current_user.id:
         raise HTTPException(status_code=404, detail="Not found")
     return ExtensionOut.from_db(ext)
 
@@ -215,11 +221,11 @@ async def get_extension(
 @router.delete("/extensions/{ext_id}")
 async def delete_extension(
     ext_id: int,
-    _: Annotated[str, Depends(require_auth)],
+    current_user: Annotated[User, Depends(require_auth)],
     session: Annotated[AsyncSession, Depends(get_session)],
 ):
     ext = await session.get(Extension, ext_id)
-    if not ext:
+    if not ext or ext.user_id != current_user.id:
         raise HTTPException(status_code=404, detail="Not found")
     await session.delete(ext)
     await session.commit()
@@ -230,11 +236,11 @@ async def delete_extension(
 async def refresh_extension(
     ext_id: int,
     request: Request,
-    _: Annotated[str, Depends(require_auth)],
+    current_user: Annotated[User, Depends(require_auth)],
     session: Annotated[AsyncSession, Depends(get_session)],
 ):
     ext = await session.get(Extension, ext_id)
-    if not ext:
+    if not ext or ext.user_id != current_user.id:
         raise HTTPException(status_code=404, detail="Not found")
     client: httpx.AsyncClient = request.app.state.http_client
     return ExtensionOut.from_db(await _fetch_and_score(ext, session, client))
@@ -244,11 +250,11 @@ async def refresh_extension(
 async def toggle_watchlist(
     ext_id: int,
     body: WatchlistPatch,
-    _: Annotated[str, Depends(require_auth)],
+    current_user: Annotated[User, Depends(require_auth)],
     session: Annotated[AsyncSession, Depends(get_session)],
 ):
     ext = await session.get(Extension, ext_id)
-    if not ext:
+    if not ext or ext.user_id != current_user.id:
         raise HTTPException(status_code=404, detail="Not found")
     ext.watchlist = body.watchlist
     session.add(ext)
@@ -260,11 +266,11 @@ async def toggle_watchlist(
 @router.get("/extensions/{ext_id}/history", response_model=list[HistoryPoint])
 async def get_history(
     ext_id: int,
-    _: Annotated[str, Depends(require_auth)],
+    current_user: Annotated[User, Depends(require_auth)],
     session: Annotated[AsyncSession, Depends(get_session)],
 ):
     ext = await session.get(Extension, ext_id)
-    if not ext:
+    if not ext or ext.user_id != current_user.id:
         raise HTTPException(status_code=404, detail="Not found")
     rows = (await session.exec(
         select(InstallCountHistory)

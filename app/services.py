@@ -10,6 +10,7 @@ from app.fetchers import get_fetcher
 from app.fetchers.base import FetchError
 from app.inspector import InspectorError, PackageAnalysis, inspect_package
 from app.models import Extension, FetchLog, InstallCountHistory
+from app.notifications import detect_changes, fire_alerts
 from app.scoring import compute_risk_score
 
 logger = logging.getLogger(__name__)
@@ -30,6 +31,9 @@ async def fetch_and_store(
     """
     fetcher = get_fetcher(ext.store, client)
     score_before = ext.risk_score
+
+    # Snapshot state before any mutations for change detection
+    old_snap = ext.model_copy()
 
     metadata, pkg_bytes = await fetcher.fetch(ext.extension_id)
 
@@ -109,4 +113,11 @@ async def fetch_and_store(
         risk_score_before=score_before,
         risk_score_after=risk.total,
     ))
+
+    try:
+        events = detect_changes(old_snap, ext)
+        await fire_alerts(events, ext, session, client)
+    except Exception as exc:
+        logger.warning("Alert processing failed for %s: %s", ext.extension_id, exc)
+
     return ext
