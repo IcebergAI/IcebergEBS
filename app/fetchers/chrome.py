@@ -51,7 +51,12 @@ def _parse_page(html: str, extension_id: str, url: str) -> ExtensionMetadata:
     name_tag = soup.find("h1")
     name = name_tag.get_text(strip=True) if name_tag else extension_id
 
-    publisher = _find_detail_value(soup, "offered by")
+    pub_tag = soup.find("a", attrs={"data-publisher-id": True})
+    if pub_tag:
+        publisher = pub_tag.get_text(strip=True)
+    else:
+        sapd = soup.find("div", class_="mdSapd")
+        publisher = next(sapd.strings, "").strip() if sapd else _find_detail_value(soup, "offered by")
 
     description = None
     desc_tag = soup.find("meta", {"name": "description"})

@@ -150,6 +150,41 @@ CHROME_HTML = """
 <html><head><meta name="description" content="Block ads"></head>
 <body>
 <h1>uBlock Origin</h1>
+<a data-publisher-id="u123abc" href="./publisher/gorhill/u123abc">gorhill</a>
+<div>
+  <div>Offered by</div>
+  <div>gorhill (fallback)</div>
+</div>
+<div>
+  <div>Updated</div>
+  <div>January 10, 2024</div>
+</div>
+<div>Version: 1.54.0</div>
+<div>10,000,000 users</div>
+</body></html>
+"""
+
+CHROME_HTML_MDSAPD = """
+<html><head><meta name="description" content="Threat intelligence"></head>
+<body>
+<h1>Recorded Future</h1>
+<div class="mdSapd">Recorded Future<br/>363 Highland Avenue
+Suite 2
+Somerville MA 02144
+USA</div>
+<div>
+  <div>Updated</div>
+  <div>January 10, 2024</div>
+</div>
+<div>Version: 1.54.0</div>
+<div>10,000,000 users</div>
+</body></html>
+"""
+
+CHROME_HTML_NO_PUBLISHER_LINK = """
+<html><head><meta name="description" content="Block ads"></head>
+<body>
+<h1>uBlock Origin</h1>
 <div>
   <div>Offered by</div>
   <div>gorhill</div>
@@ -166,6 +201,7 @@ CHROME_HTML = """
 
 @respx.mock
 async def test_chrome_fetch_metadata():
+    """Publisher comes from the data-publisher-id link, not the Offered by fallback."""
     respx.get("https://chromewebstore.google.com/detail/cjpalhdlnbpafiamejdnhcphjbkeiagm").mock(
         return_value=httpx.Response(200, text=CHROME_HTML)
     )
@@ -173,12 +209,36 @@ async def test_chrome_fetch_metadata():
         fetcher = ChromeFetcher(client)
         meta = await fetcher.fetch_metadata("cjpalhdlnbpafiamejdnhcphjbkeiagm")
     assert meta.name == "uBlock Origin"
-    assert meta.publisher == "gorhill"
+    assert meta.publisher == "gorhill"  # from data-publisher-id link, not "gorhill (fallback)"
     assert meta.install_count == 10_000_000
     assert meta.last_updated is not None
     assert meta.last_updated.year == 2024
     assert meta.last_updated.month == 1
     assert meta.last_updated.day == 10
+
+
+@respx.mock
+async def test_chrome_fetch_metadata_mdsapd_publisher():
+    """Falls back to div.mdSapd first text node when no data-publisher-id link."""
+    respx.get("https://chromewebstore.google.com/detail/cdblaggcibgbankgilackljdpdhhcine").mock(
+        return_value=httpx.Response(200, text=CHROME_HTML_MDSAPD)
+    )
+    async with httpx.AsyncClient() as client:
+        fetcher = ChromeFetcher(client)
+        meta = await fetcher.fetch_metadata("cdblaggcibgbankgilackljdpdhhcine")
+    assert meta.publisher == "Recorded Future"
+
+
+@respx.mock
+async def test_chrome_fetch_metadata_publisher_fallback():
+    """Falls back to Offered by text when neither data-publisher-id nor mdSapd present."""
+    respx.get("https://chromewebstore.google.com/detail/cjpalhdlnbpafiamejdnhcphjbkeiagm").mock(
+        return_value=httpx.Response(200, text=CHROME_HTML_NO_PUBLISHER_LINK)
+    )
+    async with httpx.AsyncClient() as client:
+        fetcher = ChromeFetcher(client)
+        meta = await fetcher.fetch_metadata("cjpalhdlnbpafiamejdnhcphjbkeiagm")
+    assert meta.publisher == "gorhill"
 
 
 @respx.mock
