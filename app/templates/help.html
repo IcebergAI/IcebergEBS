@@ -90,6 +90,55 @@
   </div>
 
   <div class="card">
+    <div class="section-title">users &amp; accounts</div>
+    <p style="font-size:0.85rem;color:var(--gb-fg2);line-height:1.6;margin-bottom:10px">
+      Marvin is multi-user. Each user has their own isolated list of monitored extensions — adding an extension for one user has no effect on another user's list.
+    </p>
+    <ul style="font-size:0.85rem;color:var(--gb-fg2);line-height:1.8;margin:0;padding-left:18px">
+      <li>Admin creates users via <a href="/admin/users">admin / users</a>. There is no self-registration.</li>
+      <li>Change your password under the username menu → change password.</li>
+      <li>Admins can delete users — all their extensions, alert rules, and webhook destinations are removed.</li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <div class="section-title">alerts &amp; webhooks</div>
+    <p style="font-size:0.85rem;color:var(--gb-fg2);line-height:1.6;margin-bottom:12px">
+      Configure webhook destinations and alert rules under <a href="/account">account / preferences</a>.
+      Marvin will POST a JSON payload to your webhook URL whenever a monitored extension changes.
+    </p>
+    <div style="overflow-x:auto;margin-bottom:12px">
+    <table>
+      <thead><tr><th>event type</th><th>triggers when</th></tr></thead>
+      <tbody>
+        <tr><td><code>risk_level_change</code></td><td style="font-size:0.8rem;color:var(--gb-fg4)">Risk band changes (low / medium / high / critical)</td></tr>
+        <tr><td><code>publisher_change</code></td><td style="font-size:0.8rem;color:var(--gb-fg4)">Publisher name differs from previous fetch</td></tr>
+        <tr><td><code>permission_change</code></td><td style="font-size:0.8rem;color:var(--gb-fg4)">Manifest permissions added or removed</td></tr>
+        <tr><td><code>new_version</code></td><td style="font-size:0.8rem;color:var(--gb-fg4)">Version string changes</td></tr>
+      </tbody>
+    </table>
+    </div>
+    <p style="font-size:0.85rem;color:var(--gb-fg2);margin-bottom:6px">Rules can be scoped to <strong>all extensions</strong> or a <strong>specific extension</strong>. Each rule can be independently enabled or disabled. Disabling a destination silences all rules that use it.</p>
+    <p style="font-size:0.82rem;color:var(--gb-fg4);margin-bottom:6px">Example webhook payload:</p>
+    <pre style="font-size:0.75rem;background:var(--gb-bg1);border:1px solid var(--gb-bg3);border-radius:3px;padding:10px;overflow-x:auto;color:var(--gb-fg2)">{
+  "event": "risk_level_change",
+  "extension": {
+    "id": 42,
+    "name": "uBlock Origin",
+    "store": "chrome",
+    "store_url": "https://chromewebstore.google.com/detail/...",
+    "marvin_url": "https://your-instance/extensions/42"
+  },
+  "change": { "old": "medium", "new": "high" },
+  "risk_score": 55
+}</pre>
+    <p style="font-size:0.82rem;color:var(--gb-fg4);margin-top:8px">
+      <code>marvin_url</code> is only included when <code>MARVIN_APP_BASE_URL</code> is set.
+      Use the <strong>test</strong> button next to each destination to send a sample payload and verify delivery.
+    </p>
+  </div>
+
+  <div class="card">
     <div class="section-title">background refresh</div>
     <p style="font-size:0.85rem;color:var(--gb-fg2);line-height:1.6">
       Extensions on the watchlist are automatically re-fetched every
@@ -134,6 +183,11 @@
           <td><code>MARVIN_FETCH_INTERVAL_MINUTES</code></td>
           <td style="color:var(--gb-fg4)">60</td>
           <td style="font-size:0.78rem;color:var(--gb-fg4)">background refresh cadence</td>
+        </tr>
+        <tr>
+          <td><code>MARVIN_APP_BASE_URL</code></td>
+          <td style="color:var(--gb-fg4)">—</td>
+          <td style="font-size:0.78rem;color:var(--gb-fg4)">public URL of your instance (e.g. <code>https://marvin.example.com</code>) — included as <code>marvin_url</code> in webhook payloads</td>
         </tr>
       </tbody>
     </table>

@@ -60,3 +60,7 @@ coverage.xml
 *.sqlite3
 *.db-wal
 *.db-shm
+
+# Skills
+.agents/
+.claude/

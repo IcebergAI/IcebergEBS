@@ -65,7 +65,13 @@
                       x-text="d.enabled ? '● enabled' : '○ disabled'">
               </button>
             </td>
-            <td>
+            <td style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+              <button class="btn btn-ghost btn-sm" @click="testDest(d)"
+                      :disabled="testStatus[d.id] && testStatus[d.id].loading">test</button>
+              <span x-show="testStatus[d.id] && testStatus[d.id].msg"
+                    :style="testStatus[d.id] && testStatus[d.id].ok ? 'color:var(--gb-green-b)' : 'color:var(--gb-red-b)'"
+                    style="font-size:0.75rem"
+                    x-text="testStatus[d.id] ? testStatus[d.id].msg : ''"></span>
               <button class="btn btn-danger btn-sm" @click="deleteDest(d.id)">delete</button>
             </td>
           </tr>
@@ -76,7 +82,7 @@
 </div>
 
 <!-- ── Alert Rules ────────────────────────────────────────── -->
-<div>
+<div style="margin-bottom:32px">
   <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
     <div class="section-title" style="margin:0;border:none;padding:0">alert rules</div>
     <button class="btn btn-primary btn-sm" @click="showAddRule=!showAddRule" :disabled="destinations.length===0"
@@ -163,6 +169,44 @@
   </template>
 </div>
 
+<!-- ── Recent Alert Activity ──────────────────────────────── -->
+<div>
+  <div class="section-title" style="margin:0 0 12px;border:none;padding:0">recent alert activity</div>
+
+  <template x-if="alertLog.length === 0">
+    <div style="color:var(--gb-fg4);font-size:0.82rem;padding:12px 0">no alerts fired yet</div>
+  </template>
+
+  <template x-if="alertLog.length > 0">
+    <table>
+      <thead>
+        <tr>
+          <th>time</th>
+          <th>event</th>
+          <th>extension</th>
+          <th>destination</th>
+          <th>status</th>
+        </tr>
+      </thead>
+      <tbody>
+        <template x-for="row in alertLog" :key="row.id">
+          <tr>
+            <td style="color:var(--gb-fg4);font-size:0.75rem;white-space:nowrap" x-text="formatTime(row.sent_at)"></td>
+            <td style="font-size:0.82rem" x-text="eventLabel(row.event_type)"></td>
+            <td style="color:var(--gb-fg4);font-size:0.82rem" x-text="row.ext_name"></td>
+            <td style="color:var(--gb-fg4);font-size:0.82rem" x-text="row.dest_label"></td>
+            <td>
+              <span x-show="row.success" style="color:var(--gb-green-b);font-size:0.8rem">✓ ok</span>
+              <span x-show="!row.success" style="color:var(--gb-red-b);font-size:0.8rem"
+                    :title="row.error">✗ failed</span>
+            </td>
+          </tr>
+        </template>
+      </tbody>
+    </table>
+  </template>
+</div>
+
 <div x-show="globalError" style="color:var(--gb-red-b);font-size:0.82rem;margin-top:16px" x-text="globalError"></div>
 
 </div>
@@ -180,11 +224,13 @@ function accountPrefs() {
     destinations: {{ destinations_json }},
     rules: {{ rules_json }},
     extensions: {{ extensions_json }},
+    alertLog: [],
 
     showAddDest: false,
     destSaving: false,
     destError: '',
     destForm: { label: '', target: '' },
+    testStatus: {},  // { [dest_id]: { loading, ok, msg } }
 
     showAddRule: false,
     ruleSaving: false,
@@ -193,13 +239,21 @@ function accountPrefs() {
 
     globalError: '',
 
-    init() {
+    async init() {
       if (this.destinations.length > 0) {
         this.ruleForm.destination_id = this.destinations[0].id;
       }
+      try {
+        const r = await fetch('/api/alerts/log');
+        if (r.ok) this.alertLog = await r.json();
+      } catch { /* non-fatal */ }
     },
 
     eventLabel(type) { return EVENT_LABELS[type] || type; },
+
+    formatTime(iso) {
+      return new Date(iso).toLocaleString(undefined, { dateStyle: 'short', timeStyle: 'short' });
+    },
 
     resetDestForm() { this.destForm = { label: '', target: '' }; this.destError = ''; },
     resetRuleForm() {
@@ -244,6 +298,22 @@ function accountPrefs() {
       });
       if (r.ok) dest.enabled = !dest.enabled;
       else this.globalError = 'Update failed';
+    },
+
+    async testDest(dest) {
+      this.testStatus[dest.id] = { loading: true, ok: false, msg: '' };
+      try {
+        const r = await fetch(`/api/alerts/destinations/${dest.id}/test`, { method: 'POST' });
+        const data = await r.json();
+        if (r.ok) {
+          this.testStatus[dest.id] = { loading: false, ok: true, msg: '✓ delivered' };
+        } else {
+          this.testStatus[dest.id] = { loading: false, ok: false, msg: '✗ ' + (data.detail || 'failed') };
+        }
+      } catch {
+        this.testStatus[dest.id] = { loading: false, ok: false, msg: '✗ network error' };
+      }
+      setTimeout(() => { this.testStatus[dest.id] = null; }, 4000);
     },
 
     async deleteDest(id) {

@@ -1,12 +1,14 @@
 from datetime import datetime
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException
+import httpx
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.auth import require_auth
+from app.config import settings
 from app.database import get_session
 from app.models import AlertDestination, AlertLog, AlertRule, Extension, User
 
@@ -231,3 +233,63 @@ async def delete_rule(
     await session.delete(rule)
     await session.commit()
     return {"ok": True}
+
+
+# ---------------------------------------------------------------------------
+# Alert log
+# ---------------------------------------------------------------------------
+
+@router.get("/alerts/log")
+async def alert_log(
+    current_user: Annotated[User, Depends(require_auth)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+    limit: int = 50,
+):
+    rows = (await session.exec(
+        select(AlertLog, AlertRule, AlertDestination, Extension)
+        .join(AlertRule, AlertLog.rule_id == AlertRule.id)  # type: ignore[arg-type]
+        .join(AlertDestination, AlertRule.destination_id == AlertDestination.id)  # type: ignore[arg-type]
+        .join(Extension, AlertLog.extension_id == Extension.id)  # type: ignore[arg-type]
+        .where(AlertRule.user_id == current_user.id)
+        .order_by(AlertLog.sent_at.desc())
+        .limit(limit)
+    )).all()
+    return [
+        {
+            "id": log.id,
+            "sent_at": log.sent_at.isoformat(),
+            "event_type": log.event_type,
+            "extension_id": log.extension_id,
+            "ext_name": ext.name or ext.extension_id,
+            "dest_label": dest.label,
+            "success": log.success,
+            "error": log.error,
+        }
+        for log, rule, dest, ext in rows
+    ]
+
+
+# ---------------------------------------------------------------------------
+# Test a webhook destination
+# ---------------------------------------------------------------------------
+
+@router.post("/alerts/destinations/{dest_id}/test")
+async def test_destination(
+    dest_id: int,
+    request: Request,
+    current_user: Annotated[User, Depends(require_auth)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+):
+    dest = await session.get(AlertDestination, dest_id)
+    if not dest or dest.user_id != current_user.id:
+        raise HTTPException(status_code=404, detail="Not found")
+    payload: dict = {"event": "test", "message": "Test alert from Marvin"}
+    if settings.app_base_url:
+        payload["marvin_url"] = settings.app_base_url
+    client: httpx.AsyncClient = request.app.state.http_client
+    try:
+        resp = await client.post(dest.target, json=payload, timeout=10.0)
+        resp.raise_for_status()
+        return {"ok": True, "status_code": resp.status_code}
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc))

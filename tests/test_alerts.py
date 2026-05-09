@@ -7,7 +7,8 @@ import pytest
 import respx
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from app.models import AlertDestination, AlertRule, Extension
+from app.main import app as fastapi_app
+from app.models import AlertDestination, AlertLog, AlertRule, Extension
 from app.notifications import ChangeEvent, detect_changes, fire_alerts
 
 
@@ -343,3 +344,101 @@ async def test_fire_alerts_extension_scoped_rule(test_db, admin_user):
             await fire_alerts(events, ext2, session, http)
 
     assert respx.calls.call_count == 0
+
+
+# ---------------------------------------------------------------------------
+# Alert log endpoint
+# ---------------------------------------------------------------------------
+
+async def test_alert_log_endpoint(client, test_db, admin_user):
+    """GET /api/alerts/log returns AlertLog rows for the current user."""
+    async with AsyncSession(test_db) as session:
+        dest = AlertDestination(user_id=admin_user.id, label="Log Hook", target="https://hooks.example.com/log", enabled=True)
+        session.add(dest)
+        await session.commit()
+        await session.refresh(dest)
+        dest_id = dest.id
+
+        ext = Extension(
+            user_id=admin_user.id, store="chrome", extension_id="log.ext",
+            name="Log Ext", publisher="Pub", version="1.0", store_url="https://example.com",
+            risk_score=30, permissions='[]',
+            last_fetched_at=datetime(2024, 1, 1, tzinfo=timezone.utc),
+        )
+        session.add(ext)
+        await session.commit()
+        await session.refresh(ext)
+        ext_id = ext.id
+
+        rule = AlertRule(
+            user_id=admin_user.id, destination_id=dest_id,
+            event_type="new_version", enabled=True,
+        )
+        session.add(rule)
+        await session.commit()
+        await session.refresh(rule)
+        rule_id = rule.id
+
+        log = AlertLog(
+            rule_id=rule_id, extension_id=ext_id,
+            event_type="new_version",
+            detail=json.dumps({"old": "1.0", "new": "2.0"}),
+            success=True,
+        )
+        session.add(log)
+        await session.commit()
+
+    r = await client.get("/api/alerts/log")
+    assert r.status_code == 200
+    rows = r.json()
+    assert len(rows) >= 1
+    row = next(x for x in rows if x["event_type"] == "new_version")
+    assert row["ext_name"] == "Log Ext"
+    assert row["dest_label"] == "Log Hook"
+    assert row["success"] is True
+
+
+# ---------------------------------------------------------------------------
+# Test webhook destination endpoint
+# ---------------------------------------------------------------------------
+
+async def test_test_destination_success(client, test_db, admin_user):
+    """POST /api/alerts/destinations/{id}/test returns ok when webhook responds 200."""
+    r_dest = await client.post("/api/alerts/destinations", json={
+        "label": "Test Dest", "target": "https://hooks.example.com/test-dest",
+    })
+    dest_id = r_dest.json()["id"]
+
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.raise_for_status = MagicMock()  # no-op
+
+    original = fastapi_app.state.http_client
+    fastapi_app.state.http_client = AsyncMock()
+    fastapi_app.state.http_client.post = AsyncMock(return_value=mock_resp)
+    try:
+        r = await client.post(f"/api/alerts/destinations/{dest_id}/test")
+        assert r.status_code == 200
+        assert r.json()["ok"] is True
+        call_args = fastapi_app.state.http_client.post.call_args
+        sent = call_args.kwargs["json"]
+        assert sent["event"] == "test"
+    finally:
+        fastapi_app.state.http_client = original
+
+
+async def test_test_destination_failure(client, test_db, admin_user):
+    """POST /api/alerts/destinations/{id}/test returns 502 when webhook fails."""
+    r_dest = await client.post("/api/alerts/destinations", json={
+        "label": "Fail Dest", "target": "https://hooks.example.com/test-dest-fail",
+    })
+    dest_id = r_dest.json()["id"]
+
+    original = fastapi_app.state.http_client
+    fastapi_app.state.http_client = AsyncMock()
+    fastapi_app.state.http_client.post = AsyncMock(side_effect=httpx.ConnectError("refused"))
+    try:
+        r = await client.post(f"/api/alerts/destinations/{dest_id}/test")
+        assert r.status_code == 502
+    finally:
+        fastapi_app.state.http_client = original
