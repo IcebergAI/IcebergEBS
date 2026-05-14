@@ -58,46 +58,7 @@
 </div>
 {% else %}
 
-<div x-data="{
-  sort: 'risk_score',
-  dir: 'desc',
-  filter: 'all',
-  extensions: {{ extensions | tojson }},
-  get filtered() {
-    if (this.filter === 'all') return this.extensions;
-    if (this.filter === 'watchlist') return this.extensions.filter(e => e.watchlist);
-    return this.extensions.filter(e => e.store === this.filter);
-  },
-  get sorted() {
-    return [...this.filtered].sort((a, b) => {
-      let va = a[this.sort], vb = b[this.sort];
-      if (va == null) va = this.dir === 'desc' ? -1 : 1e12;
-      if (vb == null) vb = this.dir === 'desc' ? -1 : 1e12;
-      if (typeof va === 'string') va = va.toLowerCase(), vb = vb.toLowerCase();
-      return (va < vb ? -1 : va > vb ? 1 : 0) * (this.dir === 'asc' ? 1 : -1);
-    });
-  },
-  setSort(col) {
-    if (this.sort === col) this.dir = this.dir === 'asc' ? 'desc' : 'asc';
-    else { this.sort = col; this.dir = 'desc'; }
-  },
-  riskLevel(score) {
-    if (score == null) return 'unknown';
-    if (score >= 75) return 'critical';
-    if (score >= 50) return 'high';
-    if (score >= 25) return 'medium';
-    return 'low';
-  },
-  scoreColor(score) {
-    return {
-      critical: 'oklch(0.60 0.18 22)',
-      high:     'oklch(0.68 0.16 50)',
-      medium:   'oklch(0.74 0.14 85)',
-      low:      'oklch(0.66 0.14 155)',
-      unknown:  'oklch(0.58 0.012 245)',
-    }[this.riskLevel(score)];
-  },
-}">
+<div x-data="dashboardData()">
 
   {# Filter bar #}
   <div class="flex items-center justify-between mb-3 flex-wrap gap-2">
@@ -164,6 +125,48 @@
 </div>
 
 <script>
+function dashboardData() {
+  return {
+    sort: 'risk_score',
+    dir: 'desc',
+    filter: 'all',
+    extensions: {{ extensions | tojson }},
+    get filtered() {
+      if (this.filter === 'all') return this.extensions;
+      if (this.filter === 'watchlist') return this.extensions.filter(e => e.watchlist);
+      return this.extensions.filter(e => e.store === this.filter);
+    },
+    get sorted() {
+      return [...this.filtered].sort((a, b) => {
+        let va = a[this.sort], vb = b[this.sort];
+        if (va == null) va = this.dir === 'desc' ? -1 : 1e12;
+        if (vb == null) vb = this.dir === 'desc' ? -1 : 1e12;
+        if (typeof va === 'string') va = va.toLowerCase(), vb = vb.toLowerCase();
+        return (va < vb ? -1 : va > vb ? 1 : 0) * (this.dir === 'asc' ? 1 : -1);
+      });
+    },
+    setSort(col) {
+      if (this.sort === col) this.dir = this.dir === 'asc' ? 'desc' : 'asc';
+      else { this.sort = col; this.dir = 'desc'; }
+    },
+    riskLevel(score) {
+      if (score == null) return 'unknown';
+      if (score >= 75) return 'critical';
+      if (score >= 50) return 'high';
+      if (score >= 25) return 'medium';
+      return 'low';
+    },
+    scoreColor(score) {
+      return {
+        critical: 'oklch(0.60 0.18 22)',
+        high:     'oklch(0.68 0.16 50)',
+        medium:   'oklch(0.74 0.14 85)',
+        low:      'oklch(0.66 0.14 155)',
+        unknown:  'oklch(0.58 0.012 245)',
+      }[this.riskLevel(score)];
+    },
+  };
+}
 function refreshExt(id) {
   fetch('/api/extensions/' + id + '/refresh', { method: 'POST' })
     .then(r => r.ok ? location.reload() : alert('Refresh failed'));
