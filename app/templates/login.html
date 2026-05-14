@@ -3,36 +3,60 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Marvin — Login</title>
+  <title>Marvin — Sign in</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <script src="https://cdn.tailwindcss.com"></script>
   <link rel="stylesheet" href="/static/css/app.css">
 </head>
-<body>
+<body class="font-sans">
+
 <div class="login-wrap">
   <div class="login-card">
-    <div class="login-title">[ MARVIN ]</div>
-    <div class="login-sub">paranoid about extensions</div>
-
-    {% if error %}
-    <div style="color:var(--gb-red-b);font-size:0.8rem;margin-bottom:14px;padding:6px 10px;background:var(--gb-bg);border-left:2px solid var(--gb-red)">
-      {{ error }}
+    <div class="flex items-center gap-2.5 mb-7 justify-center">
+      <svg width="32" height="32" viewBox="0 0 32 32" fill="none">
+        <rect x="1.5" y="1.5" width="29" height="29" rx="8" fill="white" stroke="currentColor" stroke-opacity="0.18"/>
+        <circle cx="16" cy="16" r="9" fill="oklch(0.55 0.18 265)"/>
+        <circle cx="16" cy="16" r="3.5" fill="white"/>
+        <circle cx="18.5" cy="13.5" r="1.2" fill="oklch(0.55 0.18 265)"/>
+      </svg>
+      <div>
+        <div class="text-[17px] font-semibold" style="color:var(--ink-8)">Marvin</div>
+        <div class="text-[11px]" style="color:var(--ink-5)">paranoid about extensions</div>
+      </div>
     </div>
-    {% endif %}
 
-    <form method="post" action="/login">
-      <div style="margin-bottom:12px">
-        <label style="display:block;font-size:0.72rem;color:var(--gb-fg4);margin-bottom:4px">USERNAME</label>
-        <input type="text" name="username" autocomplete="username" autofocus>
+    <div class="surface p-7">
+      <h1 class="text-[16px] font-semibold mb-1" style="color:var(--ink-8)">Sign in</h1>
+      <p class="text-[12.5px] mb-5" style="color:var(--ink-5)">Use the credentials provided by your workspace admin.</p>
+
+      {% if error %}
+      <div class="flash" style="border-left-color: var(--risk-critical); color: var(--risk-critical); margin-bottom: 14px">
+        {{ error }}
       </div>
-      <div style="margin-bottom:20px">
-        <label style="display:block;font-size:0.72rem;color:var(--gb-fg4);margin-bottom:4px">PASSWORD</label>
-        <input type="password" name="password" autocomplete="current-password">
-      </div>
-      <button type="submit" class="btn btn-primary" style="width:100%">login</button>
-    </form>
+      {% endif %}
+
+      <form method="post" action="/login" class="flex flex-col gap-3">
+        <div>
+          <label class="label-cap block mb-1.5">Username</label>
+          <input class="field" type="text" name="username" autocomplete="username" autofocus>
+        </div>
+        <div>
+          <div class="flex items-center justify-between mb-1.5">
+            <label class="label-cap">Password</label>
+          </div>
+          <input class="field" type="password" name="password" autocomplete="current-password">
+        </div>
+        <button type="submit" class="btn btn-primary w-full justify-center mt-2">Sign in</button>
+      </form>
+    </div>
+
+    <div class="text-center text-meta mt-4">
+      By signing in you agree to monitor and refresh extension data per the configured schedule.
+    </div>
   </div>
 </div>
+
 </body>
 </html>

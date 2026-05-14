@@ -1,103 +1,103 @@
 {% extends "base.html" %}
-{% block title %}Marvin — Preferences{% endblock %}
+{% block title %}Marvin — Alerts &amp; webhooks{% endblock %}
 
 {% block content %}
 <div x-data="accountPrefs()" x-init="init()">
 
-<h1 style="font-size:1rem;color:var(--gb-fg4);font-weight:400;margin:0 0 24px">
-  <span style="color:var(--gb-yellow-b)">account</span>
-  <span style="color:var(--gb-bg3);margin:0 6px">/</span>
-  <span>preferences</span>
-</h1>
+<div class="flex items-center gap-2 text-[12.5px] mb-2" style="color:var(--ink-5)">
+  <span>Account</span>
+  <span>/</span>
+  <span style="color:var(--ink-7)">Alerts &amp; webhooks</span>
+</div>
+<h1 class="page-title">Alerts &amp; webhooks</h1>
+<p class="page-sub mb-6">Send notifications to Slack, PagerDuty, or any webhook URL whenever a watched extension changes.</p>
 
-<!-- ── Alert Destinations ─────────────────────────────────── -->
-<div style="margin-bottom:32px">
-  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
-    <div class="section-title" style="margin:0;border:none;padding:0">alert destinations</div>
-    <button class="btn btn-primary btn-sm" @click="showAddDest=!showAddDest">+ add</button>
+{# ── Destinations ────────────────────────────────────────── #}
+<section class="mb-8">
+  <div class="flex items-center justify-between mb-3">
+    <h2 class="section-title" style="margin:0">Destinations</h2>
+    <button class="btn btn-primary btn-sm" @click="showAddDest=!showAddDest">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
+      New destination
+    </button>
   </div>
 
-  <!-- Add destination form -->
-  <div class="card" x-show="showAddDest" x-cloak style="max-width:480px;margin-bottom:12px">
-    <div style="display:flex;flex-direction:column;gap:10px">
+  <div class="surface p-5 mb-3" x-show="showAddDest" x-cloak style="max-width:520px">
+    <div class="flex flex-col gap-3">
       <div>
-        <label style="display:block;font-size:0.72rem;color:var(--gb-fg4);margin-bottom:3px">LABEL</label>
+        <label class="label-cap block mb-1.5">Label</label>
         <input type="text" x-model="destForm.label" placeholder="e.g. Slack #security" @keydown.enter="addDest()">
       </div>
       <div>
-        <label style="display:block;font-size:0.72rem;color:var(--gb-fg4);margin-bottom:3px">WEBHOOK URL</label>
+        <label class="label-cap block mb-1.5">Webhook URL</label>
         <input type="text" x-model="destForm.target" placeholder="https://hooks.example.com/..." @keydown.enter="addDest()">
       </div>
-      <div x-show="destError" style="color:var(--gb-red-b);font-size:0.78rem" x-text="destError"></div>
-      <div style="display:flex;gap:8px">
+      <div x-show="destError" class="text-[12.5px]" style="color:var(--risk-critical)" x-text="destError"></div>
+      <div class="flex gap-2">
         <button class="btn btn-primary btn-sm" @click="addDest()" :disabled="destSaving">
-          <span x-show="!destSaving">save</span><span x-show="destSaving">saving...</span>
+          <span x-show="!destSaving">Save</span><span x-show="destSaving">Saving…</span>
         </button>
-        <button class="btn btn-ghost btn-sm" @click="showAddDest=false;resetDestForm()">cancel</button>
+        <button class="btn btn-ghost btn-sm" @click="showAddDest=false;resetDestForm()">Cancel</button>
       </div>
     </div>
   </div>
 
   <template x-if="destinations.length === 0 && !showAddDest">
-    <div style="color:var(--gb-fg4);font-size:0.82rem;padding:12px 0">
-      no destinations configured — add a webhook URL to receive alerts
+    <div class="surface p-6 text-center text-[13px]" style="color:var(--ink-5)">
+      No destinations configured — add a webhook URL to receive alerts.
     </div>
   </template>
 
   <template x-if="destinations.length > 0">
+    <div class="surface overflow-hidden">
     <table>
-      <thead>
-        <tr>
-          <th>label</th>
-          <th>url</th>
-          <th>status</th>
-          <th>actions</th>
-        </tr>
-      </thead>
+      <thead><tr><th>Label</th><th>URL</th><th>Status</th><th></th></tr></thead>
       <tbody>
         <template x-for="d in destinations" :key="d.id">
           <tr>
-            <td style="font-weight:500" x-text="d.label"></td>
-            <td style="color:var(--gb-fg4);font-size:0.78rem;max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" x-text="d.target"></td>
+            <td class="font-medium" style="color:var(--ink-8)" x-text="d.label"></td>
+            <td class="mono text-[12px]" style="color:var(--ink-5);max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" x-text="d.target"></td>
             <td>
-              <button class="btn btn-ghost btn-sm" @click="toggleDest(d)"
-                      :style="d.enabled ? 'color:var(--gb-green-b);border-color:var(--gb-green)' : 'color:var(--gb-fg4)'"
-                      x-text="d.enabled ? '● enabled' : '○ disabled'">
-              </button>
+              <button class="badge" @click="toggleDest(d)"
+                      :style="d.enabled ? 'background:var(--risk-low-bg);color:oklch(0.32 0.10 155);border-color:color-mix(in oklch, var(--risk-low) 25%, transparent)' : 'background:var(--ink-1);color:var(--ink-5);border-color:var(--ink-3)'"
+                      x-text="d.enabled ? '● enabled' : '○ disabled'"></button>
             </td>
-            <td style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
-              <button class="btn btn-ghost btn-sm" @click="testDest(d)"
-                      :disabled="testStatus[d.id] && testStatus[d.id].loading">test</button>
-              <span x-show="testStatus[d.id] && testStatus[d.id].msg"
-                    :style="testStatus[d.id] && testStatus[d.id].ok ? 'color:var(--gb-green-b)' : 'color:var(--gb-red-b)'"
-                    style="font-size:0.75rem"
-                    x-text="testStatus[d.id] ? testStatus[d.id].msg : ''"></span>
-              <button class="btn btn-danger btn-sm" @click="deleteDest(d.id)">delete</button>
+            <td>
+              <div class="flex justify-end items-center gap-2">
+                <span x-show="testStatus[d.id] && testStatus[d.id].msg"
+                      :style="testStatus[d.id] && testStatus[d.id].ok ? 'color:var(--risk-low)' : 'color:var(--risk-critical)'"
+                      class="text-[11.5px]"
+                      x-text="testStatus[d.id] ? testStatus[d.id].msg : ''"></span>
+                <button class="btn btn-secondary btn-sm" @click="testDest(d)" :disabled="testStatus[d.id] && testStatus[d.id].loading">Test</button>
+                <button class="btn btn-danger btn-sm" @click="deleteDest(d.id)">Delete</button>
+              </div>
             </td>
           </tr>
         </template>
       </tbody>
     </table>
+    </div>
   </template>
-</div>
+</section>
 
-<!-- ── Alert Rules ────────────────────────────────────────── -->
-<div style="margin-bottom:32px">
-  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
-    <div class="section-title" style="margin:0;border:none;padding:0">alert rules</div>
-    <button class="btn btn-primary btn-sm" @click="showAddRule=!showAddRule" :disabled="destinations.length===0"
-            :title="destinations.length===0 ? 'Add a destination first' : ''">+ add</button>
+{# ── Rules ───────────────────────────────────────────────── #}
+<section class="mb-8">
+  <div class="flex items-center justify-between mb-3">
+    <h2 class="section-title" style="margin:0">Rules</h2>
+    <button class="btn btn-primary btn-sm" @click="showAddRule=!showAddRule" :disabled="destinations.length===0">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
+      New rule
+    </button>
   </div>
 
   <template x-if="destinations.length===0">
-    <div style="color:var(--gb-fg4);font-size:0.82rem;padding:4px 0 12px">add a destination before creating rules</div>
+    <div class="text-[12.5px] mb-3" style="color:var(--ink-5)">Add a destination before creating rules.</div>
   </template>
 
-  <!-- Add rule form -->
-  <div class="card" x-show="showAddRule" x-cloak style="max-width:480px;margin-bottom:12px">
-    <div style="display:flex;flex-direction:column;gap:10px">
+  <div class="surface p-5 mb-3" x-show="showAddRule" x-cloak style="max-width:520px">
+    <div class="flex flex-col gap-3">
       <div>
-        <label style="display:block;font-size:0.72rem;color:var(--gb-fg4);margin-bottom:3px">EVENT</label>
+        <label class="label-cap block mb-1.5">Event</label>
         <select x-model="ruleForm.event_type">
           <option value="risk_level_change">Risk level change</option>
           <option value="publisher_change">Publisher change</option>
@@ -106,7 +106,7 @@
         </select>
       </div>
       <div>
-        <label style="display:block;font-size:0.72rem;color:var(--gb-fg4);margin-bottom:3px">DESTINATION</label>
+        <label class="label-cap block mb-1.5">Destination</label>
         <select x-model="ruleForm.destination_id">
           <template x-for="d in destinations" :key="d.id">
             <option :value="d.id" x-text="d.label"></option>
@@ -114,100 +114,84 @@
         </select>
       </div>
       <div>
-        <label style="display:block;font-size:0.72rem;color:var(--gb-fg4);margin-bottom:3px">EXTENSION <span style="color:var(--gb-bg3)">(optional — leave blank for all)</span></label>
+        <label class="label-cap block mb-1.5">Extension <span style="text-transform:none;letter-spacing:0;font-weight:400;color:var(--ink-5)">(optional — leave blank for all)</span></label>
         <select x-model="ruleForm.extension_id">
-          <option value="">all extensions</option>
+          <option value="">All extensions</option>
           <template x-for="e in extensions" :key="e.id">
             <option :value="e.id" x-text="'[' + e.store + '] ' + e.name"></option>
           </template>
         </select>
       </div>
-      <div x-show="ruleError" style="color:var(--gb-red-b);font-size:0.78rem" x-text="ruleError"></div>
-      <div style="display:flex;gap:8px">
+      <div x-show="ruleError" class="text-[12.5px]" style="color:var(--risk-critical)" x-text="ruleError"></div>
+      <div class="flex gap-2">
         <button class="btn btn-primary btn-sm" @click="addRule()" :disabled="ruleSaving">
-          <span x-show="!ruleSaving">save</span><span x-show="ruleSaving">saving...</span>
+          <span x-show="!ruleSaving">Save</span><span x-show="ruleSaving">Saving…</span>
         </button>
-        <button class="btn btn-ghost btn-sm" @click="showAddRule=false;resetRuleForm()">cancel</button>
+        <button class="btn btn-ghost btn-sm" @click="showAddRule=false;resetRuleForm()">Cancel</button>
       </div>
     </div>
   </div>
 
   <template x-if="rules.length === 0 && !showAddRule">
-    <div style="color:var(--gb-fg4);font-size:0.82rem;padding:12px 0">no rules configured</div>
+    <div class="surface p-6 text-center text-[13px]" style="color:var(--ink-5)">
+      No rules configured.
+    </div>
   </template>
 
   <template x-if="rules.length > 0">
+    <div class="surface overflow-hidden">
     <table>
-      <thead>
-        <tr>
-          <th>event</th>
-          <th>destination</th>
-          <th>extension</th>
-          <th>status</th>
-          <th>actions</th>
-        </tr>
-      </thead>
+      <thead><tr><th>Event</th><th>Destination</th><th>Scope</th><th>Status</th><th></th></tr></thead>
       <tbody>
         <template x-for="r in rules" :key="r.id">
           <tr>
-            <td style="font-size:0.82rem" x-text="eventLabel(r.event_type)"></td>
-            <td style="color:var(--gb-fg4);font-size:0.82rem" x-text="r.dest_label"></td>
-            <td style="color:var(--gb-fg4);font-size:0.78rem" x-text="r.ext_name || '(all)'"></td>
+            <td x-text="eventLabel(r.event_type)"></td>
+            <td style="color:var(--ink-6)" x-text="r.dest_label"></td>
+            <td style="color:var(--ink-5)" x-text="r.ext_name || 'All extensions'"></td>
             <td>
-              <button class="btn btn-ghost btn-sm" @click="toggleRule(r)"
-                      :style="r.enabled ? 'color:var(--gb-green-b);border-color:var(--gb-green)' : 'color:var(--gb-fg4)'"
-                      x-text="r.enabled ? '● enabled' : '○ disabled'">
-              </button>
+              <button class="badge" @click="toggleRule(r)"
+                      :style="r.enabled ? 'background:var(--risk-low-bg);color:oklch(0.32 0.10 155);border-color:color-mix(in oklch, var(--risk-low) 25%, transparent)' : 'background:var(--ink-1);color:var(--ink-5);border-color:var(--ink-3)'"
+                      x-text="r.enabled ? '● enabled' : '○ disabled'"></button>
             </td>
-            <td>
-              <button class="btn btn-danger btn-sm" @click="deleteRule(r.id)">delete</button>
-            </td>
+            <td class="text-right"><button class="btn btn-danger btn-sm" @click="deleteRule(r.id)">Delete</button></td>
           </tr>
         </template>
       </tbody>
     </table>
+    </div>
   </template>
-</div>
+</section>
 
-<!-- ── Recent Alert Activity ──────────────────────────────── -->
-<div>
-  <div class="section-title" style="margin:0 0 12px;border:none;padding:0">recent alert activity</div>
-
+{# ── Activity ────────────────────────────────────────────── #}
+<section>
+  <h2 class="section-title">Recent activity</h2>
   <template x-if="alertLog.length === 0">
-    <div style="color:var(--gb-fg4);font-size:0.82rem;padding:12px 0">no alerts fired yet</div>
+    <div class="surface p-6 text-center text-[13px]" style="color:var(--ink-5)">No alerts fired yet.</div>
   </template>
-
   <template x-if="alertLog.length > 0">
+    <div class="surface overflow-hidden">
     <table>
-      <thead>
-        <tr>
-          <th>time</th>
-          <th>event</th>
-          <th>extension</th>
-          <th>destination</th>
-          <th>status</th>
-        </tr>
-      </thead>
+      <thead><tr><th>Time</th><th>Event</th><th>Extension</th><th>Destination</th><th>Status</th></tr></thead>
       <tbody>
         <template x-for="row in alertLog" :key="row.id">
           <tr>
-            <td style="color:var(--gb-fg4);font-size:0.75rem;white-space:nowrap" x-text="formatTime(row.sent_at)"></td>
-            <td style="font-size:0.82rem" x-text="eventLabel(row.event_type)"></td>
-            <td style="color:var(--gb-fg4);font-size:0.82rem" x-text="row.ext_name"></td>
-            <td style="color:var(--gb-fg4);font-size:0.82rem" x-text="row.dest_label"></td>
+            <td class="mono text-[12px]" style="color:var(--ink-5)" x-text="formatTime(row.sent_at)"></td>
+            <td x-text="eventLabel(row.event_type)"></td>
+            <td style="color:var(--ink-6)" x-text="row.ext_name"></td>
+            <td style="color:var(--ink-6)" x-text="row.dest_label"></td>
             <td>
-              <span x-show="row.success" style="color:var(--gb-green-b);font-size:0.8rem">✓ ok</span>
-              <span x-show="!row.success" style="color:var(--gb-red-b);font-size:0.8rem"
-                    :title="row.error">✗ failed</span>
+              <span x-show="row.success" class="badge badge-low">delivered</span>
+              <span x-show="!row.success" class="badge badge-critical" :title="row.error">failed</span>
             </td>
           </tr>
         </template>
       </tbody>
     </table>
+    </div>
   </template>
-</div>
+</section>
 
-<div x-show="globalError" style="color:var(--gb-red-b);font-size:0.82rem;margin-top:16px" x-text="globalError"></div>
+<div x-show="globalError" class="mt-3 text-[12.5px]" style="color:var(--risk-critical)" x-text="globalError"></div>
 
 </div>
 
@@ -219,161 +203,87 @@ function accountPrefs() {
     permission_change: 'Permission change',
     new_version:       'New version',
   };
-
   return {
-    destinations: {{ destinations_json }},
-    rules: {{ rules_json }},
-    extensions: {{ extensions_json }},
+    destinations: {{ destinations | tojson }},
+    rules: {{ rules | tojson }},
+    extensions: {{ extensions | tojson }},
     alertLog: [],
-
-    showAddDest: false,
-    destSaving: false,
-    destError: '',
-    destForm: { label: '', target: '' },
-    testStatus: {},  // { [dest_id]: { loading, ok, msg } }
-
-    showAddRule: false,
-    ruleSaving: false,
-    ruleError: '',
+    showAddDest: false, destSaving: false, destError: '',
+    destForm: { label: '', target: '' }, testStatus: {},
+    showAddRule: false, ruleSaving: false, ruleError: '',
     ruleForm: { event_type: 'risk_level_change', destination_id: '', extension_id: '' },
-
     globalError: '',
-
     async init() {
-      if (this.destinations.length > 0) {
-        this.ruleForm.destination_id = this.destinations[0].id;
-      }
-      try {
-        const r = await fetch('/api/alerts/log');
-        if (r.ok) this.alertLog = await r.json();
-      } catch { /* non-fatal */ }
+      if (this.destinations.length > 0) this.ruleForm.destination_id = this.destinations[0].id;
+      try { const r = await fetch('/api/alerts/log'); if (r.ok) this.alertLog = await r.json(); } catch {}
     },
-
-    eventLabel(type) { return EVENT_LABELS[type] || type; },
-
-    formatTime(iso) {
-      return new Date(iso).toLocaleString(undefined, { dateStyle: 'short', timeStyle: 'short' });
-    },
-
-    resetDestForm() { this.destForm = { label: '', target: '' }; this.destError = ''; },
+    eventLabel(t) { return EVENT_LABELS[t] || t; },
+    formatTime(iso) { return new Date(iso).toLocaleString(undefined, {dateStyle:'short', timeStyle:'short'}); },
+    resetDestForm() { this.destForm = { label:'', target:'' }; this.destError = ''; },
     resetRuleForm() {
-      this.ruleForm = {
-        event_type: 'risk_level_change',
-        destination_id: this.destinations[0]?.id ?? '',
-        extension_id: '',
-      };
+      this.ruleForm = { event_type:'risk_level_change', destination_id: this.destinations[0]?.id ?? '', extension_id:'' };
       this.ruleError = '';
     },
-
-    // ── Destinations ──────────────────────────────────
     async addDest() {
       this.destError = '';
       if (!this.destForm.label.trim()) { this.destError = 'Label is required'; return; }
       if (!this.destForm.target.trim()) { this.destError = 'Webhook URL is required'; return; }
       this.destSaving = true;
       try {
-        const r = await fetch('/api/alerts/destinations', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ label: this.destForm.label.trim(), target: this.destForm.target.trim() }),
-        });
+        const r = await fetch('/api/alerts/destinations', { method:'POST', headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({ label: this.destForm.label.trim(), target: this.destForm.target.trim() }) });
         const data = await r.json();
-        if (r.ok) {
-          this.destinations.push(data);
-          if (this.ruleForm.destination_id === '') this.ruleForm.destination_id = data.id;
-          this.showAddDest = false;
-          this.resetDestForm();
-        } else {
-          this.destError = data.detail || 'Save failed';
-        }
+        if (r.ok) { this.destinations.push(data); if (!this.ruleForm.destination_id) this.ruleForm.destination_id = data.id; this.showAddDest=false; this.resetDestForm(); }
+        else this.destError = data.detail || 'Save failed';
       } catch { this.destError = 'Network error'; }
       finally { this.destSaving = false; }
     },
-
-    async toggleDest(dest) {
-      const r = await fetch(`/api/alerts/destinations/${dest.id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ enabled: !dest.enabled }),
-      });
-      if (r.ok) dest.enabled = !dest.enabled;
-      else this.globalError = 'Update failed';
+    async toggleDest(d) {
+      const r = await fetch(`/api/alerts/destinations/${d.id}`, { method:'PATCH', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ enabled: !d.enabled }) });
+      if (r.ok) d.enabled = !d.enabled; else this.globalError = 'Update failed';
     },
-
-    async testDest(dest) {
-      this.testStatus[dest.id] = { loading: true, ok: false, msg: '' };
+    async testDest(d) {
+      this.testStatus[d.id] = { loading:true, ok:false, msg:'' };
       try {
-        const r = await fetch(`/api/alerts/destinations/${dest.id}/test`, { method: 'POST' });
+        const r = await fetch(`/api/alerts/destinations/${d.id}/test`, { method:'POST' });
         const data = await r.json();
-        if (r.ok) {
-          this.testStatus[dest.id] = { loading: false, ok: true, msg: '✓ delivered' };
-        } else {
-          this.testStatus[dest.id] = { loading: false, ok: false, msg: '✗ ' + (data.detail || 'failed') };
-        }
-      } catch {
-        this.testStatus[dest.id] = { loading: false, ok: false, msg: '✗ network error' };
-      }
-      setTimeout(() => { this.testStatus[dest.id] = null; }, 4000);
+        if (r.ok) this.testStatus[d.id] = { loading:false, ok:true, msg:'✓ delivered' };
+        else this.testStatus[d.id] = { loading:false, ok:false, msg:'✗ ' + (data.detail || 'failed') };
+      } catch { this.testStatus[d.id] = { loading:false, ok:false, msg:'✗ network error' }; }
+      setTimeout(() => { this.testStatus[d.id] = null; }, 4000);
     },
-
     async deleteDest(id) {
       if (!confirm('Delete this destination? Any rules using it will also be removed.')) return;
-      const r = await fetch(`/api/alerts/destinations/${id}`, { method: 'DELETE' });
-      if (r.ok) {
-        this.destinations = this.destinations.filter(d => d.id !== id);
-        this.rules = this.rules.filter(r => r.destination_id !== id);
-      } else this.globalError = 'Delete failed';
+      const r = await fetch(`/api/alerts/destinations/${id}`, { method:'DELETE' });
+      if (r.ok) { this.destinations = this.destinations.filter(d => d.id !== id); this.rules = this.rules.filter(r => r.destination_id !== id); }
+      else this.globalError = 'Delete failed';
     },
-
-    // ── Rules ─────────────────────────────────────────
     async addRule() {
       this.ruleError = '';
       if (!this.ruleForm.destination_id) { this.ruleError = 'Select a destination'; return; }
       this.ruleSaving = true;
       try {
-        const body = {
-          event_type: this.ruleForm.event_type,
-          destination_id: Number(this.ruleForm.destination_id),
-        };
+        const body = { event_type: this.ruleForm.event_type, destination_id: Number(this.ruleForm.destination_id) };
         if (this.ruleForm.extension_id) body.extension_id = Number(this.ruleForm.extension_id);
-        const r = await fetch('/api/alerts/rules', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(body),
-        });
+        const r = await fetch('/api/alerts/rules', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
         const data = await r.json();
         if (r.ok) {
           const dest = this.destinations.find(d => d.id === data.destination_id);
           const ext = this.extensions.find(e => e.id === data.extension_id);
-          this.rules.push({
-            ...data,
-            dest_label: dest?.label ?? '—',
-            ext_name: ext?.name ?? null,
-          });
-          this.showAddRule = false;
-          this.resetRuleForm();
-        } else {
-          this.ruleError = data.detail || 'Save failed';
-        }
+          this.rules.push({ ...data, dest_label: dest?.label ?? '—', ext_name: ext?.name ?? null });
+          this.showAddRule = false; this.resetRuleForm();
+        } else this.ruleError = data.detail || 'Save failed';
       } catch { this.ruleError = 'Network error'; }
       finally { this.ruleSaving = false; }
     },
-
-    async toggleRule(rule) {
-      const r = await fetch(`/api/alerts/rules/${rule.id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ enabled: !rule.enabled }),
-      });
-      if (r.ok) rule.enabled = !rule.enabled;
-      else this.globalError = 'Update failed';
+    async toggleRule(r) {
+      const res = await fetch(`/api/alerts/rules/${r.id}`, { method:'PATCH', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ enabled: !r.enabled }) });
+      if (res.ok) r.enabled = !r.enabled; else this.globalError = 'Update failed';
     },
-
     async deleteRule(id) {
       if (!confirm('Delete this alert rule?')) return;
-      const r = await fetch(`/api/alerts/rules/${id}`, { method: 'DELETE' });
-      if (r.ok) this.rules = this.rules.filter(r => r.id !== id);
-      else this.globalError = 'Delete failed';
+      const r = await fetch(`/api/alerts/rules/${id}`, { method:'DELETE' });
+      if (r.ok) this.rules = this.rules.filter(r => r.id !== id); else this.globalError = 'Delete failed';
     },
   };
 }

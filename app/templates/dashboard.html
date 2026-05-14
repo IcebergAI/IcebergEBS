@@ -3,40 +3,78 @@
 {% block nav_dashboard %}active{% endblock %}
 
 {% block content %}
-<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
-  <h1 style="font-size:1rem;color:var(--gb-fg4);font-weight:400;margin:0">
-    <span style="color:var(--gb-yellow-b)">extensions</span>
-    <span style="color:var(--gb-bg3);margin:0 6px">/</span>
-    <span>tracked: <strong style="color:var(--gb-fg)">{{ extensions_count }}</strong></span>
-    {% if high_risk_count > 0 %}
-    <span style="color:var(--gb-bg3);margin:0 6px">|</span>
-    <span style="color:var(--gb-red-b)">high risk: <strong>{{ high_risk_count }}</strong></span>
-    {% endif %}
-  </h1>
-  <a href="/extensions/add" class="btn btn-primary">+ add extension</a>
+<div class="flex items-end justify-between mb-5 flex-wrap gap-3">
+  <div>
+    <h1 class="page-title">Extensions</h1>
+    <p class="page-sub">All extensions tracked for this workspace, scored on every refresh.</p>
+  </div>
+  <div class="flex items-center gap-2">
+    <a href="/extensions/add" class="btn btn-primary btn-sm">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
+      Add extension
+    </a>
+  </div>
+</div>
+
+{# ── Stat tiles ─────────────────────────────────────────── #}
+<div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
+  <div class="surface p-4">
+    <div class="label-cap">Tracked</div>
+    <div class="flex items-baseline gap-2 mt-2">
+      <div class="text-[26px] font-semibold tabular-nums" style="color:var(--ink-8);letter-spacing:-0.01em">{{ extensions_count }}</div>
+      <div class="text-[11.5px]" style="color:var(--ink-5)">extensions</div>
+    </div>
+  </div>
+  <div class="surface p-4">
+    <div class="label-cap">High &amp; critical</div>
+    <div class="flex items-baseline gap-2 mt-2">
+      <div class="text-[26px] font-semibold tabular-nums"
+           style="color:{% if high_risk_count > 0 %}var(--risk-critical){% else %}var(--ink-8){% endif %};letter-spacing:-0.01em">{{ high_risk_count }}</div>
+      <div class="text-[11.5px]" style="color:var(--ink-5)">need review</div>
+    </div>
+  </div>
+  <div class="surface p-4">
+    <div class="label-cap">Watchlist</div>
+    <div class="flex items-baseline gap-2 mt-2">
+      <div class="text-[26px] font-semibold tabular-nums" style="color:var(--ink-8);letter-spacing:-0.01em">{{ watchlist_count|default(extensions_count) }}</div>
+      <div class="text-[11.5px]" style="color:var(--ink-5)">auto-refreshed</div>
+    </div>
+  </div>
+  <div class="surface p-4">
+    <div class="label-cap">Last refresh</div>
+    <div class="mt-2">
+      <div class="text-[13px]" style="color:var(--ink-8)">{{ last_refresh_label|default('—') }}</div>
+      <div class="text-[11.5px]" style="color:var(--ink-5)">{{ next_refresh_label|default('next: scheduled') }}</div>
+    </div>
+  </div>
 </div>
 
 {% if extensions_count == 0 %}
-<div class="card" style="text-align:center;padding:40px;color:var(--gb-fg4)">
-  <div style="font-size:1.5rem;margin-bottom:8px">( . )</div>
-  <div>no extensions tracked yet</div>
-  <div style="margin-top:12px"><a href="/extensions/add" class="btn btn-primary">add your first extension</a></div>
+<div class="surface p-12 text-center">
+  <svg class="mx-auto mb-3" width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="color:var(--ink-5)"><path d="M12 3l8 4v5c0 5-3.5 8-8 9-4.5-1-8-4-8-9V7l8-4z"/></svg>
+  <div class="text-[15px] font-medium mb-1" style="color:var(--ink-8)">No extensions tracked yet</div>
+  <div class="text-[13px] mb-4" style="color:var(--ink-5)">Add one to start collecting metadata and risk scores.</div>
+  <a href="/extensions/add" class="btn btn-primary">Add your first extension</a>
 </div>
 {% else %}
 
 <div x-data="{
-  sort: 'risk',
+  sort: 'risk_score',
   dir: 'desc',
-  extensions: {{ extensions_json }},
+  filter: 'all',
+  extensions: {{ extensions | tojson }},
+  get filtered() {
+    if (this.filter === 'all') return this.extensions;
+    if (this.filter === 'watchlist') return this.extensions.filter(e => e.watchlist);
+    return this.extensions.filter(e => e.store === this.filter);
+  },
   get sorted() {
-    return [...this.extensions].sort((a, b) => {
+    return [...this.filtered].sort((a, b) => {
       let va = a[this.sort], vb = b[this.sort];
-      if (va === null || va === undefined) va = this.dir === 'desc' ? -1 : 999999;
-      if (vb === null || vb === undefined) vb = this.dir === 'desc' ? -1 : 999999;
+      if (va == null) va = this.dir === 'desc' ? -1 : 1e12;
+      if (vb == null) vb = this.dir === 'desc' ? -1 : 1e12;
       if (typeof va === 'string') va = va.toLowerCase(), vb = vb.toLowerCase();
-      if (va < vb) return this.dir === 'asc' ? -1 : 1;
-      if (va > vb) return this.dir === 'asc' ? 1 : -1;
-      return 0;
+      return (va < vb ? -1 : va > vb ? 1 : 0) * (this.dir === 'asc' ? 1 : -1);
     });
   },
   setSort(col) {
@@ -44,80 +82,85 @@
     else { this.sort = col; this.dir = 'desc'; }
   },
   riskLevel(score) {
-    if (score === null || score === undefined) return 'unknown';
+    if (score == null) return 'unknown';
     if (score >= 75) return 'critical';
     if (score >= 50) return 'high';
     if (score >= 25) return 'medium';
     return 'low';
   },
   scoreColor(score) {
-    const l = this.riskLevel(score);
-    return { critical: '#fb4934', high: '#fe8019', medium: '#fabd2f', low: '#b8bb26', unknown: '#928374' }[l];
+    return {
+      critical: 'oklch(0.60 0.18 22)',
+      high:     'oklch(0.68 0.16 50)',
+      medium:   'oklch(0.74 0.14 85)',
+      low:      'oklch(0.66 0.14 155)',
+      unknown:  'oklch(0.58 0.012 245)',
+    }[this.riskLevel(score)];
   },
-  storeClass(store) {
-    return { chrome: 'badge-chrome', vscode: 'badge-vscode', edge: 'badge-edge' }[store] || '';
-  }
 }">
 
-<div style="overflow-x:auto">
-<table>
-  <thead>
-    <tr>
-      <th @click="setSort('name')" style="cursor:pointer">
-        name <span x-show="sort==='name'" x-text="dir==='asc'?'↑':'↓'"></span>
-      </th>
-      <th>store</th>
-      <th @click="setSort('risk_score')" style="cursor:pointer">
-        risk <span x-show="sort==='risk_score'" x-text="dir==='asc'?'↑':'↓'"></span>
-      </th>
-      <th @click="setSort('publisher')" style="cursor:pointer">
-        publisher <span x-show="sort==='publisher'" x-text="dir==='asc'?'↑':'↓'"></span>
-      </th>
-      <th @click="setSort('install_count')" style="cursor:pointer">
-        installs <span x-show="sort==='install_count'" x-text="dir==='asc'?'↑':'↓'"></span>
-      </th>
-      <th @click="setSort('last_updated')" style="cursor:pointer">
-        updated <span x-show="sort==='last_updated'" x-text="dir==='asc'?'↑':'↓'"></span>
-      </th>
-      <th>actions</th>
-    </tr>
-  </thead>
-  <tbody>
-    <template x-for="ext in sorted" :key="ext.id">
-      <tr>
-        <td>
-          <a :href="'/extensions/' + ext.id" style="color:var(--gb-fg2);font-weight:500" x-text="ext.name || ext.extension_id"></a>
-          <div style="font-size:0.7rem;color:var(--gb-fg4)" x-text="ext.extension_id"></div>
-        </td>
-        <td>
-          <span class="badge" :class="storeClass(ext.store)" x-text="ext.store"></span>
-        </td>
-        <td>
-          <div style="display:flex;align-items:center;gap:8px">
-            <span style="font-weight:700;min-width:28px" :style="'color:' + scoreColor(ext.risk_score)" x-text="ext.risk_score !== null ? ext.risk_score : '—'"></span>
-            <div style="flex:1;min-width:60px">
-              <div class="score-bar-track">
-                <div class="score-bar-fill" :style="'width:' + (ext.risk_score || 0) + '%;background:' + scoreColor(ext.risk_score)"></div>
-              </div>
-            </div>
-            <span class="badge" :class="'badge-' + riskLevel(ext.risk_score)" x-text="riskLevel(ext.risk_score)"></span>
-          </div>
-        </td>
-        <td style="color:var(--gb-fg4);font-size:0.8rem" x-text="ext.publisher || '—'"></td>
-        <td style="color:var(--gb-fg4);font-size:0.8rem" x-text="ext.install_count !== null ? ext.install_count.toLocaleString() : '—'"></td>
-        <td style="color:var(--gb-fg4);font-size:0.8rem" x-text="ext.last_updated ? new Date(ext.last_updated).toLocaleDateString() : '—'"></td>
-        <td>
-          <div style="display:flex;gap:4px">
-            <a :href="'/extensions/' + ext.id" class="btn btn-ghost btn-sm">view</a>
-            <button class="btn btn-ghost btn-sm" @click="refreshExt(ext.id)">↺</button>
-          </div>
-        </td>
-      </tr>
-    </template>
-  </tbody>
-</table>
-</div>
+  {# Filter bar #}
+  <div class="flex items-center justify-between mb-3 flex-wrap gap-2">
+    <div class="flex items-center gap-1.5">
+      <button class="badge badge-store" :style="filter==='all' ? 'background:var(--ink-8);color:white;border-color:var(--ink-8)' : ''" @click="filter='all'">All</button>
+      <button class="badge badge-store badge-chrome" :style="filter==='chrome' ? 'background:var(--ink-8);color:white;border-color:var(--ink-8)' : ''" @click="filter='chrome'"><span class="dot"></span>chrome</button>
+      <button class="badge badge-store badge-vscode" :style="filter==='vscode' ? 'background:var(--ink-8);color:white;border-color:var(--ink-8)' : ''" @click="filter='vscode'"><span class="dot"></span>vscode</button>
+      <button class="badge badge-store badge-edge" :style="filter==='edge' ? 'background:var(--ink-8);color:white;border-color:var(--ink-8)' : ''" @click="filter='edge'"><span class="dot"></span>edge</button>
+      <div class="w-px h-4 mx-1.5" style="background:var(--ink-3)"></div>
+      <button class="badge badge-store" :style="filter==='watchlist' ? 'background:var(--ink-8);color:white;border-color:var(--ink-8)' : ''" @click="filter='watchlist'">watchlist only</button>
+    </div>
+    <div class="text-meta" x-text="`Showing ${sorted.length} of ${extensions.length}`"></div>
+  </div>
 
+  <div class="surface overflow-hidden">
+    <table>
+      <thead>
+        <tr>
+          <th class="sortable" @click="setSort('name')">Extension <span x-show="sort==='name'" x-text="dir==='asc'?'↑':'↓'"></span></th>
+          <th>Store</th>
+          <th class="sortable" @click="setSort('risk_score')">Risk score <span x-show="sort==='risk_score'" x-text="dir==='asc'?'↑':'↓'"></span></th>
+          <th class="sortable" @click="setSort('publisher')">Publisher <span x-show="sort==='publisher'" x-text="dir==='asc'?'↑':'↓'"></span></th>
+          <th class="sortable text-right" @click="setSort('install_count')">Installs <span x-show="sort==='install_count'" x-text="dir==='asc'?'↑':'↓'"></span></th>
+          <th class="sortable" @click="setSort('last_updated')">Updated <span x-show="sort==='last_updated'" x-text="dir==='asc'?'↑':'↓'"></span></th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        <template x-for="ext in sorted" :key="ext.id">
+          <tr style="cursor:pointer" @click="window.location='/extensions/' + ext.id">
+            <td>
+              <div class="font-medium" style="color:var(--ink-8)" x-text="ext.name || ext.extension_id"></div>
+              <div class="mono text-[11.5px] mt-0.5" style="color:var(--ink-5)" x-text="ext.extension_id"></div>
+            </td>
+            <td>
+              <span class="badge badge-store" :class="'badge-' + ext.store">
+                <span class="dot"></span><span x-text="ext.store"></span>
+              </span>
+            </td>
+            <td>
+              <div class="flex items-center gap-3" style="min-width:200px">
+                <div class="mono text-[14px] font-semibold tabular-nums" :style="'color:' + scoreColor(ext.risk_score) + ';min-width:24px'" x-text="ext.risk_score ?? '—'"></div>
+                <div class="score-bar-track flex-1">
+                  <div class="score-bar-fill" :style="'width:' + (ext.risk_score || 0) + '%;background:' + scoreColor(ext.risk_score)"></div>
+                </div>
+                <span class="badge" :class="'badge-' + riskLevel(ext.risk_score)" x-text="riskLevel(ext.risk_score)"></span>
+              </div>
+            </td>
+            <td style="color:var(--ink-7)" x-text="ext.publisher || '—'"></td>
+            <td class="text-right mono tabular-nums" style="color:var(--ink-6)" x-text="ext.install_count != null ? ext.install_count.toLocaleString() : '—'"></td>
+            <td style="color:var(--ink-6)" x-text="ext.last_updated ? new Date(ext.last_updated).toLocaleDateString() : '—'"></td>
+            <td>
+              <div class="flex justify-end gap-1" @click.stop>
+                <button class="btn btn-ghost btn-sm" title="Refresh" @click="refreshExt(ext.id)">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 15-6.7L21 8"/><path d="M21 3v5h-5"/></svg>
+                </button>
+              </div>
+            </td>
+          </tr>
+        </template>
+      </tbody>
+    </table>
+  </div>
 </div>
 
 <script>

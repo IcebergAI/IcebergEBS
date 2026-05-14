@@ -10,121 +10,185 @@
   {% else %}{% set risk_level = 'low' %}{% endif %}
 {% endif %}
 
-<!-- Header -->
-<div style="margin-bottom:20px">
-  <div style="display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:12px">
-    <div>
-      <h1 style="font-size:1.1rem;font-weight:700;margin:0 0 4px;color:var(--gb-fg)">{{ ext.name }}</h1>
-      <div style="font-size:0.78rem;color:var(--gb-fg4)">
-        <span class="badge badge-{{ ext.store }}">{{ ext.store }}</span>
-        &nbsp;
-        <code style="color:var(--gb-fg4)">{{ ext.extension_id }}</code>
-        &nbsp;·&nbsp; v{{ ext.version }}
-        &nbsp;·&nbsp; <a href="{{ ext.store_url }}" target="_blank" rel="noopener noreferrer" style="color:var(--gb-blue-b)">store page ↗</a>
+{# Map risk_level → stroke colour for the gauge #}
+{% set gauge_color =
+    'oklch(0.60 0.18 22)' if risk_level == 'critical' else
+    'oklch(0.68 0.16 50)' if risk_level == 'high' else
+    'oklch(0.74 0.14 85)' if risk_level == 'medium' else
+    'oklch(0.66 0.14 155)' %}
+
+{# Breadcrumb + actions #}
+<div class="flex items-center justify-between mb-4 flex-wrap gap-2">
+  <div class="flex items-center gap-2 text-[12.5px]" style="color:var(--ink-5)">
+    <a href="/">Extensions</a>
+    <span>/</span>
+    <span style="color:var(--ink-7)">{{ ext.name }}</span>
+  </div>
+  <div class="flex items-center gap-2">
+    <button class="btn btn-secondary btn-sm" onclick="refreshNow({{ ext.id }})">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 15-6.7L21 8"/><path d="M21 3v5h-5"/></svg>
+      Refresh now
+    </button>
+    <a href="{{ ext.store_url }}" target="_blank" rel="noopener noreferrer" class="btn btn-secondary btn-sm">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 4h6v6"/><path d="M10 14L21 3"/><path d="M21 14v5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5"/></svg>
+      Store page
+    </a>
+    <button class="btn btn-danger btn-sm" onclick="deleteExt({{ ext.id }})">Delete</button>
+  </div>
+</div>
+
+{# Header card #}
+<div class="surface p-6 mb-4">
+  <div class="flex gap-6 flex-wrap">
+    {# Gauge #}
+    <div class="gauge" style="flex:none">
+      {% if ext.risk_score is not none %}
+      <svg width="130" height="130" viewBox="0 0 130 130">
+        <circle cx="65" cy="65" r="56" class="track" stroke-width="10" fill="none"/>
+        <circle cx="65" cy="65" r="56" stroke="{{ gauge_color }}" stroke-width="10" fill="none"
+                stroke-linecap="round" stroke-dasharray="351.86"
+                stroke-dashoffset="{{ (351.86 * (100 - ext.risk_score) / 100)|round(2) }}"/>
+      </svg>
+      <div class="absolute inset-0 flex flex-col items-center justify-center">
+        <div class="num mono">{{ ext.risk_score }}</div>
+        <span class="badge badge-{{ risk_level }}">{{ risk_level }}</span>
       </div>
+      {% else %}
+      <svg width="130" height="130" viewBox="0 0 130 130">
+        <circle cx="65" cy="65" r="56" class="track" stroke-width="10" fill="none"/>
+      </svg>
+      <div class="absolute inset-0 flex flex-col items-center justify-center">
+        <div class="num mono" style="color:var(--ink-5)">—</div>
+        <div class="text-[11px]" style="color:var(--ink-5)">not scored</div>
+      </div>
+      {% endif %}
     </div>
-    <div style="display:flex;gap:8px;flex-wrap:wrap">
-      <button class="btn btn-ghost btn-sm" onclick="refreshNow({{ ext.id }})">↺ refresh</button>
-      <button class="btn btn-danger btn-sm" onclick="deleteExt({{ ext.id }})">delete</button>
-      <a href="/" class="btn btn-ghost btn-sm">← back</a>
+
+    <div class="flex-1 min-w-0">
+      <div class="flex items-center gap-2 flex-wrap">
+        <h1 class="text-[22px] font-semibold tracking-tight" style="color:var(--ink-8)">{{ ext.name }}</h1>
+        <span class="badge badge-store badge-{{ ext.store }}"><span class="dot"></span>{{ ext.store }}</span>
+        <span class="mono text-[11.5px] px-2 py-0.5 rounded" style="background:var(--ink-1);color:var(--ink-6);border:1px solid var(--ink-3)">v{{ ext.version }}</span>
+        <span class="mono text-[11.5px]" style="color:var(--ink-5)">{{ ext.extension_id }}</span>
+      </div>
+      {% if ext.description %}
+      <p class="text-[13.5px] leading-relaxed mt-2 max-w-2xl" style="color:var(--ink-6)">{{ ext.description }}</p>
+      {% endif %}
+
+      <dl class="grid grid-cols-2 md:grid-cols-4 gap-x-8 gap-y-3 mt-5">
+        <div>
+          <dt class="label-cap">Publisher</dt>
+          <dd class="text-[13.5px] mt-1" style="color:var(--ink-8)">{{ ext.publisher or '—' }}</dd>
+        </div>
+        <div>
+          <dt class="label-cap">Installs</dt>
+          <dd class="text-[13.5px] mt-1 mono tabular-nums" style="color:var(--ink-8)">{{ '{:,}'.format(ext.install_count) if ext.install_count is not none else '—' }}</dd>
+        </div>
+        <div>
+          <dt class="label-cap">Last updated</dt>
+          <dd class="text-[13.5px] mt-1" style="color:var(--ink-8)">{{ ext.last_updated.strftime('%b %d, %Y') if ext.last_updated else '—' }}</dd>
+        </div>
+        <div>
+          <dt class="label-cap">Last fetched</dt>
+          <dd class="text-[13.5px] mt-1" style="color:var(--ink-8)">{{ ext.last_fetched_at.strftime('%b %d, %H:%M') if ext.last_fetched_at else 'never' }}</dd>
+        </div>
+        <div>
+          <dt class="label-cap">Watchlist</dt>
+          <dd class="mt-1">
+            <button id="watchlist-btn" class="inline-flex items-center gap-2 cursor-pointer text-[13px]"
+                    style="color:var(--ink-7);background:none;border:none;padding:0"
+                    onclick="toggleWatchlist({{ ext.id }}, {{ 'true' if ext.watchlist else 'false' }})">
+              <span class="relative inline-block w-8 h-[18px] rounded-full transition"
+                    style="background: {{ 'var(--accent)' if ext.watchlist else 'var(--ink-3)' }}">
+                <span class="absolute top-[2px] w-[14px] h-[14px] bg-white rounded-full transition-all"
+                      style="{{ 'right: 2px' if ext.watchlist else 'left: 2px' }}"></span>
+              </span>
+              <span>{{ 'Enabled' if ext.watchlist else 'Disabled' }}</span>
+            </button>
+          </dd>
+        </div>
+      </dl>
     </div>
   </div>
-  {% if ext.description %}
-  <div style="margin-top:8px;font-size:0.82rem;color:var(--gb-fg4);max-width:600px">{{ ext.description }}</div>
+</div>
+
+<div class="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-4">
+  {# Score breakdown #}
+  {% if risk_detail %}
+  <div class="surface p-5 lg:col-span-2">
+    <div class="flex items-center justify-between mb-3">
+      <h2 class="section-title" style="margin:0">Score breakdown</h2>
+      <a href="/help" class="text-[12px]">Methodology →</a>
+    </div>
+
+    {% set rows = [
+      ('Permissions',      risk_detail.permissions,      25, 'Danger level of declared permissions'),
+      ('Popularity',       risk_detail.popularity,       20, 'Install count / sudden drop'),
+      ('Publisher',        risk_detail.publisher,        15, 'Ownership change / verification'),
+      ('Staleness',        risk_detail.staleness,        15, 'Time since last author update'),
+      ('Code behaviour',   risk_detail.code_behaviour,   15, 'eval / remote code / obfuscation'),
+      ('External domains', risk_detail.external_domains, 10, 'Unknown external URLs in code'),
+    ] %}
+    <div class="flex flex-col">
+      {% for label, value, max, note in rows %}
+      {% set pct = (value / max * 100)|round(1) %}
+      {% set band = 'low' if pct < 25 else ('medium' if pct < 50 else ('high' if pct < 75 else 'critical')) %}
+      {% set band_color =
+          'oklch(0.60 0.18 22)' if band == 'critical' else
+          'oklch(0.68 0.16 50)' if band == 'high' else
+          'oklch(0.74 0.14 85)' if band == 'medium' else
+          'oklch(0.66 0.14 155)' %}
+      <div class="flex items-center gap-3 py-2.5" style="border-bottom: 1px solid var(--ink-2)">
+        <div class="w-32 text-[13px]" style="color:var(--ink-7)">{{ label }}</div>
+        <div class="flex-1 score-bar-track"><div class="score-bar-fill" style="width: {{ pct }}%; background: {{ band_color }}"></div></div>
+        <div class="mono text-[12.5px] tabular-nums w-16 text-right"><span style="color:var(--ink-8);font-weight:500">{{ value }}</span><span style="color:var(--ink-5)"> / {{ max }}</span></div>
+        <div class="hidden md:block w-52 text-[11.5px]" style="color:var(--ink-5)">{{ note }}</div>
+      </div>
+      {% endfor %}
+      <div class="flex items-center gap-3 pt-3 mt-1" style="border-top: 1px solid var(--ink-3)">
+        <div class="w-32 text-[13px] font-semibold" style="color:var(--ink-8)">Total</div>
+        <div class="flex-1 score-bar-track"><div class="score-bar-fill" style="width: {{ risk_detail.total }}%; background: {{ gauge_color }}"></div></div>
+        <div class="mono text-[13px] font-semibold tabular-nums w-16 text-right" style="color:var(--ink-8)">{{ risk_detail.total }} / 100</div>
+        <div class="hidden md:block w-52"><span class="badge badge-{{ risk_level }}">{{ risk_level }} risk</span></div>
+      </div>
+    </div>
+  </div>
+  {% endif %}
+
+  {# Package summary #}
+  {% if package_analysis %}
+  <div class="surface p-5">
+    <h2 class="section-title">Package summary</h2>
+    <dl class="grid grid-cols-2 gap-y-3 gap-x-3">
+      <div><dt class="label-cap">Manifest</dt><dd class="text-[13.5px] mt-0.5 mono" style="color:var(--ink-8)">MV{{ package_analysis.manifest_version }}</dd></div>
+      <div><dt class="label-cap">Files</dt><dd class="text-[13.5px] mt-0.5 mono tabular-nums" style="color:var(--ink-8)">{{ package_analysis.file_count }}</dd></div>
+      <div><dt class="label-cap">Size</dt><dd class="text-[13.5px] mt-0.5 mono tabular-nums" style="color:var(--ink-8)">{{ (package_analysis.total_size_bytes / 1024)|round(1) }} KB</dd></div>
+      <div><dt class="label-cap">Obfuscation</dt>
+        <dd class="text-[13.5px] mt-0.5">
+          <span style="color: {% if package_analysis.obfuscation_score >= 6 %}var(--risk-critical){% elif package_analysis.obfuscation_score >= 3 %}var(--risk-high){% else %}var(--ink-8){% endif %}">{{ package_analysis.obfuscation_score }}</span><span style="color:var(--ink-5)">/10</span>
+        </dd>
+      </div>
+      <div><dt class="label-cap">eval()</dt><dd class="text-[13.5px] mt-0.5" style="color: {% if package_analysis.uses_eval %}var(--risk-high){% else %}var(--risk-low){% endif %}">{{ 'detected' if package_analysis.uses_eval else 'none' }}</dd></div>
+      <div><dt class="label-cap">Remote code</dt><dd class="text-[13.5px] mt-0.5" style="color: {% if package_analysis.uses_remote_code %}var(--risk-high){% else %}var(--risk-low){% endif %}">{{ 'detected' if package_analysis.uses_remote_code else 'none' }}</dd></div>
+      <div><dt class="label-cap">Minified</dt><dd class="text-[13.5px] mt-0.5" style="color:var(--ink-8)">{{ 'yes' if package_analysis.has_minified_code else 'no' }}</dd></div>
+      <div><dt class="label-cap">Domains</dt><dd class="text-[13.5px] mt-0.5" style="color:var(--ink-8)">{{ package_analysis.external_domains|length }} unknown</dd></div>
+    </dl>
+  </div>
   {% endif %}
 </div>
 
-<div style="display:grid;grid-template-columns:200px 1fr;gap:16px;margin-bottom:20px">
-  <!-- Risk score gauge -->
-  <div class="card" style="text-align:center;padding:20px">
-    <div style="font-size:0.7rem;color:var(--gb-fg4);text-transform:uppercase;letter-spacing:0.08em;margin-bottom:8px">Risk Score</div>
-    {% if ext.risk_score is not none %}
-    <div class="risk-{{ risk_level }}" style="font-size:2.5rem;font-weight:700;line-height:1">{{ ext.risk_score }}</div>
-    <div style="margin-top:6px"><span class="badge badge-{{ risk_level }}">{{ risk_level }}</span></div>
-    {% else %}
-    <div style="font-size:2rem;color:var(--gb-fg4)">—</div>
-    <div style="font-size:0.75rem;color:var(--gb-fg4);margin-top:4px">not scored</div>
-    {% endif %}
-  </div>
-
-  <!-- Metadata -->
-  <div class="card">
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:0.82rem">
-      <div><span style="color:var(--gb-fg4)">publisher</span><br><span>{{ ext.publisher or '—' }}</span></div>
-      <div><span style="color:var(--gb-fg4)">install count</span><br><span>{{ ext.install_count | default('—', true) }}</span></div>
-      <div><span style="color:var(--gb-fg4)">last updated</span><br><span>{{ ext.last_updated.strftime('%Y-%m-%d') if ext.last_updated else '—' }}</span></div>
-      <div><span style="color:var(--gb-fg4)">last fetched</span><br><span>{{ ext.last_fetched_at.strftime('%Y-%m-%d %H:%M') if ext.last_fetched_at else 'never' }}</span></div>
-      <div>
-        <span style="color:var(--gb-fg4)">watchlist</span><br>
-        <button class="btn btn-ghost btn-sm" id="watchlist-btn" onclick="toggleWatchlist({{ ext.id }}, {{ 'true' if ext.watchlist else 'false' }})">
-          {{ '✓ on' if ext.watchlist else '✗ off' }}
-        </button>
-      </div>
+{# Permissions #}
+{% if permissions or host_permissions %}
+<div class="surface p-5 mb-4">
+  <div class="flex items-center justify-between mb-3">
+    <h2 class="section-title" style="margin:0">Permissions <span class="font-normal" style="color:var(--ink-5)">· {{ (permissions|length) + (host_permissions|length) }} declared</span></h2>
+    <div class="flex items-center gap-2 text-[11.5px]" style="color:var(--ink-5)">
+      <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full" style="background:var(--risk-critical)"></span>critical</span>
+      <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full" style="background:var(--risk-high)"></span>high</span>
+      <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full" style="background:var(--risk-medium)"></span>medium</span>
     </div>
   </div>
-</div>
-
-{% if risk_detail %}
-<!-- Score breakdown -->
-<div class="card">
-  <div class="section-title">score breakdown</div>
-  <table>
-    <thead>
-      <tr><th>signal</th><th>score</th><th>max</th><th>detail</th></tr>
-    </thead>
-    <tbody>
-      <tr>
-        <td>permissions</td>
-        <td><span class="{% if risk_detail.permissions >= 20 %}risk-critical{% elif risk_detail.permissions >= 10 %}risk-high{% else %}risk-low{% endif %}">{{ risk_detail.permissions }}</span></td>
-        <td style="color:var(--gb-fg4)">25</td>
-        <td style="color:var(--gb-fg4);font-size:0.78rem">danger level of declared permissions</td>
-      </tr>
-      <tr>
-        <td>popularity</td>
-        <td><span class="{% if risk_detail.popularity >= 12 %}risk-critical{% elif risk_detail.popularity >= 6 %}risk-high{% else %}risk-low{% endif %}">{{ risk_detail.popularity }}</span></td>
-        <td style="color:var(--gb-fg4)">20</td>
-        <td style="color:var(--gb-fg4);font-size:0.78rem">install count / sudden drop</td>
-      </tr>
-      <tr>
-        <td>publisher</td>
-        <td><span class="{% if risk_detail.publisher >= 10 %}risk-high{% elif risk_detail.publisher >= 4 %}risk-medium{% else %}risk-low{% endif %}">{{ risk_detail.publisher }}</span></td>
-        <td style="color:var(--gb-fg4)">15</td>
-        <td style="color:var(--gb-fg4);font-size:0.78rem">ownership change / verification</td>
-      </tr>
-      <tr>
-        <td>staleness</td>
-        <td><span class="{% if risk_detail.staleness >= 11 %}risk-high{% elif risk_detail.staleness >= 7 %}risk-medium{% else %}risk-low{% endif %}">{{ risk_detail.staleness }}</span></td>
-        <td style="color:var(--gb-fg4)">15</td>
-        <td style="color:var(--gb-fg4);font-size:0.78rem">time since last author update</td>
-      </tr>
-      <tr>
-        <td>code behaviour</td>
-        <td><span class="{% if risk_detail.code_behaviour >= 10 %}risk-critical{% elif risk_detail.code_behaviour >= 5 %}risk-high{% else %}risk-low{% endif %}">{{ risk_detail.code_behaviour }}</span></td>
-        <td style="color:var(--gb-fg4)">15</td>
-        <td style="color:var(--gb-fg4);font-size:0.78rem">eval / remote code / obfuscation</td>
-      </tr>
-      <tr>
-        <td>external domains</td>
-        <td><span class="{% if risk_detail.external_domains >= 6 %}risk-high{% elif risk_detail.external_domains >= 3 %}risk-medium{% else %}risk-low{% endif %}">{{ risk_detail.external_domains }}</span></td>
-        <td style="color:var(--gb-fg4)">10</td>
-        <td style="color:var(--gb-fg4);font-size:0.78rem">unknown external URLs in code</td>
-      </tr>
-      <tr style="background:var(--gb-bg2)">
-        <td><strong>total</strong></td>
-        <td><strong class="risk-{{ risk_level }}">{{ risk_detail.total }}</strong></td>
-        <td style="color:var(--gb-fg4)">100</td>
-        <td></td>
-      </tr>
-    </tbody>
-  </table>
-</div>
-{% endif %}
-
-<!-- Permissions -->
-{% if permissions or host_permissions %}
-<div class="card">
-  <div class="section-title">permissions</div>
-  <div>
+  <div class="flex flex-wrap gap-1.5">
     {% for p in host_permissions %}
       <span class="perm-tag {% if '<all_urls>' in p or 'http://*/*' in p or 'https://*/*' in p %}perm-critical{% else %}perm-high{% endif %}">{{ p }}</span>
     {% endfor %}
@@ -139,74 +203,57 @@
         <span class="perm-tag perm-low">{{ p }}</span>
       {% endif %}
     {% endfor %}
-    {% if not permissions and not host_permissions %}
-    <span style="color:var(--gb-fg4);font-size:0.82rem">none declared</span>
-    {% endif %}
   </div>
 </div>
 {% endif %}
 
-<!-- Package analysis -->
-{% if package_analysis %}
-<div class="card">
-  <div class="section-title">package analysis</div>
-  <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:10px;font-size:0.82rem;margin-bottom:12px">
-    <div><span style="color:var(--gb-fg4)">manifest version</span><br>MV{{ package_analysis.manifest_version }}</div>
-    <div><span style="color:var(--gb-fg4)">files</span><br>{{ package_analysis.file_count }}</div>
-    <div><span style="color:var(--gb-fg4)">package size</span><br>{{ (package_analysis.total_size_bytes / 1024) | round(1) }} KB</div>
-    <div><span style="color:var(--gb-fg4)">obfuscation score</span><br>
-      <span class="{% if package_analysis.obfuscation_score >= 6 %}risk-critical{% elif package_analysis.obfuscation_score >= 3 %}risk-high{% else %}risk-low{% endif %}">
-        {{ package_analysis.obfuscation_score }}/10
-      </span>
-    </div>
-    <div><span style="color:var(--gb-fg4)">eval usage</span><br>
-      <span class="{% if package_analysis.uses_eval %}risk-high{% else %}risk-low{% endif %}">{{ 'yes' if package_analysis.uses_eval else 'no' }}</span>
-    </div>
-    <div><span style="color:var(--gb-fg4)">remote code</span><br>
-      <span class="{% if package_analysis.uses_remote_code %}risk-high{% else %}risk-low{% endif %}">{{ 'yes' if package_analysis.uses_remote_code else 'no' }}</span>
-    </div>
-    <div><span style="color:var(--gb-fg4)">minified code</span><br>{{ 'yes' if package_analysis.has_minified_code else 'no' }}</div>
-  </div>
-  {% if package_analysis.external_domains %}
-  <div style="margin-top:8px">
-    <div style="font-size:0.72rem;color:var(--gb-fg4);text-transform:uppercase;margin-bottom:6px">external domains ({{ package_analysis.external_domains | length }})</div>
+{# External domains #}
+{% if package_analysis and package_analysis.external_domains %}
+<div class="surface p-5 mb-4">
+  <h2 class="section-title">External domains <span class="font-normal" style="color:var(--ink-5)">· {{ package_analysis.external_domains|length }}</span></h2>
+  <div class="grid grid-cols-1 md:grid-cols-2 gap-x-6">
     {% for d in package_analysis.external_domains %}
-    <span style="display:inline-block;font-size:0.75rem;padding:1px 6px;margin:2px;background:var(--gb-bg2);border-radius:2px;color:var(--gb-fg2)">{{ d }}</span>
+    <div class="flex items-center justify-between text-[12.5px] mono py-1.5" style="border-bottom: 1px solid var(--ink-2);color:var(--ink-7)">
+      <span>{{ d }}</span>
+      <span class="text-[10.5px]" style="color:var(--ink-5)">unknown</span>
+    </div>
     {% endfor %}
   </div>
-  {% endif %}
 </div>
 {% endif %}
 
-<!-- Fetch log -->
+{# Fetch history #}
 {% if fetch_logs %}
-<div class="card">
-  <div class="section-title">fetch history</div>
+<div class="surface overflow-hidden">
+  <div class="px-5 pt-4 pb-3 flex items-center justify-between">
+    <h2 class="section-title" style="margin:0">Fetch history</h2>
+    <span class="text-[11.5px]" style="color:var(--ink-5)">Last {{ fetch_logs|length }}</span>
+  </div>
   <table>
     <thead>
-      <tr><th>time</th><th>result</th><th>score change</th><th>notes</th></tr>
+      <tr><th>Time</th><th>Result</th><th>Score change</th><th>Notes</th></tr>
     </thead>
     <tbody>
       {% for log in fetch_logs %}
       <tr>
-        <td style="font-size:0.78rem;color:var(--gb-fg4)">{{ log.fetched_at.strftime('%Y-%m-%d %H:%M') }}</td>
+        <td class="mono" style="color:var(--ink-6)">{{ log.fetched_at.strftime('%b %d, %H:%M') }}</td>
         <td>
           {% if log.success %}
-          <span style="color:var(--gb-green-b)">✓ ok</span>
+          <span class="badge badge-low">success</span>
           {% else %}
-          <span style="color:var(--gb-red-b)">✗ failed</span>
+          <span class="badge badge-critical">failed</span>
           {% endif %}
         </td>
-        <td style="font-size:0.82rem">
+        <td class="mono">
           {% if log.risk_score_before is not none and log.risk_score_after is not none %}
-            {{ log.risk_score_before }} → {{ log.risk_score_after }}
+            {{ log.risk_score_before }} → <span style="color:var(--ink-8);font-weight:500">{{ log.risk_score_after }}</span>
           {% elif log.risk_score_after is not none %}
             → {{ log.risk_score_after }}
           {% else %}
-            —
+            <span style="color:var(--ink-5)">—</span>
           {% endif %}
         </td>
-        <td style="font-size:0.78rem;color:var(--gb-fg4)">{{ log.error_message or '' }}</td>
+        <td style="color: {% if log.error_message %}var(--risk-critical){% else %}var(--ink-5){% endif %}">{{ log.error_message or '' }}</td>
       </tr>
       {% endfor %}
     </tbody>
@@ -216,13 +263,14 @@
 
 <script>
 async function refreshNow(id) {
-  const btn = event.target;
+  const btn = event.currentTarget;
   btn.disabled = true;
-  btn.textContent = 'refreshing...';
+  const orig = btn.innerHTML;
+  btn.textContent = 'Refreshing…';
   try {
     const r = await fetch('/api/extensions/' + id + '/refresh', { method: 'POST' });
     if (r.ok) location.reload();
-    else { const d = await r.json(); alert(d.detail || 'Refresh failed'); }
+    else { const d = await r.json(); alert(d.detail || 'Refresh failed'); btn.innerHTML = orig; }
   } finally { btn.disabled = false; }
 }
 
@@ -241,10 +289,7 @@ async function toggleWatchlist(id, current) {
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({ watchlist: newVal }),
   });
-  if (r.ok) {
-    btn.textContent = newVal ? '✓ on' : '✗ off';
-    btn.onclick = () => toggleWatchlist(id, newVal);
-  }
+  if (r.ok) location.reload();
 }
 </script>
 {% endblock %}

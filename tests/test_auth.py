@@ -55,7 +55,7 @@ def test_get_current_user_bad_cookie():
 async def test_login_get(anon_client):
     r = await anon_client.get("/login")
     assert r.status_code == 200
-    assert b"MARVIN" in r.content
+    assert b"Sign in" in r.content
 
 
 async def test_login_correct_credentials(anon_client, admin_user):

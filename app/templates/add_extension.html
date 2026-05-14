@@ -1,27 +1,22 @@
 {% extends "base.html" %}
-{% block title %}Marvin — Add Extension{% endblock %}
+{% block title %}Marvin — Add extension{% endblock %}
 {% block nav_add %}active{% endblock %}
 
 {% block content %}
-<div style="max-width:560px">
-  <h1 style="font-size:1rem;color:var(--gb-fg4);font-weight:400;margin:0 0 20px">
-    <span style="color:var(--gb-yellow-b)">add extension</span>
-  </h1>
+<div class="max-w-2xl">
+  <h1 class="page-title">Add extension</h1>
+  <p class="page-sub mb-6">Paste a store URL or an extension ID. Marvin fetches metadata, downloads the package, and runs static analysis on add.</p>
 
-  <div class="card" x-data="{
+  <div class="surface p-6" x-data="{
     store: '',
     extensionId: '',
     loading: false,
     error: '',
     detectStore() {
       const v = this.extensionId.trim();
-      if (v.includes('chromewebstore.google.com') || v.includes('chrome.google.com/webstore')) {
-        this.store = 'chrome';
-      } else if (v.includes('marketplace.visualstudio.com')) {
-        this.store = 'vscode';
-      } else if (v.includes('microsoftedge.microsoft.com')) {
-        this.store = 'edge';
-      }
+      if (v.includes('chromewebstore.google.com') || v.includes('chrome.google.com/webstore')) this.store = 'chrome';
+      else if (v.includes('marketplace.visualstudio.com')) this.store = 'vscode';
+      else if (v.includes('microsoftedge.microsoft.com')) this.store = 'edge';
     },
     async submit() {
       this.error = '';
@@ -32,63 +27,62 @@
         const r = await fetch('/api/extensions', {
           method: 'POST',
           headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({ store: this.store, extension_id: this.extensionId.trim() })
+          body: JSON.stringify({ store: this.store, extension_id: this.extensionId.trim() }),
         });
         const data = await r.json();
-        if (r.ok) {
-          window.location.href = '/extensions/' + data.id;
-        } else {
-          this.error = data.detail || 'Failed to add extension';
-        }
-      } catch(e) {
-        this.error = 'Network error';
-      } finally {
-        this.loading = false;
-      }
-    }
+        if (r.ok) window.location.href = '/extensions/' + data.id;
+        else this.error = data.detail || 'Failed to add extension';
+      } catch { this.error = 'Network error'; }
+      finally { this.loading = false; }
+    },
   }">
 
-    <div style="margin-bottom:16px">
-      <label style="display:block;font-size:0.72rem;color:var(--gb-fg4);margin-bottom:4px">EXTENSION ID OR URL</label>
-      <input
-        type="text"
-        x-model="extensionId"
-        @input.debounce.300ms="detectStore()"
-        placeholder="e.g. cjpalhdlnbpafiamejdnhcphjbkeiagm or full store URL"
-        style="font-size:0.8rem"
-      >
-    </div>
+    <label class="label-cap block mb-1.5">Extension ID or store URL</label>
+    <input class="field field-mono" placeholder="cjpalhdlnbpafiamejdnhcphjbkeiagm"
+           x-model="extensionId" @input.debounce.300ms="detectStore()">
 
-    <div style="margin-bottom:20px">
-      <label style="display:block;font-size:0.72rem;color:var(--gb-fg4);margin-bottom:8px">STORE</label>
-      <div style="display:flex;gap:12px">
-        <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:0.85rem">
-          <input type="radio" x-model="store" value="chrome"> Chrome
-        </label>
-        <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:0.85rem">
-          <input type="radio" x-model="store" value="vscode"> VS Code
-        </label>
-        <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:0.85rem">
-          <input type="radio" x-model="store" value="edge"> Edge
-        </label>
+    <div class="mt-5">
+      <label class="label-cap block mb-2">Store</label>
+      <div class="grid grid-cols-3 gap-2">
+        <template x-for="s in [{k:'chrome',l:'Chrome Web Store'},{k:'vscode',l:'VS Code Marketplace'},{k:'edge',l:'Edge Add-ons'}]" :key="s.k">
+          <label class="cursor-pointer">
+            <input type="radio" name="store" :value="s.k" x-model="store" class="sr-only">
+            <div class="surface p-3 transition" :style="store === s.k ? 'border-color:var(--accent);box-shadow:0 0 0 1px var(--accent) inset' : ''">
+              <span class="badge badge-store" :class="'badge-'+s.k"><span class="dot"></span><span x-text="s.k"></span></span>
+              <div class="text-[12.5px] mt-2" style="color:var(--ink-7)" x-text="s.l"></div>
+            </div>
+          </label>
+        </template>
       </div>
     </div>
 
-    <div x-show="error" style="color:var(--gb-red-b);font-size:0.8rem;margin-bottom:12px" x-text="error"></div>
+    <div x-show="error" x-cloak class="mt-4 text-[12.5px]" style="color:var(--risk-critical)" x-text="error"></div>
 
-    <div style="display:flex;gap:8px">
+    <div class="flex items-center gap-2 mt-6">
       <button class="btn btn-primary" @click="submit()" :disabled="loading">
-        <span x-show="!loading">fetch &amp; analyse</span>
-        <span x-show="loading">fetching...</span>
+        <svg x-show="!loading" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+        <span x-show="!loading">Fetch &amp; analyze</span>
+        <span x-show="loading">Fetching…</span>
       </button>
-      <a href="/" class="btn btn-ghost">cancel</a>
+      <a href="/" class="btn btn-ghost">Cancel</a>
     </div>
+  </div>
 
-    <div style="margin-top:20px;padding-top:16px;border-top:1px solid var(--gb-bg2);font-size:0.72rem;color:var(--gb-fg4)">
-      <div style="margin-bottom:6px;color:var(--gb-fg4)">ID FORMAT EXAMPLES</div>
-      <div><span class="badge badge-chrome">chrome</span> &nbsp;<code>cjpalhdlnbpafiamejdnhcphjbkeiagm</code></div>
-      <div style="margin-top:4px"><span class="badge badge-vscode">vscode</span> &nbsp;<code>ms-python.python</code></div>
-      <div style="margin-top:4px"><span class="badge badge-edge">edge</span> &nbsp;<code>jmjflgjpcpepeafmmgdpfkogkghcpiha</code></div>
+  <div class="mt-5">
+    <div class="label-cap mb-2">Example IDs</div>
+    <div class="grid grid-cols-3 gap-3 text-[12px]">
+      <div class="surface-soft p-3">
+        <span class="badge badge-store badge-chrome"><span class="dot"></span>chrome</span>
+        <div class="mono text-[11.5px] mt-2 truncate" style="color:var(--ink-6)">cjpalhdlnbpafiamejdnhcphjbkeiagm</div>
+      </div>
+      <div class="surface-soft p-3">
+        <span class="badge badge-store badge-vscode"><span class="dot"></span>vscode</span>
+        <div class="mono text-[11.5px] mt-2 truncate" style="color:var(--ink-6)">ms-python.python</div>
+      </div>
+      <div class="surface-soft p-3">
+        <span class="badge badge-store badge-edge"><span class="dot"></span>edge</span>
+        <div class="mono text-[11.5px] mt-2 truncate" style="color:var(--ink-6)">jmjflgjpcpepeafmmgdpfkogkghcpiha</div>
+      </div>
     </div>
   </div>
 </div>

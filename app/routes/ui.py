@@ -123,7 +123,7 @@ async def dashboard(
     high_risk = sum(1 for e in extensions if e.risk_score is not None and e.risk_score >= 50)
 
     return _render(request, "dashboard.html", {
-        "extensions_json": json.dumps([_ext_to_dict(e) for e in extensions]),
+        "extensions": [_ext_to_dict(e) for e in extensions],
         "extensions_count": len(extensions),
         "high_risk_count": high_risk,
     }, user=current_user)
@@ -259,9 +259,9 @@ async def account_page(
     ]
 
     return _render(request, "account.html", {
-        "destinations_json": json.dumps(destinations_data),
-        "rules_json": json.dumps(rules_data),
-        "extensions_json": json.dumps(extensions_data),
+        "destinations": destinations_data,
+        "rules": rules_data,
+        "extensions": extensions_data,
     }, user=current_user)
 
 

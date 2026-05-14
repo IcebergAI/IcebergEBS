@@ -1,55 +1,127 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" class="h-full">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}Marvin{% endblock %}</title>
+
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+
   <script src="https://cdn.tailwindcss.com"></script>
   <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+
+  <script>
+    tailwind.config = {
+      theme: { extend: {
+        fontFamily: {
+          sans: ['"IBM Plex Sans"', 'system-ui', 'sans-serif'],
+          mono: ['"IBM Plex Mono"', 'ui-monospace', 'monospace'],
+        },
+      } },
+    };
+  </script>
+
   <link rel="stylesheet" href="/static/css/app.css">
 </head>
-<body>
+<body class="font-sans">
 
-{% block nav %}
-<nav>
-  <a href="/" class="nav-brand">[ MARVIN ]</a>
-  <a href="/" class="nav-link {% block nav_dashboard %}{% endblock %}">dashboard</a>
-  <a href="/extensions/add" class="nav-link {% block nav_add %}{% endblock %}">+ add</a>
-  <a href="/help" class="nav-link {% block nav_help %}{% endblock %}">help</a>
-  {% if is_admin %}
-  <a href="/admin/users" class="nav-link {% block nav_admin %}{% endblock %}">admin</a>
-  {% endif %}
-  <span class="nav-spacer"></span>
-  {% if username %}
-  <div style="position:relative" x-data="{open:false}">
-    <button @click="open=!open" class="btn btn-ghost btn-sm" style="display:flex;align-items:center;gap:5px">
-      <span>{{ username }}</span>
-      <span style="font-size:0.55rem;opacity:0.5;line-height:1">▾</span>
-    </button>
-    <div x-show="open" @click.outside="open=false" x-cloak
-         style="position:absolute;right:0;top:calc(100% + 6px);background:var(--gb-bg1);border:1px solid var(--gb-bg3);border-radius:3px;min-width:160px;z-index:100;padding:4px 0;box-shadow:0 4px 12px rgba(0,0,0,0.4)">
-      <a href="/account" style="display:block;padding:7px 14px;font-size:0.8rem;color:var(--gb-fg4)" @click="open=false">preferences</a>
-      <a href="/account/password" style="display:block;padding:7px 14px;font-size:0.8rem;color:var(--gb-fg4)" @click="open=false">change password</a>
-      <div style="border-top:1px solid var(--gb-bg2);margin:4px 0"></div>
-      <form method="post" action="/logout" style="margin:0">
-        <button type="submit" style="display:block;width:100%;padding:7px 14px;font-size:0.8rem;color:var(--gb-fg4);background:none;border:none;cursor:pointer;text-align:left;font-family:'JetBrains Mono',monospace">logout</button>
-      </form>
-    </div>
+{% block shell %}
+<div class="page-shell">
+
+  {# ── SIDEBAR ─────────────────────────────────────────── #}
+  <aside class="rail">
+    <a href="/" class="flex items-center gap-2.5 px-1 pt-1" style="text-decoration:none">
+      <svg width="26" height="26" viewBox="0 0 32 32" fill="none">
+        <rect x="1.5" y="1.5" width="29" height="29" rx="8" fill="white" stroke="currentColor" stroke-opacity="0.18"/>
+        <circle cx="16" cy="16" r="9" fill="oklch(0.55 0.18 265)"/>
+        <circle cx="16" cy="16" r="3.5" fill="white"/>
+        <circle cx="18.5" cy="13.5" r="1.2" fill="oklch(0.55 0.18 265)"/>
+      </svg>
+      <span>
+        <span class="block text-[14.5px] font-semibold tracking-tight" style="color:var(--ink-8)">Marvin</span>
+        <span class="block text-[10.5px]" style="color:var(--ink-5)">extension watch</span>
+      </span>
+    </a>
+
+    <nav class="flex flex-col gap-0.5">
+      <a href="/" class="rail-link {% block nav_dashboard %}{% endblock %}">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/></svg>
+        Dashboard
+      </a>
+      <a href="/extensions/add" class="rail-link {% block nav_add %}{% endblock %}">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 8v8M8 12h8"/></svg>
+        Add extension
+      </a>
+    </nav>
+
+    {% if username %}
+    <div class="label-cap px-1 mt-1">Account</div>
+    <nav class="flex flex-col gap-0.5 -mt-3">
+      <a href="/account" class="rail-link">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12a8 8 0 1 0 16 0 8 8 0 0 0-16 0Z"/><path d="M12 7v5l3 2"/></svg>
+        Alerts &amp; webhooks
+      </a>
+      {% if is_admin %}
+      <a href="/admin/users" class="rail-link {% block nav_admin %}{% endblock %}">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="9" r="3.5"/><path d="M3.5 19c.7-3 3-4.5 5.5-4.5s4.8 1.5 5.5 4.5"/><circle cx="17" cy="8" r="2.5"/><path d="M14 14.5c1-1 2-1.5 3-1.5 2.2 0 4 1.5 4.5 3.5"/></svg>
+        Users
+      </a>
+      {% endif %}
+      <a href="/help" class="rail-link {% block nav_help %}{% endblock %}">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 1 1 3.5 2.3c-.8.4-1 .9-1 1.7M12 17h.01"/></svg>
+        Help
+      </a>
+    </nav>
+    {% endif %}
+
+    {% block rail_footer %}{% endblock %}
+  </aside>
+
+  {# ── MAIN COLUMN ────────────────────────────────────── #}
+  <div class="flex flex-col min-w-0">
+
+    {% if username %}
+    <header class="topbar">
+      <div class="search">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="6"/><path d="m20 20-4-4"/></svg>
+        <input type="text" placeholder="Search extensions, permissions, publishers…">
+      </div>
+
+      <div class="flex items-center gap-3" x-data="{open:false}">
+        <button @click="open=!open" class="flex items-center gap-2 px-1.5 py-1 rounded-md hover:bg-[var(--ink-1)] transition">
+          <span class="avatar">{{ username[0]|upper }}</span>
+          <span class="hidden md:flex flex-col items-start">
+            <span class="text-[12.5px] font-medium leading-tight" style="color:var(--ink-8)">{{ username }}</span>
+            <span class="text-[11px] leading-tight" style="color:var(--ink-5)">{% if is_admin %}workspace admin{% else %}member{% endif %}</span>
+          </span>
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--ink-5)"><path d="m6 9 6 6 6-6"/></svg>
+        </button>
+        <div x-show="open" @click.outside="open=false" x-cloak
+             class="absolute right-7 top-12 surface py-1.5"
+             style="min-width:200px;box-shadow:0 8px 24px oklch(0.92 0.01 240 / 0.7);z-index:20">
+          <a href="/account" class="block px-3 py-2 text-[13px] hover:bg-[var(--ink-1)]" style="color:var(--ink-7)" @click="open=false">Alerts &amp; webhooks</a>
+          <a href="/account/password" class="block px-3 py-2 text-[13px] hover:bg-[var(--ink-1)]" style="color:var(--ink-7)" @click="open=false">Change password</a>
+          <div class="my-1 mx-3 border-t" style="border-color:var(--ink-3)"></div>
+          <form method="post" action="/logout" class="m-0">
+            <button type="submit" class="w-full text-left px-3 py-2 text-[13px] hover:bg-[var(--ink-1)]" style="color:var(--ink-7)">Sign out</button>
+          </form>
+        </div>
+      </div>
+    </header>
+    {% endif %}
+
+    <main class="content flex-1">
+      {% if flash %}
+        <div class="flash">{{ flash }}</div>
+      {% endif %}
+      {% block content %}{% endblock %}
+    </main>
   </div>
-  {% endif %}
-</nav>
+</div>
 {% endblock %}
 
-<div class="container">
-  {% if flash %}
-  <div class="flash">{{ flash }}</div>
-  {% endif %}
-
-  {% block content %}{% endblock %}
-</div>
-
+{% block scripts %}{% endblock %}
 </body>
 </html>
