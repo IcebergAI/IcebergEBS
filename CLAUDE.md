@@ -31,14 +31,17 @@ API-first design. All data flows through FastAPI endpoints; the UI consumes them
 ### Key modules
 - `app/config.py` — pydantic-settings `BaseSettings`, env prefix `MARVIN_`
 - `app/database.py` — async SQLAlchemy engine, WAL mode enabled at startup
-- `app/models.py` — SQLModel table definitions (`Extension`, `FetchLog`, `InstallCountHistory`)
-- `app/auth.py` — itsdangerous signed cookies, `require_auth` FastAPI dependency
+- `app/models.py` — SQLModel table definitions (`User`, `Extension`, `FetchLog`, `InstallCountHistory`, `AlertDestination`, `AlertRule`, `AlertLog`)
+- `app/auth.py` — itsdangerous signed cookies, `require_auth` / `require_admin` FastAPI dependencies
 - `app/fetchers/` — one fetcher class per store; `get_fetcher(store, client)` factory in `__init__.py`
 - `app/inspector.py` — static analysis of downloaded zip packages (CRX/VSIX)
 - `app/scoring.py` — pure scoring functions, `compute_risk_score()` → `RiskDetail` NamedTuple
 - `app/services.py` — `fetch_and_store()`: shared pipeline used by both API routes and the scheduler
+- `app/notifications.py` — `detect_changes()` + `fire_alerts()`: compares old/new extension state and POSTs to matching webhook destinations
 - `app/scheduler.py` — APScheduler `AsyncIOScheduler` background watchlist refresh
-- `app/routes/api.py` — JSON API routes (`/api/...`)
+- `app/routes/api.py` — JSON API routes for extensions (`/api/extensions/...`)
+- `app/routes/alerts.py` — JSON API routes for alert destinations, rules, and log (`/api/alerts/...`)
+- `app/routes/users.py` — JSON API routes for user management (`/api/users/...`)
 - `app/routes/ui.py` — HTML routes, Jinja2 templates, flash messages
 
 ### Data flow
@@ -111,7 +114,25 @@ venv/bin/python -m pytest tests/ -v
 - Scoring functions handle naive datetimes from external sources by attaching UTC tzinfo before comparison
 
 ## Styling, Theming and Design
-Retro/terminal feel using the Gruvbox dark colour scheme.
+Clean dark UI. CSS custom properties in `static/css/app.css` — ink-* scale for neutral tones (ink-1 darkest background → ink-8 near-white text), risk-* for severity colours. Tailwind CSS utility classes via CDN for layout; component classes (`surface`, `btn`, `badge`, `label-cap`, `page-title`, `section-title`) defined in `app.css`.
+
+### Alpine.js x-data pattern
+**Never embed `{{ data | tojson }}` directly inside an `x-data="{ ... }"` HTML attribute.** JSON contains `"` which terminates the HTML attribute, breaking the component silently. Always use the function pattern instead:
+
+```html
+<div x-data="myComponent()">
+...
+<script>
+function myComponent() {
+  return {
+    items: {{ items | tojson }},  {# safe — inside <script>, not an HTML attribute #}
+    ...
+  };
+}
+</script>
+```
+
+This is already the pattern used by `account.html` (accountPrefs) and `dashboard.html` (dashboardData).
 
 ## Maintenance
 - Keep this file up to date with decisions around structure, architecture, and function.
