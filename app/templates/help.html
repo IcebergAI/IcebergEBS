@@ -22,7 +22,8 @@
       Paste either a full store URL or a bare extension ID on the
       <a href="/extensions/add">add page</a>. The store is auto-detected from URLs.
     </p>
-    <table style="border:1px solid var(--ink-3);border-radius:8px;overflow:hidden">
+    <div style="overflow-x:auto;border:1px solid var(--ink-3);border-radius:8px">
+    <table>
       <thead><tr><th>Store</th><th>ID format</th><th>Example</th></tr></thead>
       <tbody>
         <tr>
@@ -42,12 +43,14 @@
         </tr>
       </tbody>
     </table>
+    </div>
   </div>
 
   <div class="surface p-6 mb-4">
     <h2 class="section-title">Risk score signals</h2>
     <p class="text-[13.5px] mb-3" style="color:var(--ink-6)">Each extension is scored 0–100 across six signals. Higher = riskier.</p>
-    <table style="border:1px solid var(--ink-3);border-radius:8px;overflow:hidden">
+    <div style="overflow-x:auto;border:1px solid var(--ink-3);border-radius:8px">
+    <table>
       <thead><tr><th>Signal</th><th class="text-right">Max</th><th>Source</th><th>What it measures</th></tr></thead>
       <tbody>
         <tr><td>Permissions</td>      <td class="text-right mono">25</td><td style="color:var(--ink-5)">package</td><td style="color:var(--ink-5)">Tiered danger of declared permissions</td></tr>
@@ -58,6 +61,7 @@
         <tr><td>External domains</td> <td class="text-right mono">10</td><td style="color:var(--ink-5)">package</td><td style="color:var(--ink-5)">Unknown URLs in code</td></tr>
       </tbody>
     </table>
+    </div>
     <div class="flex items-center gap-2 mt-4 text-[12px]">
       <span class="badge badge-low">low 0–24</span>
       <span class="badge badge-medium">medium 25–49</span>
@@ -85,7 +89,8 @@
       Configure webhook destinations and alert rules under <a href="/account">account / alerts</a>.
       Marvin POSTs a JSON payload to your webhook URL whenever a monitored extension changes.
     </p>
-    <table style="border:1px solid var(--ink-3);border-radius:8px;overflow:hidden">
+    <div style="overflow-x:auto;border:1px solid var(--ink-3);border-radius:8px">
+    <table>
       <thead><tr><th>Event type</th><th>Triggers when</th></tr></thead>
       <tbody>
         <tr><td><code class="mono">risk_level_change</code></td><td style="color:var(--ink-5)">Risk band changes (low / medium / high / critical)</td></tr>
@@ -94,9 +99,10 @@
         <tr><td><code class="mono">new_version</code></td>      <td style="color:var(--ink-5)">Version string changes</td></tr>
       </tbody>
     </table>
+    </div>
 
     <div class="label-cap mt-5 mb-2">Example payload</div>
-<pre class="mono text-[12px] p-3 rounded-lg overflow-auto" style="background:var(--ink-1);color:var(--ink-7);border:1px solid var(--ink-3)">{
+<pre class="mono text-[12px] p-3 rounded-lg overflow-x-auto" style="background:var(--ink-1);color:var(--ink-7);border:1px solid var(--ink-3)">{
   "event": "risk_level_change",
   "extension": {
     "id": 42,
@@ -125,19 +131,53 @@
 
   <div class="surface p-6">
     <h2 class="section-title">Configuration</h2>
-    <table style="border:1px solid var(--ink-3);border-radius:8px;overflow:hidden">
+    <div style="overflow-x:auto;border:1px solid var(--ink-3);border-radius:8px">
+    <table>
       <thead><tr><th>Env var</th><th>Default</th><th>Description</th></tr></thead>
       <tbody>
-        <tr><td class="mono">MARVIN_ADMIN_USERNAME</td><td style="color:var(--ink-5)">—</td><td style="color:var(--ink-5)">required</td></tr>
-        <tr><td class="mono">MARVIN_ADMIN_PASSWORD</td><td style="color:var(--ink-5)">—</td><td style="color:var(--ink-5)">required</td></tr>
-        <tr><td class="mono">MARVIN_SECRET_KEY</td>    <td style="color:var(--ink-5)">—</td><td style="color:var(--ink-5)">required — generate with <code class="mono">python -c "import secrets; print(secrets.token_hex(32))"</code></td></tr>
-        <tr><td class="mono">MARVIN_DATABASE_URL</td>  <td class="mono text-[11.5px]" style="color:var(--ink-5)">sqlite+aiosqlite:///./marvin.db</td><td></td></tr>
-        <tr><td class="mono">MARVIN_SESSION_MAX_AGE</td><td style="color:var(--ink-5)">86400</td><td style="color:var(--ink-5)">session lifetime in seconds</td></tr>
-        <tr><td class="mono">MARVIN_FETCH_INTERVAL_MINUTES</td><td style="color:var(--ink-5)">60</td><td style="color:var(--ink-5)">background refresh cadence</td></tr>
-        <tr><td class="mono">MARVIN_APP_BASE_URL</td>  <td style="color:var(--ink-5)">—</td><td style="color:var(--ink-5)">public URL of your instance, included as <code class="mono">marvin_url</code> in payloads</td></tr>
-        <tr><td class="mono">MARVIN_HTTPX_TIMEOUT</td> <td style="color:var(--ink-5)">15.0</td><td style="color:var(--ink-5)">outbound HTTP timeout in seconds</td></tr>
+        <tr>
+          <td class="mono" style="white-space:nowrap">MARVIN_ADMIN_USERNAME</td>
+          <td style="color:var(--ink-5)">—</td>
+          <td style="color:var(--ink-5)">required</td>
+        </tr>
+        <tr>
+          <td class="mono" style="white-space:nowrap">MARVIN_ADMIN_PASSWORD</td>
+          <td style="color:var(--ink-5)">—</td>
+          <td style="color:var(--ink-5)">required</td>
+        </tr>
+        <tr>
+          <td class="mono" style="white-space:nowrap">MARVIN_SECRET_KEY</td>
+          <td style="color:var(--ink-5)">—</td>
+          <td style="color:var(--ink-5)">required — generate with<br><code class="mono text-[11.5px]">python -c "import secrets; print(secrets.token_hex(32))"</code></td>
+        </tr>
+        <tr>
+          <td class="mono" style="white-space:nowrap">MARVIN_DATABASE_URL</td>
+          <td class="mono text-[11.5px]" style="color:var(--ink-5);white-space:nowrap">sqlite+aiosqlite:///./marvin.db</td>
+          <td style="color:var(--ink-5)"></td>
+        </tr>
+        <tr>
+          <td class="mono" style="white-space:nowrap">MARVIN_SESSION_MAX_AGE</td>
+          <td style="color:var(--ink-5)">86400</td>
+          <td style="color:var(--ink-5)">session lifetime in seconds</td>
+        </tr>
+        <tr>
+          <td class="mono" style="white-space:nowrap">MARVIN_FETCH_INTERVAL_MINUTES</td>
+          <td style="color:var(--ink-5)">60</td>
+          <td style="color:var(--ink-5)">background refresh cadence</td>
+        </tr>
+        <tr>
+          <td class="mono" style="white-space:nowrap">MARVIN_APP_BASE_URL</td>
+          <td style="color:var(--ink-5)">—</td>
+          <td style="color:var(--ink-5)">public URL of your instance, included as <code class="mono">marvin_url</code> in payloads</td>
+        </tr>
+        <tr>
+          <td class="mono" style="white-space:nowrap">MARVIN_HTTPX_TIMEOUT</td>
+          <td style="color:var(--ink-5)">15.0</td>
+          <td style="color:var(--ink-5)">outbound HTTP timeout in seconds</td>
+        </tr>
       </tbody>
     </table>
+    </div>
   </div>
 </div>
 {% endblock %}
