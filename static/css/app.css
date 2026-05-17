@@ -1,11 +1,13 @@
 /* ─────────────────────────────────────────────────────────────
    Marvin · Refined Operator theme
-   Modern, light, professional. Designed to pair with Tailwind
+   Modern, light/dark, professional. Designed to pair with Tailwind
    utilities, so this file only carries tokens + components that
    are awkward to express as utility classes.
    ───────────────────────────────────────────────────────────── */
 
 :root {
+  color-scheme: light;
+
   /* Neutrals — cool slate */
   --ink-0:   oklch(0.99  0.003 240);   /* page                  */
   --ink-1:   oklch(0.975 0.004 240);   /* soft surface          */
@@ -16,6 +18,9 @@
   --ink-6:   oklch(0.42  0.014 245);   /* body                  */
   --ink-7:   oklch(0.28  0.016 245);   /* heading               */
   --ink-8:   oklch(0.18  0.020 245);   /* ink                   */
+
+  /* Flat surface (replaces hardcoded `white`) */
+  --surface: white;
 
   /* Accent — cobalt indigo */
   --accent:    oklch(0.55 0.18 265);
@@ -31,6 +36,49 @@
   --risk-high-bg:     oklch(0.97  0.05 50);
   --risk-critical:    oklch(0.60 0.18 22);
   --risk-critical-bg: oklch(0.97  0.04 22);
+
+  /* Badge / perm text colours (need inverting in dark mode) */
+  --badge-low-color:      oklch(0.32 0.10 155);
+  --badge-medium-color:   oklch(0.38 0.10 85);
+  --badge-high-color:     oklch(0.36 0.13 50);
+  --badge-critical-color: oklch(0.36 0.14 22);
+  --perm-critical-color:  oklch(0.32 0.14 22);
+  --perm-high-color:      oklch(0.32 0.13 50);
+  --perm-medium-color:    oklch(0.34 0.10 85);
+}
+
+/* ── Dark theme ────────────────────────────────────────────── */
+[data-theme="dark"] {
+  color-scheme: dark;
+
+  --ink-0:   oklch(0.13 0.008 240);
+  --ink-1:   oklch(0.17 0.008 240);
+  --ink-2:   oklch(0.21 0.010 240);
+  --ink-3:   oklch(0.28 0.012 240);
+  --ink-4:   oklch(0.35 0.012 240);
+  --ink-5:   oklch(0.55 0.012 245);
+  --ink-6:   oklch(0.72 0.010 245);
+  --ink-7:   oklch(0.86 0.008 245);
+  --ink-8:   oklch(0.95 0.005 245);
+
+  --surface: oklch(0.20 0.009 240);
+
+  --accent:    oklch(0.68 0.18 265);
+  --accent-2:  oklch(0.75 0.16 265);
+  --accent-bg: oklch(0.22 0.05  265);
+
+  --risk-low-bg:      oklch(0.20 0.06 155);
+  --risk-medium-bg:   oklch(0.20 0.06 85);
+  --risk-high-bg:     oklch(0.20 0.06 50);
+  --risk-critical-bg: oklch(0.20 0.06 22);
+
+  --badge-low-color:      oklch(0.76 0.14 155);
+  --badge-medium-color:   oklch(0.80 0.14 85);
+  --badge-high-color:     oklch(0.76 0.16 50);
+  --badge-critical-color: oklch(0.74 0.18 22);
+  --perm-critical-color:  oklch(0.74 0.18 22);
+  --perm-high-color:      oklch(0.76 0.16 50);
+  --perm-medium-color:    oklch(0.80 0.14 85);
 }
 
 *, *::before, *::after { box-sizing: border-box; }
@@ -80,7 +128,7 @@ a:hover { text-decoration: underline; text-decoration-thickness: 1px; text-under
   display: flex; align-items: center; justify-content: space-between;
   padding: 0 28px;
   border-bottom: 1px solid var(--ink-3);
-  background: white;
+  background: var(--surface);
   gap: 14px;
   position: sticky; top: 0; z-index: 10;
 }
@@ -98,7 +146,7 @@ a:hover { text-decoration: underline; text-decoration-thickness: 1px; text-under
 }
 .rail-link:hover { background: var(--ink-2); color: var(--ink-8); text-decoration: none; }
 .rail-link.active {
-  background: white;
+  background: var(--surface);
   color: var(--ink-8);
   box-shadow: 0 1px 0 var(--ink-3), 0 0 0 1px var(--ink-3) inset;
 }
@@ -106,8 +154,8 @@ a:hover { text-decoration: underline; text-decoration-thickness: 1px; text-under
 .rail-link.active svg { opacity: 1; color: var(--accent); }
 
 /* ── Surfaces ─────────────────────────────────────────────── */
-.surface      { background: white;     border: 1px solid var(--ink-3); border-radius: 10px; }
-.surface-soft { background: var(--ink-1); border: 1px solid var(--ink-3); border-radius: 10px; }
+.surface      { background: var(--surface); border: 1px solid var(--ink-3); border-radius: 10px; }
+.surface-soft { background: var(--ink-1);   border: 1px solid var(--ink-3); border-radius: 10px; }
 
 /* ── Buttons ──────────────────────────────────────────────── */
 .btn {
@@ -124,20 +172,20 @@ a:hover { text-decoration: underline; text-decoration-thickness: 1px; text-under
   white-space: nowrap;
 }
 .btn:disabled { opacity: 0.5; cursor: not-allowed; }
-.btn-primary   { background: var(--ink-8); color: white; border-color: var(--ink-8); }
+.btn-primary   { background: var(--ink-8); color: var(--ink-0); border-color: var(--ink-8); }
 .btn-primary:hover:not(:disabled)   { background: var(--ink-7); border-color: var(--ink-7); }
-.btn-secondary { background: white; color: var(--ink-7); border-color: var(--ink-3); }
+.btn-secondary { background: var(--surface); color: var(--ink-7); border-color: var(--ink-3); }
 .btn-secondary:hover:not(:disabled) { background: var(--ink-1); border-color: var(--ink-4); }
 .btn-ghost     { background: transparent; color: var(--ink-6); border-color: transparent; }
 .btn-ghost:hover:not(:disabled)     { background: var(--ink-2); color: var(--ink-8); }
-.btn-danger    { background: white; color: var(--risk-critical); border-color: var(--ink-3); }
+.btn-danger    { background: var(--surface); color: var(--risk-critical); border-color: var(--ink-3); }
 .btn-danger:hover:not(:disabled)    { background: var(--risk-critical-bg); border-color: var(--risk-critical); }
 .btn-sm { font-size: 12px; padding: 5px 9px; }
 
 /* ── Inputs ───────────────────────────────────────────────── */
 .field, input[type="text"], input[type="password"], input[type="email"], select, textarea {
   width: 100%;
-  background: white;
+  background: var(--surface);
   border: 1px solid var(--ink-3);
   color: var(--ink-8);
   font-family: inherit;
@@ -177,10 +225,10 @@ a:hover { text-decoration: underline; text-decoration-thickness: 1px; text-under
 .badge-vscode .dot { background: oklch(0.65 0.18 220); }
 .badge-edge   .dot { background: oklch(0.65 0.18 195); }
 
-.badge-low      { background: var(--risk-low-bg);      color: oklch(0.32 0.10 155); border-color: color-mix(in oklch, var(--risk-low) 25%, transparent); }
-.badge-medium   { background: var(--risk-medium-bg);   color: oklch(0.38 0.10 85);  border-color: color-mix(in oklch, var(--risk-medium) 30%, transparent); }
-.badge-high     { background: var(--risk-high-bg);     color: oklch(0.36 0.13 50);  border-color: color-mix(in oklch, var(--risk-high) 30%, transparent); }
-.badge-critical { background: var(--risk-critical-bg); color: oklch(0.36 0.14 22);  border-color: color-mix(in oklch, var(--risk-critical) 35%, transparent); }
+.badge-low      { background: var(--risk-low-bg);      color: var(--badge-low-color);      border-color: color-mix(in oklch, var(--risk-low) 25%, transparent); }
+.badge-medium   { background: var(--risk-medium-bg);   color: var(--badge-medium-color);   border-color: color-mix(in oklch, var(--risk-medium) 30%, transparent); }
+.badge-high     { background: var(--risk-high-bg);     color: var(--badge-high-color);     border-color: color-mix(in oklch, var(--risk-high) 30%, transparent); }
+.badge-critical { background: var(--risk-critical-bg); color: var(--badge-critical-color); border-color: color-mix(in oklch, var(--risk-critical) 35%, transparent); }
 
 /* Legacy risk text colours (kept for templates that use them) */
 .risk-low      { color: var(--risk-low); }
@@ -200,9 +248,9 @@ a:hover { text-decoration: underline; text-decoration-thickness: 1px; text-under
   border: 1px solid var(--ink-3);
   margin: 2px;
 }
-.perm-critical { background: var(--risk-critical-bg); color: oklch(0.32 0.14 22); border-color: color-mix(in oklch, var(--risk-critical) 35%, transparent); }
-.perm-high     { background: var(--risk-high-bg);     color: oklch(0.32 0.13 50); border-color: color-mix(in oklch, var(--risk-high) 30%, transparent); }
-.perm-medium   { background: var(--risk-medium-bg);   color: oklch(0.34 0.10 85); border-color: color-mix(in oklch, var(--risk-medium) 30%, transparent); }
+.perm-critical { background: var(--risk-critical-bg); color: var(--perm-critical-color); border-color: color-mix(in oklch, var(--risk-critical) 35%, transparent); }
+.perm-high     { background: var(--risk-high-bg);     color: var(--perm-high-color);     border-color: color-mix(in oklch, var(--risk-high) 30%, transparent); }
+.perm-medium   { background: var(--risk-medium-bg);   color: var(--perm-medium-color);   border-color: color-mix(in oklch, var(--risk-medium) 30%, transparent); }
 .perm-low      { /* default */ }
 
 /* ── Score bar ────────────────────────────────────────────── */
@@ -244,7 +292,7 @@ tbody tr:hover td { background: var(--ink-1); }
   display: flex;
   gap: 10px;
   align-items: flex-start;
-  background: white;
+  background: var(--surface);
   border: 1px solid var(--ink-3);
   border-left: 3px solid var(--accent);
   border-radius: 8px;
@@ -277,7 +325,7 @@ tbody tr:hover td { background: var(--ink-1); }
   border-radius: 7px;
   font-size: 13px;
 }
-.search input:focus { background: white; }
+.search input:focus { background: var(--surface); }
 .search kbd {
   position: absolute; right: 8px; top: 50%; transform: translateY(-50%);
   font-family: 'IBM Plex Mono', monospace;
@@ -285,7 +333,7 @@ tbody tr:hover td { background: var(--ink-1); }
   padding: 2px 5px;
   border: 1px solid var(--ink-3);
   border-radius: 4px;
-  background: white;
+  background: var(--surface);
   color: var(--ink-5);
 }
 

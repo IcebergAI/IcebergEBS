@@ -4,6 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}Marvin{% endblock %}</title>
+  <script>(function(){var t=localStorage.getItem('marvin-theme')||'light';document.documentElement.setAttribute('data-theme',t);})();</script>
 
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -89,7 +90,7 @@
         <input type="text" placeholder="Search extensions, permissions, publishers…">
       </div>
 
-      <div class="flex items-center gap-3" x-data="{open:false}">
+      <div class="flex items-center gap-3" x-data="{open:false, dark: localStorage.getItem('marvin-theme')==='dark'}">
         <button @click="open=!open" class="flex items-center gap-2 px-1.5 py-1 rounded-md hover:bg-[var(--ink-1)] transition">
           <span class="avatar">{{ username[0]|upper }}</span>
           <span class="hidden md:flex flex-col items-start">
@@ -100,9 +101,16 @@
         </button>
         <div x-show="open" @click.outside="open=false" x-cloak
              class="absolute right-7 top-12 surface py-1.5"
-             style="min-width:200px;box-shadow:0 8px 24px oklch(0.92 0.01 240 / 0.7);z-index:20">
+             style="min-width:200px;box-shadow:0 8px 24px oklch(0.05 0.01 240 / 0.25);z-index:20">
           <a href="/account" class="block px-3 py-2 text-[13px] hover:bg-[var(--ink-1)]" style="color:var(--ink-7)" @click="open=false">Alerts &amp; webhooks</a>
           <a href="/account/password" class="block px-3 py-2 text-[13px] hover:bg-[var(--ink-1)]" style="color:var(--ink-7)" @click="open=false">Change password</a>
+          <div class="my-1 mx-3 border-t" style="border-color:var(--ink-3)"></div>
+          <button @click="dark=!dark; document.documentElement.setAttribute('data-theme', dark?'dark':'light'); localStorage.setItem('marvin-theme', dark?'dark':'light'); open=false"
+                  class="w-full flex items-center gap-2.5 px-3 py-2 text-[13px] hover:bg-[var(--ink-1)]" style="color:var(--ink-7)">
+            <svg x-show="!dark" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
+            <svg x-show="dark" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+            <span x-text="dark ? 'Light mode' : 'Dark mode'"></span>
+          </button>
           <div class="my-1 mx-3 border-t" style="border-color:var(--ink-3)"></div>
           <form method="post" action="/logout" class="m-0">
             <button type="submit" class="w-full text-left px-3 py-2 text-[13px] hover:bg-[var(--ink-1)]" style="color:var(--ink-7)">Sign out</button>
