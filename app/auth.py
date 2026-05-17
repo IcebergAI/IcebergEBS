@@ -11,7 +11,7 @@ from app.database import engine, get_session
 
 logger = logging.getLogger(__name__)
 
-_serializer = URLSafeTimedSerializer(settings.secret_key)
+_serializer = URLSafeTimedSerializer(settings.secret_key.get_secret_value())
 
 
 def hash_password(password: str) -> str:
@@ -75,6 +75,7 @@ def set_session(response, username: str) -> None:
         max_age=settings.session_max_age,
         httponly=True,
         samesite="lax",
+        secure=settings.secure_cookies,
     )
 
 
@@ -92,7 +93,7 @@ async def seed_admin() -> None:
         logger.info("No users found — seeding admin user '%s'", settings.admin_username)
         user = User(
             username=settings.admin_username,
-            password_hash=hash_password(settings.admin_password),
+            password_hash=hash_password(settings.admin_password.get_secret_value()),
             is_admin=True,
         )
         session.add(user)

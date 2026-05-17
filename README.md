@@ -45,6 +45,7 @@ All settings use the `MARVIN_` prefix and can be set via `.env` or environment v
 | `MARVIN_FETCH_INTERVAL_MINUTES` | `60` | Background watchlist refresh cadence |
 | `MARVIN_APP_BASE_URL` | — | Public URL of your instance; included as `marvin_url` in webhook payloads |
 | `MARVIN_HTTPX_TIMEOUT` | `15.0` | Outbound HTTP timeout in seconds |
+| `MARVIN_SECURE_COOKIES` | `true` | Set `Secure` flag on session cookies — set to `false` for plain HTTP dev |
 
 ## Supported stores
 

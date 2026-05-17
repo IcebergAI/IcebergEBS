@@ -38,8 +38,8 @@ async def refresh_watchlist(client: httpx.AsyncClient) -> None:
         for ext in watchlist:
             try:
                 await _refresh_one(ext, session, client)
-            except Exception as exc:
-                logger.error("Unexpected error refreshing %s: %s", ext.extension_id, exc)
+            except Exception:
+                logger.exception("Unexpected error refreshing %s/%s", ext.store, ext.extension_id)
 
         await session.commit()
     logger.info("Watchlist refresh complete (%d extensions)", len(watchlist))

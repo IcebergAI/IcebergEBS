@@ -1,11 +1,11 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from fastapi import APIRouter, Depends, HTTPException, Response
+from pydantic import BaseModel, Field
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from app.auth import hash_password, verify_password, require_admin, require_auth
+from app.auth import clear_session, hash_password, verify_password, require_admin, require_auth
 from app.database import get_session
 from app.models import AlertDestination, AlertLog, AlertRule, Extension, FetchLog, InstallCountHistory, User
 
@@ -21,14 +21,14 @@ class UserOut(BaseModel):
 
 class CreateUserIn(BaseModel):
     username: str
-    password: str
+    password: str = Field(min_length=8)
     email: str | None = None
     is_admin: bool = False
 
 
 class ChangePasswordIn(BaseModel):
     current_password: str
-    new_password: str
+    new_password: str = Field(min_length=8)
 
 
 @router.get("/users", response_model=list[UserOut])
@@ -80,9 +80,6 @@ async def delete_user(
         select(Extension).where(Extension.user_id == user_id)
     )).all()
     for ext in extensions:
-        await session.exec(
-            select(FetchLog).where(FetchLog.extension_id == ext.id)
-        )
         logs = (await session.exec(select(FetchLog).where(FetchLog.extension_id == ext.id))).all()
         for log in logs:
             await session.delete(log)
@@ -124,6 +121,7 @@ async def delete_user(
 @router.patch("/users/me/password")
 async def change_password(
     body: ChangePasswordIn,
+    response: Response,
     current_user: Annotated[User, Depends(require_auth)],
     session: Annotated[AsyncSession, Depends(get_session)],
 ):
@@ -132,4 +130,5 @@ async def change_password(
     current_user.password_hash = hash_password(body.new_password)
     session.add(current_user)
     await session.commit()
+    clear_session(response)
     return {"ok": True}

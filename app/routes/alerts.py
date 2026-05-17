@@ -1,8 +1,11 @@
+import ipaddress
+import logging
 from datetime import datetime
 from typing import Annotated
+from urllib.parse import urlparse
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
@@ -12,9 +15,41 @@ from app.config import settings
 from app.database import get_session
 from app.models import AlertDestination, AlertLog, AlertRule, Extension, User
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter()
 
 VALID_EVENT_TYPES = {"risk_level_change", "publisher_change", "permission_change", "new_version"}
+
+_BLOCKED_HOSTNAMES = frozenset({"localhost", "localtest.me"})
+
+
+def _validate_webhook_url(url: str) -> None:
+    """Reject URLs that could be used for SSRF against internal services."""
+    try:
+        parsed = urlparse(url)
+    except Exception:
+        raise HTTPException(status_code=422, detail="Invalid webhook URL")
+
+    if parsed.scheme not in ("http", "https"):
+        raise HTTPException(status_code=422, detail="Webhook URL must use http or https")
+
+    hostname = (parsed.hostname or "").lower()
+    if not hostname:
+        raise HTTPException(status_code=422, detail="Webhook URL has no hostname")
+
+    if hostname in _BLOCKED_HOSTNAMES:
+        raise HTTPException(status_code=422, detail="Webhook URL hostname is not allowed")
+
+    try:
+        addr = ipaddress.ip_address(hostname)
+        if not addr.is_global:
+            raise HTTPException(
+                status_code=422,
+                detail="Webhook URL must not point to a private or reserved address",
+            )
+    except ValueError:
+        pass  # Not a bare IP — hostname is fine
 
 
 # ---------------------------------------------------------------------------
@@ -85,6 +120,7 @@ async def create_destination(
     current_user: Annotated[User, Depends(require_auth)],
     session: Annotated[AsyncSession, Depends(get_session)],
 ):
+    _validate_webhook_url(body.target)
     dest = AlertDestination(
         user_id=current_user.id,
         label=body.label,
@@ -110,6 +146,7 @@ async def update_destination(
     if body.label is not None:
         dest.label = body.label
     if body.target is not None:
+        _validate_webhook_url(body.target)
         dest.target = body.target
     if body.enabled is not None:
         dest.enabled = body.enabled
@@ -243,7 +280,7 @@ async def delete_rule(
 async def alert_log(
     current_user: Annotated[User, Depends(require_auth)],
     session: Annotated[AsyncSession, Depends(get_session)],
-    limit: int = 50,
+    limit: Annotated[int, Query(ge=1, le=500)] = 50,
 ):
     rows = (await session.exec(
         select(AlertLog, AlertRule, AlertDestination, Extension)
@@ -300,7 +337,7 @@ async def test_destination(
     }
     client: httpx.AsyncClient = request.app.state.http_client
     try:
-        resp = await client.post(dest.target, json=payload, timeout=10.0)
+        resp = await client.post(dest.target, json=payload, timeout=10.0, follow_redirects=False)
         resp.raise_for_status()
         return {"ok": True, "status_code": resp.status_code}
     except Exception as exc:

@@ -40,7 +40,7 @@ class Extension(SQLModel, table=True):
 
 class FetchLog(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
-    extension_id: int = Field(foreign_key="extension.id")
+    extension_id: int = Field(foreign_key="extension.id", index=True)
     fetched_at: datetime = Field(default_factory=_utcnow)
     success: bool
     error_message: Optional[str] = None
@@ -50,7 +50,7 @@ class FetchLog(SQLModel, table=True):
 
 class InstallCountHistory(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
-    extension_id: int = Field(foreign_key="extension.id")
+    extension_id: int = Field(foreign_key="extension.id", index=True)
     recorded_at: datetime = Field(default_factory=_utcnow)
     install_count: int
 

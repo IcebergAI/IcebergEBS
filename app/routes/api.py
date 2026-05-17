@@ -1,7 +1,11 @@
 import json
+import logging
+import re
 from datetime import datetime
 from typing import Annotated, Literal
 from urllib.parse import urlparse, parse_qs
+
+logger = logging.getLogger(__name__)
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -12,7 +16,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 from app.auth import require_auth
 from app.database import get_session
 from app.fetchers.base import FetchError
-from app.models import Extension, FetchLog, InstallCountHistory, User
+from app.models import AlertLog, AlertRule, Extension, FetchLog, InstallCountHistory, User
 from app.services import fetch_and_store
 
 router = APIRouter()
@@ -97,6 +101,29 @@ class HistoryPoint(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Extension ID validation
+# ---------------------------------------------------------------------------
+
+_CHROME_EDGE_ID_RE = re.compile(r'^[a-p]{32}$')
+_VSCODE_ID_RE = re.compile(r'^[a-zA-Z0-9][a-zA-Z0-9_-]*\.[a-zA-Z0-9][a-zA-Z0-9_.-]*$')
+
+
+def _validate_extension_id(store: StoreType, extension_id: str) -> None:
+    if store in ("chrome", "edge"):
+        if not _CHROME_EDGE_ID_RE.match(extension_id):
+            raise HTTPException(
+                status_code=422,
+                detail=f"Invalid {store} extension ID — expected 32 characters a–p",
+            )
+    elif store == "vscode":
+        if not _VSCODE_ID_RE.match(extension_id):
+            raise HTTPException(
+                status_code=422,
+                detail="Invalid VS Code extension ID — expected publisher.name format",
+            )
+
+
+# ---------------------------------------------------------------------------
 # URL normalisation helpers
 # ---------------------------------------------------------------------------
 
@@ -140,6 +167,7 @@ async def _fetch_and_score(
     try:
         ext = await fetch_and_store(ext, session, client)
     except FetchError as exc:
+        logger.warning("Fetch failed for extension %d: %s", ext.id, exc)
         session.add(FetchLog(
             extension_id=ext.id,
             success=False,
@@ -147,7 +175,7 @@ async def _fetch_and_score(
             risk_score_before=score_before,
         ))
         await session.commit()
-        raise HTTPException(status_code=502, detail=str(exc))
+        raise HTTPException(status_code=502, detail="Failed to fetch extension from store")
     await session.commit()
     await session.refresh(ext)
     return ext
@@ -178,6 +206,7 @@ async def add_extension(
     session: Annotated[AsyncSession, Depends(get_session)],
 ):
     extension_id = normalise_extension_id(body.store, body.extension_id)
+    _validate_extension_id(body.store, extension_id)
 
     existing = (await session.exec(
         select(Extension).where(
@@ -227,6 +256,17 @@ async def delete_extension(
     ext = await session.get(Extension, ext_id)
     if not ext or ext.user_id != current_user.id:
         raise HTTPException(status_code=404, detail="Not found")
+
+    # Remove all child rows referencing this extension
+    for log in (await session.exec(select(AlertLog).where(AlertLog.extension_id == ext_id))).all():
+        await session.delete(log)
+    for rule in (await session.exec(select(AlertRule).where(AlertRule.extension_id == ext_id))).all():
+        await session.delete(rule)
+    for fl in (await session.exec(select(FetchLog).where(FetchLog.extension_id == ext_id))).all():
+        await session.delete(fl)
+    for h in (await session.exec(select(InstallCountHistory).where(InstallCountHistory.extension_id == ext_id))).all():
+        await session.delete(h)
+
     await session.delete(ext)
     await session.commit()
     return {"ok": True}

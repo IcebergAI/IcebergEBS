@@ -24,20 +24,21 @@ def _get_flash(request: Request) -> str | None:
     if not raw:
         return None
     try:
-        s = URLSafeTimedSerializer(settings.secret_key)
+        s = URLSafeTimedSerializer(settings.secret_key.get_secret_value())
         return s.loads(raw, max_age=10)
-    except (BadSignature, Exception):
+    except Exception:
         return None
 
 
 def _set_flash(response, message: str) -> None:
-    s = URLSafeTimedSerializer(settings.secret_key)
+    s = URLSafeTimedSerializer(settings.secret_key.get_secret_value())
     response.set_cookie(
         key=_FLASH_COOKIE,
         value=s.dumps(message),
         max_age=10,
         httponly=True,
         samesite="lax",
+        secure=settings.secure_cookies,
     )
 
 

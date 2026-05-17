@@ -61,13 +61,13 @@ async def test_create_user(client):
 
 
 async def test_create_user_duplicate(client):
-    await client.post("/api/users", json={"username": "dupeuser", "password": "pw"})
-    r = await client.post("/api/users", json={"username": "dupeuser", "password": "pw"})
+    await client.post("/api/users", json={"username": "dupeuser", "password": "password123"})
+    r = await client.post("/api/users", json={"username": "dupeuser", "password": "password123"})
     assert r.status_code == 409
 
 
 async def test_delete_user(client):
-    r = await client.post("/api/users", json={"username": "todelete", "password": "pw"})
+    r = await client.post("/api/users", json={"username": "todelete", "password": "password123"})
     uid = r.json()["id"]
 
     r_del = await client.delete(f"/api/users/{uid}")

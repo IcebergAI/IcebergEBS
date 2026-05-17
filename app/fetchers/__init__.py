@@ -11,4 +11,6 @@ def get_fetcher(store: str, client: httpx.AsyncClient) -> BaseFetcher:
         return ChromeFetcher(client)
     if store == "vscode":
         return VSCodeFetcher(client)
-    return EdgeFetcher(client)
+    if store == "edge":
+        return EdgeFetcher(client)
+    raise ValueError(f"Unknown store: {store!r}")

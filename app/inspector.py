@@ -26,6 +26,11 @@ class InspectorError(Exception):
     pass
 
 
+_MAX_FILE_COUNT = 500
+_MAX_JS_BYTES = 5 * 1024 * 1024   # 5 MB per JS file
+_MAX_TOTAL_BYTES = 50 * 1024 * 1024  # 50 MB total declared uncompressed
+
+
 # Domains that are noise — well-known CDNs/services not worth flagging
 _SAFE_DOMAINS = {
     "googleapis.com", "gstatic.com", "jsdelivr.net", "cdnjs.cloudflare.com",
@@ -49,9 +54,17 @@ def inspect_package(data: bytes) -> PackageAnalysis:
     except zipfile.BadZipFile as exc:
         raise InspectorError(f"Not a valid zip: {exc}")
 
+    infolist = zf.infolist()
+    if len(infolist) > _MAX_FILE_COUNT:
+        raise InspectorError(f"Package contains too many files ({len(infolist)})")
+
+    total_declared = sum(i.file_size for i in infolist)
+    if total_declared > _MAX_TOTAL_BYTES:
+        raise InspectorError(f"Package declared uncompressed size too large ({total_declared} bytes)")
+
     analysis = PackageAnalysis()
-    analysis.file_count = len(zf.namelist())
-    analysis.total_size_bytes = sum(i.file_size for i in zf.infolist())
+    analysis.file_count = len(infolist)
+    analysis.total_size_bytes = total_declared
 
     manifest = _load_manifest(zf)
     if manifest:
@@ -59,8 +72,15 @@ def inspect_package(data: bytes) -> PackageAnalysis:
 
     js_files = [n for n in zf.namelist() if n.endswith(".js")]
     for name in js_files:
+        info = zf.getinfo(name)
+        if info.file_size > _MAX_JS_BYTES:
+            continue  # skip oversized files
         try:
-            source = zf.read(name).decode("utf-8", errors="replace")
+            with zf.open(name) as f:
+                raw = f.read(_MAX_JS_BYTES + 1)
+            if len(raw) > _MAX_JS_BYTES:
+                continue
+            source = raw.decode("utf-8", errors="replace")
         except Exception:
             continue
         _analyse_js(source, analysis)

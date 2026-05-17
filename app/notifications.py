@@ -127,7 +127,7 @@ async def fire_alerts(
         success = True
         error: str | None = None
         try:
-            resp = await client.post(dest.target, json=payload, timeout=10.0)
+            resp = await client.post(dest.target, json=payload, timeout=10.0, follow_redirects=False)
             resp.raise_for_status()
             logger.info(
                 "Alert webhook fired: event=%s ext=%d dest=%d status=%d",
