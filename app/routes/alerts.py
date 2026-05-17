@@ -283,9 +283,20 @@ async def test_destination(
     dest = await session.get(AlertDestination, dest_id)
     if not dest or dest.user_id != current_user.id:
         raise HTTPException(status_code=404, detail="Not found")
-    payload: dict = {"event": "test", "message": "Test alert from Marvin"}
+    ext_payload: dict = {
+        "id": 0,
+        "name": "Example Extension",
+        "store": "chrome",
+        "store_url": "https://chromewebstore.google.com/detail/example",
+    }
     if settings.app_base_url:
-        payload["marvin_url"] = settings.app_base_url
+        ext_payload["marvin_url"] = f"{settings.app_base_url.rstrip('/')}/extensions/0"
+    payload = {
+        "event": "test",
+        "extension": ext_payload,
+        "change": {"old": "low", "new": "high"},
+        "risk_score": 62,
+    }
     client: httpx.AsyncClient = request.app.state.http_client
     try:
         resp = await client.post(dest.target, json=payload, timeout=10.0)

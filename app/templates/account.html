@@ -64,11 +64,11 @@
             </td>
             <td>
               <div class="flex justify-end items-center gap-2">
-                <span x-show="testStatus[d.id] && testStatus[d.id].msg"
-                      :style="testStatus[d.id] && testStatus[d.id].ok ? 'color:var(--risk-low)' : 'color:var(--risk-critical)'"
+                <span x-show="testResultId === d.id && testResultMsg"
+                      :style="testResultOk ? 'color:var(--risk-low)' : 'color:var(--risk-critical)'"
                       class="text-[11.5px]"
-                      x-text="testStatus[d.id] ? testStatus[d.id].msg : ''"></span>
-                <button class="btn btn-secondary btn-sm" @click="testDest(d)" :disabled="testStatus[d.id] && testStatus[d.id].loading">Test</button>
+                      x-text="testResultMsg"></span>
+                <button class="btn btn-secondary btn-sm" @click="testDest(d)" :disabled="testingId === d.id">Test</button>
                 <button class="btn btn-danger btn-sm" @click="deleteDest(d.id)">Delete</button>
               </div>
             </td>
@@ -209,7 +209,8 @@ function accountPrefs() {
     extensions: {{ extensions | tojson }},
     alertLog: [],
     showAddDest: false, destSaving: false, destError: '',
-    destForm: { label: '', target: '' }, testStatus: {},
+    destForm: { label: '', target: '' },
+    testingId: null, testResultId: null, testResultOk: false, testResultMsg: '',
     showAddRule: false, ruleSaving: false, ruleError: '',
     ruleForm: { event_type: 'risk_level_change', destination_id: '', extension_id: '' },
     globalError: '',
@@ -243,14 +244,24 @@ function accountPrefs() {
       if (r.ok) d.enabled = !d.enabled; else this.globalError = 'Update failed';
     },
     async testDest(d) {
-      this.testStatus[d.id] = { loading:true, ok:false, msg:'' };
+      this.testingId = d.id;
+      this.testResultId = null;
+      this.testResultMsg = '';
       try {
         const r = await fetch(`/api/alerts/destinations/${d.id}/test`, { method:'POST' });
         const data = await r.json();
-        if (r.ok) this.testStatus[d.id] = { loading:false, ok:true, msg:'✓ delivered' };
-        else this.testStatus[d.id] = { loading:false, ok:false, msg:'✗ ' + (data.detail || 'failed') };
-      } catch { this.testStatus[d.id] = { loading:false, ok:false, msg:'✗ network error' }; }
-      setTimeout(() => { this.testStatus[d.id] = null; }, 4000);
+        this.testResultOk = r.ok;
+        this.testResultMsg = r.ok ? '✓ delivered' : '✗ ' + (data.detail || 'failed');
+      } catch {
+        this.testResultOk = false;
+        this.testResultMsg = '✗ network error';
+      } finally {
+        this.testingId = null;
+        this.testResultId = d.id;
+      }
+      setTimeout(() => {
+        if (this.testResultId === d.id) { this.testResultId = null; this.testResultMsg = ''; }
+      }, 4000);
     },
     async deleteDest(id) {
       if (!confirm('Delete this destination? Any rules using it will also be removed.')) return;

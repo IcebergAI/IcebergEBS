@@ -423,6 +423,9 @@ async def test_test_destination_success(client, test_db, admin_user):
         call_args = fastapi_app.state.http_client.post.call_args
         sent = call_args.kwargs["json"]
         assert sent["event"] == "test"
+        assert "extension" in sent
+        assert "change" in sent
+        assert "risk_score" in sent
     finally:
         fastapi_app.state.http_client = original
 
