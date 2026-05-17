@@ -63,6 +63,18 @@ def detect_changes(old: Extension, new: Extension) -> list[ChangeEvent]:
     return events
 
 
+def _alert_text(event_type: str, name: str, old: object, new: object) -> str:
+    if event_type == "risk_level_change":
+        return f"Marvin: {name} risk level changed {old} → {new}"
+    if event_type == "publisher_change":
+        return f"Marvin: {name} publisher changed from \"{old}\" to \"{new}\""
+    if event_type == "permission_change":
+        return f"Marvin: {name} permissions changed"
+    if event_type == "new_version":
+        return f"Marvin: {name} updated to version {new}"
+    return f"Marvin: {name} — {event_type}"
+
+
 async def fire_alerts(
     events: list[ChangeEvent],
     extension: Extension,
@@ -103,7 +115,9 @@ async def fire_alerts(
             continue
 
         event = event_map[rule.event_type]
+        text = _alert_text(event.event_type, extension.name, event.old_value, event.new_value)
         payload = {
+            "text": text,
             "event": event.event_type,
             "extension": ext_payload,
             "change": {"old": event.old_value, "new": event.new_value},

@@ -292,6 +292,7 @@ async def test_destination(
     if settings.app_base_url:
         ext_payload["marvin_url"] = f"{settings.app_base_url.rstrip('/')}/extensions/0"
     payload = {
+        "text": f"Marvin test alert from destination \"{dest.label}\"",
         "event": "test",
         "extension": ext_payload,
         "change": {"old": "low", "new": "high"},
