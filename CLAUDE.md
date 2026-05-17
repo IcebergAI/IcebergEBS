@@ -21,8 +21,8 @@ App will always run on Python 3.14 or later.
 ### UI / Front end
 - AlpineJS (via CDN)
 - Tailwind CSS (via CDN in dev; build output at `static/css/app.css`)
-- JetBrains Mono (Google Fonts)
-- Gruvbox dark colour palette (CSS custom properties in `static/css/app.css`)
+- IBM Plex Sans + IBM Plex Mono (Google Fonts)
+- Custom light/dark design system using CSS custom properties (`static/css/app.css`)
 
 
 ## Architecture
@@ -114,7 +114,15 @@ venv/bin/python -m pytest tests/ -v
 - Scoring functions handle naive datetimes from external sources by attaching UTC tzinfo before comparison
 
 ## Styling, Theming and Design
-Clean dark UI. CSS custom properties in `static/css/app.css` — ink-* scale for neutral tones (ink-1 darkest background → ink-8 near-white text), risk-* for severity colours. Tailwind CSS utility classes via CDN for layout; component classes (`surface`, `btn`, `badge`, `label-cap`, `page-title`, `section-title`) defined in `app.css`.
+Light/dark UI with a toggle in the user dropdown. Theme preference is stored in `localStorage` under `marvin-theme` (`'light'` or `'dark'`) and applied to `<html data-theme="...">` via an inline script in `<head>` before first paint (anti-flash).
+
+CSS custom properties in `static/css/app.css`:
+- `--ink-0` (page background, lightest) → `--ink-8` (near-black text, darkest) in light mode; the scale inverts in `[data-theme="dark"]`
+- `--surface` replaces hardcoded `white` on all card/panel backgrounds
+- `--risk-*` semantic colours for severity levels (low/medium/high/critical)
+- `--badge-*-color` and `--perm-*-color` for text inside badges (need separate dark-mode values)
+
+Tailwind CSS utility classes via CDN for layout; component classes (`surface`, `btn`, `badge`, `label-cap`, `page-title`, `section-title`) defined in `app.css`.
 
 ### Alpine.js x-data pattern
 **Never embed `{{ data | tojson }}` directly inside an `x-data="{ ... }"` HTML attribute.** JSON contains `"` which terminates the HTML attribute, breaking the component silently. Always use the function pattern instead:

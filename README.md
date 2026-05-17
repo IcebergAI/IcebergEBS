@@ -64,6 +64,7 @@ Example payload:
 
 ```json
 {
+  "text": "Marvin: uBlock Origin risk level changed medium → high",
   "event": "risk_level_change",
   "extension": {
     "id": 42,

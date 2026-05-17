@@ -78,7 +78,7 @@
     </p>
     <ul class="text-[13.5px] leading-relaxed pl-5 list-disc" style="color:var(--ink-6)">
       <li>Admin creates users via <a href="/admin/users">admin / users</a>. There is no self-registration.</li>
-      <li>Change your password under the username menu → <em>Change password</em>.</li>
+      <li>Change your password or toggle dark mode under the username menu in the top bar.</li>
       <li>Admins can delete users — all their extensions, alert rules, and webhooks are removed.</li>
     </ul>
   </div>
@@ -103,6 +103,7 @@
 
     <div class="label-cap mt-5 mb-2">Example payload</div>
 <pre class="mono text-[12px] p-3 rounded-lg overflow-x-auto" style="background:var(--ink-1);color:var(--ink-7);border:1px solid var(--ink-3)">{
+  "text": "Marvin: uBlock Origin risk level changed medium → high",
   "event": "risk_level_change",
   "extension": {
     "id": 42,
