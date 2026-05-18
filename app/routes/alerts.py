@@ -276,16 +276,10 @@ async def delete_rule(
 # Alert log
 # ---------------------------------------------------------------------------
 
-@router.get("/alerts/log")
-async def alert_log(
-    current_user: Annotated[User, Depends(require_auth)],
-    session: Annotated[AsyncSession, Depends(get_session)],
-    limit: Annotated[int, Query(ge=1, le=500)] = 50,
-):
-    # Fetch the user's rules first so we can look up labels without a
-    # four-way JOIN that silently drops rows when an extension is deleted.
+async def get_alert_log(user_id: int, session: AsyncSession, limit: int = 50) -> list[dict]:
+    """Shared helper used by both the JSON API and the server-side page render."""
     rules = (await session.exec(
-        select(AlertRule).where(AlertRule.user_id == current_user.id)
+        select(AlertRule).where(AlertRule.user_id == user_id)
     )).all()
     if not rules:
         return []
@@ -330,6 +324,15 @@ async def alert_log(
             "error": log.error,
         })
     return result
+
+
+@router.get("/alerts/log")
+async def alert_log(
+    current_user: Annotated[User, Depends(require_auth)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+    limit: Annotated[int, Query(ge=1, le=500)] = 50,
+):
+    return await get_alert_log(current_user.id, session, limit)
 
 
 # ---------------------------------------------------------------------------

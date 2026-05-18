@@ -11,7 +11,8 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 from app.auth import clear_session, get_current_user, require_auth, require_admin, set_session, verify_credentials
 from app.config import settings
 from app.database import get_session
-from app.models import AlertDestination, AlertLog, AlertRule, Extension, FetchLog, User
+from app.models import AlertDestination, AlertRule, Extension, FetchLog, User
+from app.routes.alerts import get_alert_log
 
 router = APIRouter()
 templates = Jinja2Templates(directory="app/templates")
@@ -259,38 +260,7 @@ async def account_page(
         for e in extensions
     ]
 
-    # Load alert log server-side so it renders immediately without a JS fetch
-    all_rules = rules  # already fetched
-    alert_log_data: list[dict] = []
-    if all_rules:
-        rule_ids = [r.id for r in all_rules]
-        rule_map = {r.id: r for r in all_rules}
-        logs = (await session.exec(
-            select(AlertLog)
-            .where(AlertLog.rule_id.in_(rule_ids))
-            .order_by(AlertLog.sent_at.desc())
-            .limit(50)
-        )).all()
-        if logs:
-            all_ext_ids = list({log.extension_id for log in logs})
-            log_exts = (await session.exec(
-                select(Extension).where(Extension.id.in_(all_ext_ids))
-            )).all()
-            log_ext_map = {e.id: e for e in log_exts}
-            for log in logs:
-                rule = rule_map.get(log.rule_id)
-                dest_label = dest_map.get(rule.destination_id, "—") if rule else "—"
-                ext = log_ext_map.get(log.extension_id)
-                alert_log_data.append({
-                    "id": log.id,
-                    "sent_at": log.sent_at.isoformat(),
-                    "event_type": log.event_type,
-                    "extension_id": log.extension_id,
-                    "ext_name": (ext.name or ext.extension_id) if ext else f"Extension {log.extension_id}",
-                    "dest_label": dest_label,
-                    "success": log.success,
-                    "error": log.error,
-                })
+    alert_log_data = await get_alert_log(current_user.id, session)
 
     return _render(request, "account.html", {
         "destinations": destinations_data,
