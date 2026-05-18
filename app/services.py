@@ -3,6 +3,7 @@ import logging
 from datetime import datetime, timezone
 
 import httpx
+from sqlalchemy.ext.asyncio import AsyncEngine
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
@@ -20,11 +21,13 @@ async def fetch_and_store(
     ext: Extension,
     session: AsyncSession,
     client: httpx.AsyncClient,
+    engine: AsyncEngine | None = None,
 ) -> Extension:
     """Fetch metadata + package, run inspection and scoring, update the extension record.
 
     Adds a success FetchLog and stages all changes but does NOT commit — the caller
     decides when to commit (immediately for API routes, batched for the scheduler).
+    AlertLog entries from fire_alerts are committed immediately in their own session.
 
     Raises FetchError if the remote fetch fails; the caller is responsible for adding
     a failure FetchLog and handling the error appropriately.
@@ -130,8 +133,9 @@ async def fetch_and_store(
 
     try:
         events = detect_changes(old_snap, ext)
-        await fire_alerts(events, ext, session, client)
+        if engine is not None:
+            await fire_alerts(events, ext, engine, client)
     except Exception as exc:
-        logger.warning("Alert processing failed for %s: %s", ext.extension_id, exc)
+        logger.exception("Alert processing failed for %s", ext.extension_id)
 
     return ext

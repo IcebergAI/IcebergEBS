@@ -5,6 +5,7 @@ from typing import Any
 
 import httpx
 from sqlalchemy import or_
+from sqlalchemy.ext.asyncio import AsyncEngine
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
@@ -78,74 +79,81 @@ def _alert_text(event_type: str, name: str, old: object, new: object) -> str:
 async def fire_alerts(
     events: list[ChangeEvent],
     extension: Extension,
-    session: AsyncSession,
+    engine: AsyncEngine,
     client: httpx.AsyncClient,
 ) -> None:
-    """Find alert rules matching the given events and POST webhook payloads."""
+    """Find alert rules matching the given events and POST webhook payloads.
+
+    Uses its own dedicated session so AlertLog rows are committed immediately,
+    independent of any caller transaction that might later be rolled back.
+    """
     if not events or extension.user_id is None:
         return
 
     event_map = {e.event_type: e for e in events}
     event_types = list(event_map.keys())
 
-    rules = (await session.exec(
-        select(AlertRule).where(
-            AlertRule.user_id == extension.user_id,
-            AlertRule.enabled == True,  # noqa: E712
-            AlertRule.event_type.in_(event_types),
-            or_(AlertRule.extension_id == None, AlertRule.extension_id == extension.id),  # noqa: E711
-        )
-    )).all()
+    async with AsyncSession(engine) as session:
+        rules = (await session.exec(
+            select(AlertRule).where(
+                AlertRule.user_id == extension.user_id,
+                AlertRule.enabled == True,  # noqa: E712
+                AlertRule.event_type.in_(event_types),
+                or_(AlertRule.extension_id == None, AlertRule.extension_id == extension.id),  # noqa: E711
+            )
+        )).all()
 
-    if not rules:
-        return
+        if not rules:
+            return
 
-    ext_payload = {
-        "id": extension.id,
-        "name": extension.name,
-        "store": extension.store,
-        "store_url": extension.store_url,
-    }
-    if settings.app_base_url:
-        ext_payload["marvin_url"] = f"{settings.app_base_url.rstrip('/')}/extensions/{extension.id}"
-
-    for rule in rules:
-        dest = await session.get(AlertDestination, rule.destination_id)
-        if not dest or not dest.enabled:
-            continue
-
-        event = event_map[rule.event_type]
-        text = _alert_text(event.event_type, extension.name, event.old_value, event.new_value)
-        payload = {
-            "text": text,
-            "event": event.event_type,
-            "extension": ext_payload,
-            "change": {"old": event.old_value, "new": event.new_value},
-            "risk_score": extension.risk_score,
+        ext_payload = {
+            "id": extension.id,
+            "name": extension.name,
+            "store": extension.store,
+            "store_url": extension.store_url,
         }
+        if settings.app_base_url:
+            ext_payload["marvin_url"] = f"{settings.app_base_url.rstrip('/')}/extensions/{extension.id}"
 
-        success = True
-        error: str | None = None
-        try:
-            resp = await client.post(dest.target, json=payload, timeout=10.0, follow_redirects=False)
-            resp.raise_for_status()
-            logger.info(
-                "Alert webhook fired: event=%s ext=%d dest=%d status=%d",
-                event.event_type, extension.id, dest.id, resp.status_code,
-            )
-        except Exception as exc:
-            success = False
-            error = str(exc)
-            logger.warning(
-                "Alert webhook failed: event=%s ext=%d dest=%d error=%s",
-                event.event_type, extension.id, dest.id, exc,
-            )
+        for rule in rules:
+            dest = await session.get(AlertDestination, rule.destination_id)
+            if not dest or not dest.enabled:
+                continue
 
-        session.add(AlertLog(
-            rule_id=rule.id,
-            extension_id=extension.id,
-            event_type=event.event_type,
-            detail=json.dumps({"old": event.old_value, "new": event.new_value}),
-            success=success,
-            error=error,
-        ))
+            event = event_map[rule.event_type]
+            text = _alert_text(event.event_type, extension.name, event.old_value, event.new_value)
+            payload = {
+                "text": text,
+                "event": event.event_type,
+                "extension": ext_payload,
+                "change": {"old": event.old_value, "new": event.new_value},
+                "risk_score": extension.risk_score,
+            }
+
+            success = True
+            error: str | None = None
+            try:
+                resp = await client.post(dest.target, json=payload, timeout=10.0, follow_redirects=False)
+                resp.raise_for_status()
+                logger.info(
+                    "Alert webhook fired: event=%s ext=%d dest=%d status=%d",
+                    event.event_type, extension.id, dest.id, resp.status_code,
+                )
+            except Exception as exc:
+                success = False
+                error = str(exc)
+                logger.warning(
+                    "Alert webhook failed: event=%s ext=%d dest=%d error=%s",
+                    event.event_type, extension.id, dest.id, exc,
+                )
+
+            session.add(AlertLog(
+                rule_id=rule.id,
+                extension_id=extension.id,
+                event_type=event.event_type,
+                detail=json.dumps({"old": event.old_value, "new": event.new_value}),
+                success=success,
+                error=error,
+            ))
+
+        await session.commit()

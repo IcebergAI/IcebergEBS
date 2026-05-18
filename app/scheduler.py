@@ -14,35 +14,41 @@ from app.services import fetch_and_store
 logger = logging.getLogger(__name__)
 
 
-async def _refresh_one(ext: Extension, session: AsyncSession, client: httpx.AsyncClient) -> None:
-    score_before = ext.risk_score
-    try:
-        await fetch_and_store(ext, session, client)
-    except FetchError as exc:
-        logger.warning("Fetch failed for %s/%s: %s", ext.store, ext.extension_id, exc)
-        session.add(FetchLog(
-            extension_id=ext.id,
-            success=False,
-            error_message=str(exc),
-            risk_score_before=score_before,
-        ))
+async def _refresh_one(ext_id: int, client: httpx.AsyncClient) -> None:
+    """Refresh a single extension in its own session+commit so failures are isolated."""
+    async with AsyncSession(engine) as session:
+        ext = await session.get(Extension, ext_id)
+        if not ext or not ext.watchlist:
+            return
+        score_before = ext.risk_score
+        try:
+            await fetch_and_store(ext, session, client, engine)
+            await session.commit()
+        except FetchError as exc:
+            logger.warning("Fetch failed for %s/%s: %s", ext.store, ext.extension_id, exc)
+            session.add(FetchLog(
+                extension_id=ext.id,
+                success=False,
+                error_message=str(exc),
+                risk_score_before=score_before,
+            ))
+            await session.commit()
+        except Exception:
+            logger.exception("Unexpected error refreshing ext_id=%d", ext_id)
+            await session.rollback()
 
 
 async def refresh_watchlist(client: httpx.AsyncClient) -> None:
     logger.info("Starting watchlist refresh")
     async with AsyncSession(engine) as session:
-        watchlist = (await session.exec(
-            select(Extension).where(Extension.watchlist == True)
+        ext_ids = (await session.exec(
+            select(Extension.id).where(Extension.watchlist == True)  # noqa: E712
         )).all()
 
-        for ext in watchlist:
-            try:
-                await _refresh_one(ext, session, client)
-            except Exception:
-                logger.exception("Unexpected error refreshing %s/%s", ext.store, ext.extension_id)
+    for ext_id in ext_ids:
+        await _refresh_one(ext_id, client)
 
-        await session.commit()
-    logger.info("Watchlist refresh complete (%d extensions)", len(watchlist))
+    logger.info("Watchlist refresh complete (%d extensions)", len(ext_ids))
 
 
 def create_scheduler(client: httpx.AsyncClient) -> AsyncIOScheduler:

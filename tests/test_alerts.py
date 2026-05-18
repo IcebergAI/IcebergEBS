@@ -239,7 +239,7 @@ async def test_fire_alerts_posts_webhook(test_db, admin_user):
 
         events = [ChangeEvent("risk_level_change", "low", "high")]
         async with httpx.AsyncClient() as http:
-            await fire_alerts(events, ext, session, http)
+            await fire_alerts(events, ext, test_db, http)
 
     assert respx.calls.call_count == 1
     sent = json.loads(respx.calls[0].request.content)
@@ -289,7 +289,7 @@ async def test_fire_alerts_skips_disabled_rule(test_db, admin_user):
 
         events = [ChangeEvent("risk_level_change", "low", "high")]
         async with httpx.AsyncClient() as http:
-            await fire_alerts(events, ext, session, http)
+            await fire_alerts(events, ext, test_db, http)
 
     assert respx.calls.call_count == 0
 
@@ -341,7 +341,7 @@ async def test_fire_alerts_extension_scoped_rule(test_db, admin_user):
         events = [ChangeEvent("new_version", "1.0", "2.0")]
         async with httpx.AsyncClient() as http:
             # Fire for ext2 — rule should NOT match
-            await fire_alerts(events, ext2, session, http)
+            await fire_alerts(events, ext2, test_db, http)
 
     assert respx.calls.call_count == 0
 

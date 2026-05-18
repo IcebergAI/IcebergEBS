@@ -14,7 +14,7 @@ from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.auth import require_auth
-from app.database import get_session
+from app.database import engine, get_session
 from app.fetchers.base import FetchError
 from app.models import AlertLog, AlertRule, Extension, FetchLog, InstallCountHistory, User
 from app.services import fetch_and_store
@@ -165,7 +165,7 @@ async def _fetch_and_score(
 ) -> Extension:
     score_before = ext.risk_score
     try:
-        ext = await fetch_and_store(ext, session, client)
+        ext = await fetch_and_store(ext, session, client, engine)
     except FetchError as exc:
         logger.warning("Fetch failed for extension %d: %s", ext.id, exc)
         session.add(FetchLog(
