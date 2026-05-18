@@ -58,8 +58,6 @@ async def fetch_and_store(
             logger.debug("Inspector failed for %s: %s", ext.extension_id, exc)
 
     if analysis:
-        if not metadata.version and analysis.version:
-            metadata.version = analysis.version
         if not metadata.publisher and analysis.author:
             metadata.publisher = analysis.author
 
@@ -93,7 +91,11 @@ async def fetch_and_store(
     ext.name = metadata.name
     ext.publisher = metadata.publisher
     ext.description = metadata.description
-    ext.version = metadata.version
+    # Only update version when the store returns a non-empty value; keeping
+    # the stored version avoids spurious new_version alerts when Chrome HTML
+    # scraping temporarily fails and returns an empty string.
+    if metadata.version:
+        ext.version = metadata.version
     ext.install_count = metadata.install_count
     ext.last_updated = metadata.last_updated
     if analysis:
