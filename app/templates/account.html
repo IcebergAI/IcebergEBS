@@ -164,7 +164,10 @@
 
 {# ── Activity ────────────────────────────────────────────── #}
 <section>
-  <h2 class="section-title">Recent activity</h2>
+  <div class="flex items-center justify-between mb-3">
+    <h2 class="section-title" style="margin:0">Recent activity</h2>
+    <button class="btn btn-secondary btn-sm" @click="loadLog()">Refresh</button>
+  </div>
   <template x-if="alertLog.length === 0">
     <div class="surface p-6 text-center text-[13px]" style="color:var(--ink-5)">No alerts fired yet.</div>
   </template>
@@ -215,7 +218,14 @@ function accountPrefs() {
     globalError: '',
     async init() {
       if (this.destinations.length > 0) this.ruleForm.destination_id = this.destinations[0].id;
-      try { const r = await fetch('/api/alerts/log'); if (r.ok) this.alertLog = await r.json(); } catch {}
+      await this.loadLog();
+    },
+    async loadLog() {
+      try {
+        const r = await fetch('/api/alerts/log');
+        if (r.ok) this.alertLog = await r.json();
+        else this.globalError = 'Failed to load alert history';
+      } catch { this.globalError = 'Network error loading alert history'; }
     },
     eventLabel(t) { return EVENT_LABELS[t] || t; },
     formatTime(iso) { return new Date(iso).toLocaleString(undefined, {dateStyle:'short', timeStyle:'short'}); },

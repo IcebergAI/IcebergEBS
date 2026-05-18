@@ -63,8 +63,16 @@ async def fetch_and_store(
         if not metadata.publisher and analysis.author:
             metadata.publisher = analysis.author
 
-    permissions: list[str] = analysis.permissions if analysis else []
-    host_permissions: list[str] = analysis.host_permissions if analysis else []
+    # When analysis is unavailable, fall back to stored values so that a
+    # transient package download failure doesn't look like permissions being
+    # removed and trigger spurious permission_change / risk_level_change alerts.
+    if analysis:
+        permissions: list[str] = analysis.permissions
+        host_permissions: list[str] = analysis.host_permissions
+    else:
+        permissions = json.loads(ext.permissions or "[]")
+        stored_pkg = json.loads(ext.package_analysis or "null") or {}
+        host_permissions = stored_pkg.get("host_permissions", [])
 
     publisher_changed = bool(
         ext.last_fetched_at and ext.publisher and ext.publisher != metadata.publisher
@@ -88,7 +96,11 @@ async def fetch_and_store(
     ext.version = metadata.version
     ext.install_count = metadata.install_count
     ext.last_updated = metadata.last_updated
-    ext.permissions = json.dumps(permissions)
+    if analysis:
+        # Only update stored permissions from a fresh successful inspection;
+        # keeping stale values avoids spurious permission_change alerts when
+        # the package download temporarily fails.
+        ext.permissions = json.dumps(permissions)
     ext.last_fetched_at = datetime.now(timezone.utc)
     ext.risk_score = risk.total
     ext.risk_detail = json.dumps(risk._asdict())

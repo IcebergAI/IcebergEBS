@@ -282,28 +282,54 @@ async def alert_log(
     session: Annotated[AsyncSession, Depends(get_session)],
     limit: Annotated[int, Query(ge=1, le=500)] = 50,
 ):
-    rows = (await session.exec(
-        select(AlertLog, AlertRule, AlertDestination, Extension)
-        .join(AlertRule, AlertLog.rule_id == AlertRule.id)  # type: ignore[arg-type]
-        .join(AlertDestination, AlertRule.destination_id == AlertDestination.id)  # type: ignore[arg-type]
-        .join(Extension, AlertLog.extension_id == Extension.id)  # type: ignore[arg-type]
-        .where(AlertRule.user_id == current_user.id)
+    # Fetch the user's rules first so we can look up labels without a
+    # four-way JOIN that silently drops rows when an extension is deleted.
+    rules = (await session.exec(
+        select(AlertRule).where(AlertRule.user_id == current_user.id)
+    )).all()
+    if not rules:
+        return []
+
+    rule_ids = [r.id for r in rules]
+    rule_map = {r.id: r for r in rules}
+
+    dest_ids = list({r.destination_id for r in rules})
+    dests = (await session.exec(
+        select(AlertDestination).where(AlertDestination.id.in_(dest_ids))
+    )).all()
+    dest_map = {d.id: d for d in dests}
+
+    logs = (await session.exec(
+        select(AlertLog)
+        .where(AlertLog.rule_id.in_(rule_ids))
         .order_by(AlertLog.sent_at.desc())
         .limit(limit)
     )).all()
-    return [
-        {
+    if not logs:
+        return []
+
+    ext_ids = list({log.extension_id for log in logs})
+    exts = (await session.exec(
+        select(Extension).where(Extension.id.in_(ext_ids))
+    )).all()
+    ext_map = {e.id: e for e in exts}
+
+    result = []
+    for log in logs:
+        rule = rule_map.get(log.rule_id)
+        dest = dest_map.get(rule.destination_id) if rule else None
+        ext = ext_map.get(log.extension_id)
+        result.append({
             "id": log.id,
             "sent_at": log.sent_at.isoformat(),
             "event_type": log.event_type,
             "extension_id": log.extension_id,
-            "ext_name": ext.name or ext.extension_id,
-            "dest_label": dest.label,
+            "ext_name": (ext.name or ext.extension_id) if ext else f"Extension {log.extension_id}",
+            "dest_label": dest.label if dest else "—",
             "success": log.success,
             "error": log.error,
-        }
-        for log, rule, dest, ext in rows
-    ]
+        })
+    return result
 
 
 # ---------------------------------------------------------------------------
