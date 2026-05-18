@@ -36,20 +36,21 @@ API-first design. All data flows through FastAPI endpoints; the UI consumes them
 - `app/fetchers/` — one fetcher class per store; `get_fetcher(store, client)` factory in `__init__.py`
 - `app/inspector.py` — static analysis of downloaded zip packages (CRX/VSIX)
 - `app/scoring.py` — pure scoring functions, `compute_risk_score()` → `RiskDetail` NamedTuple
-- `app/services.py` — `fetch_and_store()`: shared pipeline used by both API routes and the scheduler
-- `app/notifications.py` — `detect_changes()` + `fire_alerts()`: compares old/new extension state and POSTs to matching webhook destinations
-- `app/scheduler.py` — APScheduler `AsyncIOScheduler` background watchlist refresh
+- `app/services.py` — `fetch_and_store(ext, session, client, engine=None)`: shared pipeline used by both API routes and the scheduler; stages changes but does **not** commit — the caller commits; pass `engine` to enable alert processing
+- `app/notifications.py` — `detect_changes()` + `fire_alerts()`: compares old/new extension state and POSTs to matching webhook destinations; `fire_alerts()` takes an `AsyncEngine` and commits `AlertLog` rows in its own dedicated session, independent of the caller's transaction
+- `app/scheduler.py` — APScheduler `AsyncIOScheduler` background watchlist refresh; each extension is processed in its own `AsyncSession` + commit so a single failure cannot corrupt or roll back changes for the entire batch
 - `app/routes/api.py` — JSON API routes for extensions (`/api/extensions/...`)
 - `app/routes/alerts.py` — JSON API routes for alert destinations, rules, and log (`/api/alerts/...`)
 - `app/routes/users.py` — JSON API routes for user management (`/api/users/...`)
 - `app/routes/ui.py` — HTML routes, Jinja2 templates, flash messages
 
 ### Data flow
-1. Caller (API route or scheduler) calls `fetch_and_store(ext, session, client)`
+1. Caller (API route or scheduler) calls `fetch_and_store(ext, session, client, engine)`
 2. `fetch_and_store` calls `fetcher.fetch(extension_id)` → `(ExtensionMetadata, bytes | None)`
 3. If package bytes are present, `inspect_package()` runs static analysis
 4. `compute_risk_score()` calculates the risk breakdown
 5. Extension record, FetchLog, and InstallCountHistory are staged; caller commits
+6. `detect_changes()` compares the pre-fetch snapshot against the updated record; if events are found, `fire_alerts()` POSTs webhooks and commits `AlertLog` rows in its own session — decoupled from the caller's transaction so logs survive any subsequent rollback
 
 ## Store-specific fetcher notes
 
@@ -80,7 +81,7 @@ API-first design. All data flows through FastAPI endpoints; the UI consumes them
 ### Package inspection (`app/inspector.py`)
 - Handles both CRX (header already stripped by fetcher) and VSIX (plain zip)
 - Extracts: permissions, host_permissions, eval usage, remote fetch calls, obfuscation score, external domains, minification
-- Also extracts `version` and `author` from the manifest for use as fallbacks when the store page cannot provide them (primarily Edge, now less relevant since the API provides these directly)
+- Extracts `author` and `version` from the manifest; only `author` is used as a publisher fallback in `services.py` when the store page returns nothing; `version` from the manifest is intentionally not used — updating `ext.version` only from store metadata avoids spurious `new_version` alerts when Chrome HTML scraping is unreliable
 - `_SAFE_DOMAINS` filters out well-known CDNs from the external domain list
 
 ## Testing
