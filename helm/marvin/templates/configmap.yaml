@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "marvin.fullname" . }}
+  labels:
+    {{- include "marvin.labels" . | nindent 4 }}
+data:
+  MARVIN_ADMIN_USERNAME:         {{ .Values.marvin.adminUsername | quote }}
+  MARVIN_APP_BASE_URL:           {{ .Values.marvin.appBaseUrl | quote }}
+  MARVIN_FETCH_INTERVAL_MINUTES: {{ .Values.marvin.fetchIntervalMinutes | quote }}
+  MARVIN_SECURE_COOKIES:         {{ .Values.marvin.secureCookies | quote }}

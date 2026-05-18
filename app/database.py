@@ -7,12 +7,21 @@ from sqlalchemy import text
 
 from app.config import settings
 
-engine: AsyncEngine = create_async_engine(settings.database_url, echo=False)
+_is_sqlite = settings.database_url.startswith("sqlite")
+_pool_kwargs = {} if _is_sqlite else {
+    "pool_size": 5,
+    "max_overflow": 10,
+    "pool_pre_ping": True,
+    "pool_timeout": 30,
+}
+
+engine: AsyncEngine = create_async_engine(settings.database_url, echo=False, **_pool_kwargs)
 
 
 async def init_db() -> None:
     async with engine.begin() as conn:
-        await conn.execute(text("PRAGMA journal_mode=WAL"))
+        if _is_sqlite:
+            await conn.execute(text("PRAGMA journal_mode=WAL"))
         await conn.run_sync(SQLModel.metadata.create_all)
 
 

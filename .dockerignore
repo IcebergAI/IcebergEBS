@@ -1,0 +1,9 @@
+.env
+*.db
+venv/
+__pycache__/
+.git/
+tests/
+*.pyc
+nginx/certs/
+DEPLOYMENT.md

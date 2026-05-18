@@ -1,0 +1,46 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-marvin}
+      POSTGRES_USER: ${POSTGRES_USER:-marvin}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-marvin} -d ${POSTGRES_DB:-marvin}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  app:
+    build: .
+    environment:
+      MARVIN_DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-marvin}:${POSTGRES_PASSWORD}@postgres/${POSTGRES_DB:-marvin}
+      MARVIN_ADMIN_USERNAME: ${MARVIN_ADMIN_USERNAME}
+      MARVIN_ADMIN_PASSWORD: ${MARVIN_ADMIN_PASSWORD}
+      MARVIN_SECRET_KEY: ${MARVIN_SECRET_KEY}
+      MARVIN_APP_BASE_URL: ${MARVIN_APP_BASE_URL:-}
+      MARVIN_SECURE_COOKIES: "true"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/security_headers.conf:/etc/nginx/security_headers.conf:ro
+      - ./nginx/certs:/etc/nginx/certs:ro
+      - ./static:/app/static:ro
+    depends_on:
+      - app
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
