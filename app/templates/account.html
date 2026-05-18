@@ -2,7 +2,7 @@
 {% block title %}Marvin — Alerts &amp; webhooks{% endblock %}
 
 {% block content %}
-<div x-data="accountPrefs()" x-init="init()">
+<div x-data="accountPrefs()">
 
 <div class="flex items-center gap-2 text-[12.5px] mb-2" style="color:var(--ink-5)">
   <span>Account</span>
@@ -210,15 +210,14 @@ function accountPrefs() {
     destinations: ({{ destinations | tojson }}).map(d => ({ ...d, _testing: false, _testMsg: '', _testOk: false })),
     rules: {{ rules | tojson }},
     extensions: {{ extensions | tojson }},
-    alertLog: [],
+    alertLog: {{ alert_log | tojson }},
     showAddDest: false, destSaving: false, destError: '',
     destForm: { label: '', target: '' },
     showAddRule: false, ruleSaving: false, ruleError: '',
     ruleForm: { event_type: 'risk_level_change', destination_id: '', extension_id: '' },
     globalError: '',
-    async init() {
+    init() {
       if (this.destinations.length > 0) this.ruleForm.destination_id = this.destinations[0].id;
-      await this.loadLog();
     },
     async loadLog() {
       try {
