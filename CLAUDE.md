@@ -8,7 +8,7 @@ App will always run on Python 3.14 or later.
 
 ### Python
 - FastAPI
-- SQLModel (with aiosqlite for async SQLite)
+- SQLModel with `aiosqlite` (tests / SQLite dev) and `asyncpg` (production Postgres)
 - HTTPX
 - pytest + pytest-asyncio
 - pydantic-settings (config from env vars)
@@ -30,9 +30,9 @@ API-first design. All data flows through FastAPI endpoints; the UI consumes them
 
 ### Key modules
 - `app/config.py` — pydantic-settings `BaseSettings`, env prefix `MARVIN_`
-- `app/database.py` — async SQLAlchemy engine, WAL mode enabled at startup
+- `app/database.py` — async SQLAlchemy engine; SQLite gets WAL mode at startup; Postgres gets a tuned connection pool (`pool_size=5`, `max_overflow=10`, `pool_pre_ping`, `pool_recycle=1800`)
 - `app/models.py` — SQLModel table definitions (`User`, `Extension`, `FetchLog`, `InstallCountHistory`, `AlertDestination`, `AlertRule`, `AlertLog`)
-- `app/auth.py` — itsdangerous signed cookies, `require_auth` / `require_admin` FastAPI dependencies
+- `app/auth.py` — itsdangerous signed cookies, `require_auth` / `require_admin` FastAPI dependencies; `verify_credentials` always runs bcrypt (via `_DUMMY_HASH`) even for unknown usernames to prevent timing-based user enumeration
 - `app/fetchers/` — one fetcher class per store; `get_fetcher(store, client)` factory in `__init__.py`
 - `app/inspector.py` — static analysis of downloaded zip packages (CRX/VSIX)
 - `app/scoring.py` — pure scoring functions, `compute_risk_score()` → `RiskDetail` NamedTuple
@@ -105,7 +105,8 @@ venv/bin/python -m pytest tests/ -v
 - Security of the application is a priority.
 - Validate code to ensure there are no serious security flaws.
 - Ensure authentication is applied to endpoints that shouldn't be public.
-- Use `hmac.compare_digest` for all password comparisons (timing-safe).
+- `verify_credentials` in `auth.py` always pays the bcrypt cost via `_DUMMY_HASH` when the username doesn't exist — never short-circuit before bcrypt runs or you leak username existence via timing.
+- Webhook URLs in `alerts.py` are validated against a hostname blocklist (including subdomain suffixes) and IP range checks (`is_global`, `is_loopback`, `is_link_local`, `is_reserved`) to prevent SSRF.
 - Jinja2 autoescaping is on by default — do not disable it.
 - Session cookies: HttpOnly + SameSite=Lax, signed with itsdangerous `URLSafeTimedSerializer`
 
@@ -125,6 +126,8 @@ CSS custom properties in `static/css/app.css`:
 
 Tailwind CSS utility classes via CDN for layout; component classes (`surface`, `btn`, `badge`, `label-cap`, `page-title`, `section-title`) defined in `app.css`.
 
+The `tailwind.config` object (font families) is in `static/js/tailwind-config.js` loaded via `<script src>` — do not inline it in `base.html` as that would require `unsafe-inline` in the CSP. The anti-flash inline script in `<head>` is the only remaining inline script; its SHA-256 is `KhejTvJfrnJvlOpLJujMQ/zWMQZiBfWaLFOz/LgKBek=` and is included in `nginx/security_headers.conf`. If you change that script, recompute the hash.
+
 ### Alpine.js x-data pattern
 **Never embed `{{ data | tojson }}` directly inside an `x-data="{ ... }"` HTML attribute.** JSON contains `"` which terminates the HTML attribute, breaking the component silently. Always use the function pattern instead:
 
@@ -142,6 +145,21 @@ function myComponent() {
 ```
 
 This is already the pattern used by `account.html` (accountPrefs) and `dashboard.html` (dashboardData).
+
+## Deployment
+
+Full production deployment instructions are in `DEPLOYMENT.md`. Two options are covered:
+
+**Docker Compose** — three-service stack (postgres, app, nginx). nginx terminates TLS, enforces rate limits, and serves static assets directly. Single uvicorn worker required (APScheduler is per-process; multiple workers produce duplicate watchlist refreshes and `AlertLog` rows).
+
+**Kubernetes (Helm)** — chart under `helm/marvin/` with Bitnami postgresql subchart. `replicaCount: 1` is mandatory for the same reason. Ingress via nginx-ingress-controller with cert-manager for automatic TLS.
+
+Quick start (Docker):
+```bash
+bash nginx/generate-dev-cert.sh
+cp .env.example .env && $EDITOR .env
+docker compose up --build
+```
 
 ## Maintenance
 - Keep this file up to date with decisions around structure, architecture, and function.

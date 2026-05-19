@@ -8,7 +8,7 @@ Multi-user. Each user maintains an independent list of monitored extensions. A b
 
 - Python 3.14+
 
-## Setup
+## Quick start (local dev, SQLite)
 
 ```bash
 python -m venv venv
@@ -23,13 +23,26 @@ MARVIN_ADMIN_PASSWORD=changeme
 MARVIN_SECRET_KEY=<run: python -c "import secrets; print(secrets.token_hex(32))">
 ```
 
-## Running
-
 ```bash
 venv/bin/uvicorn app.main:app --reload
 ```
 
 The admin account is seeded automatically on first startup using the credentials in your environment. Open `http://localhost:8000` and log in.
+
+## Production deployment (Docker + PostgreSQL + nginx)
+
+See **[DEPLOYMENT.md](DEPLOYMENT.md)** for full instructions. The short version:
+
+```bash
+bash nginx/generate-dev-cert.sh   # self-signed cert for local testing
+cp .env.example .env
+$EDITOR .env                      # fill in passwords and secret key
+docker compose up --build
+```
+
+This starts three containers: PostgreSQL, the Marvin app, and nginx as a TLS-terminating reverse proxy. For production, replace `nginx/certs/` with a real certificate (Let's Encrypt via Certbot or similar) and set `MARVIN_APP_BASE_URL` to your public domain.
+
+A Kubernetes/Helm chart is also provided under `helm/marvin/` — see DEPLOYMENT.md for details.
 
 ## Configuration
 
