@@ -13,6 +13,7 @@ _pool_kwargs = {} if _is_sqlite else {
     "max_overflow": 10,
     "pool_pre_ping": True,
     "pool_timeout": 30,
+    "pool_recycle": 1800,  # Recycle connections every 30 min to avoid server-side idle timeouts
 }
 
 engine: AsyncEngine = create_async_engine(settings.database_url, echo=False, **_pool_kwargs)

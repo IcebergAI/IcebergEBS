@@ -336,12 +336,12 @@
 async function refreshNow(id) {
   const btn = event.currentTarget;
   btn.disabled = true;
-  const orig = btn.innerHTML;
+  const orig = btn.textContent;
   btn.textContent = 'Refreshing…';
   try {
     const r = await fetch('/api/extensions/' + id + '/refresh', { method: 'POST' });
     if (r.ok) location.reload();
-    else { const d = await r.json(); alert(d.detail || 'Refresh failed'); btn.innerHTML = orig; }
+    else { const d = await r.json(); alert(d.detail || 'Refresh failed'); btn.textContent = orig; }
   } finally { btn.disabled = false; }
 }
 

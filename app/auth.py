@@ -37,13 +37,19 @@ def get_current_user(request: Request) -> str | None:
         return None
 
 
+# Pre-computed dummy hash used when the username doesn't exist, so the bcrypt
+# work factor is always paid regardless of whether the username is valid.
+# This prevents username enumeration via response-time differences.
+_DUMMY_HASH: str = bcrypt.hashpw(b"dummy", bcrypt.gensalt(rounds=12)).decode()
+
+
 async def verify_credentials(username: str, password: str, session: AsyncSession):
     """Return the User if credentials are valid, None otherwise."""
     from app.models import User
     user = (await session.exec(select(User).where(User.username == username))).first()
-    if user and verify_password(password, user.password_hash):
-        return user
-    return None
+    hash_to_check = user.password_hash if user else _DUMMY_HASH
+    valid = verify_password(password, hash_to_check)
+    return user if (user and valid) else None
 
 
 async def require_auth(

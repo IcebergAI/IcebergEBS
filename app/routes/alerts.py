@@ -38,12 +38,17 @@ def _validate_webhook_url(url: str) -> None:
     if not hostname:
         raise HTTPException(status_code=422, detail="Webhook URL has no hostname")
 
-    if hostname in _BLOCKED_HOSTNAMES:
+    # Block exact matches and subdomains (e.g. foo.localhost, sub.localtest.me)
+    if hostname in _BLOCKED_HOSTNAMES or any(
+        hostname.endswith("." + h) for h in _BLOCKED_HOSTNAMES
+    ):
         raise HTTPException(status_code=422, detail="Webhook URL hostname is not allowed")
 
     try:
         addr = ipaddress.ip_address(hostname)
-        if not addr.is_global:
+        # is_global covers private, loopback, link-local, and reserved ranges.
+        # The explicit checks are belt-and-suspenders for future Python changes.
+        if not addr.is_global or addr.is_loopback or addr.is_link_local or addr.is_reserved:
             raise HTTPException(
                 status_code=422,
                 detail="Webhook URL must not point to a private or reserved address",
