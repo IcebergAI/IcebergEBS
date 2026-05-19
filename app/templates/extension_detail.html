@@ -177,6 +177,54 @@
   {% endif %}
 </div>
 
+{# Detection findings #}
+{% if package_analysis and package_analysis.findings %}
+<div class="surface p-5 mb-4">
+  <div class="flex items-center justify-between mb-3 flex-wrap gap-2">
+    <h2 class="section-title" style="margin:0">Detection findings <span class="font-normal" style="color:var(--ink-5)">· {{ package_analysis.findings|length }}</span></h2>
+    <span class="text-[11.5px]" style="color:var(--ink-5)">Static heuristics from the downloaded package</span>
+  </div>
+
+  {% set severities = [
+    ('critical', 'Critical'),
+    ('high', 'High'),
+    ('medium', 'Medium'),
+    ('low', 'Low'),
+  ] %}
+  <div class="flex flex-col gap-3">
+    {% for severity, label in severities %}
+      {% set severity_findings = package_analysis.findings | selectattr('severity', 'equalto', severity) | list %}
+      {% if severity_findings %}
+      <div>
+        <div class="label-cap mb-2">{{ label }}</div>
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-2">
+          {% for finding in severity_findings %}
+          <div class="surface-soft p-3">
+            <div class="flex items-start justify-between gap-3">
+              <div class="min-w-0">
+                <div class="flex items-center gap-2 flex-wrap">
+                  <span class="badge badge-{{ severity }}">{{ severity }}</span>
+                  <span class="font-medium text-[13.5px]" style="color:var(--ink-8)">{{ finding.title }}</span>
+                </div>
+                <p class="text-[12.5px] leading-relaxed mt-1.5" style="color:var(--ink-6)">{{ finding.detail }}</p>
+              </div>
+              <span class="badge badge-store">{{ finding.source }}</span>
+            </div>
+            {% if finding.file %}
+            <div class="mono text-[11.5px] mt-2 truncate" style="color:var(--ink-5)">
+              {{ finding.file }}{% if finding.line is not none %}:{{ finding.line }}{% endif %}
+            </div>
+            {% endif %}
+          </div>
+          {% endfor %}
+        </div>
+      </div>
+      {% endif %}
+    {% endfor %}
+  </div>
+</div>
+{% endif %}
+
 {# Permissions #}
 {% if permissions or host_permissions %}
 <div class="surface p-5 mb-4">

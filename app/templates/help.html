@@ -71,6 +71,26 @@
   </div>
 
   <div class="surface p-6 mb-4">
+    <h2 class="section-title">Detection findings</h2>
+    <p class="text-[13.5px] leading-relaxed mb-3" style="color:var(--ink-6)">
+      Marvin records structured findings while inspecting the downloaded package. Findings are
+      deterministic static heuristics — they do not call external reputation services or require
+      third-party API keys.
+    </p>
+    <div style="overflow-x:auto;border:1px solid var(--ink-3);border-radius:8px">
+    <table>
+      <thead><tr><th>Area</th><th>Examples</th></tr></thead>
+      <tbody>
+        <tr><td>Manifest</td><td style="color:var(--ink-5)">Manifest V2, broad host access, unsafe CSP entries, high-risk permissions</td></tr>
+        <tr><td>Execution</td><td style="color:var(--ink-5)">eval, new Function, string timers, dynamic script injection, remote importScripts</td></tr>
+        <tr><td>Communication</td><td style="color:var(--ink-5)">Remote fetch, XHR, WebSocket, EventSource, sendBeacon calls</td></tr>
+        <tr><td>Reviewability</td><td style="color:var(--ink-5)">Minified or obfuscated JavaScript with file-level context</td></tr>
+      </tbody>
+    </table>
+    </div>
+  </div>
+
+  <div class="surface p-6 mb-4">
     <h2 class="section-title">Users &amp; accounts</h2>
     <p class="text-[13.5px] leading-relaxed mb-2" style="color:var(--ink-6)">
       Marvin is multi-user. Each user maintains their own isolated list of monitored

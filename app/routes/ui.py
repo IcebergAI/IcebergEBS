@@ -173,6 +173,15 @@ async def extension_detail(
 
     host_permissions = []
     if package_analysis:
+        package_analysis.setdefault("external_domains", [])
+        package_analysis.setdefault("uses_eval", False)
+        package_analysis.setdefault("uses_remote_code", False)
+        package_analysis.setdefault("obfuscation_score", 0)
+        package_analysis.setdefault("file_count", 0)
+        package_analysis.setdefault("total_size_bytes", 0)
+        package_analysis.setdefault("has_minified_code", False)
+        package_analysis.setdefault("manifest_version", 2)
+        package_analysis.setdefault("findings", [])
         host_permissions = package_analysis.get("host_permissions", [])
 
     return _render(request, "extension_detail.html", {

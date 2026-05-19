@@ -39,10 +39,7 @@ class ChromeFetcher(BaseFetcher):
 
     async def download_package(self, extension_id: str) -> bytes:
         url = _DOWNLOAD_URL.format(extension_id=extension_id)
-        resp = await self.client.get(url, follow_redirects=True)
-        if resp.status_code != 200:
-            raise FetchError(f"CRX download returned {resp.status_code}")
-        return _strip_crx_header(resp.content)
+        return _strip_crx_header(await self._get_package_bytes(url))
 
 
 def _parse_page(html: str, extension_id: str, url: str) -> ExtensionMetadata:

@@ -72,10 +72,7 @@ class VSCodeFetcher(BaseFetcher):
     async def download_package(self, extension_id: str) -> bytes:
         ext = await self._call_gallery(extension_id)
         vsix_url = self._vsix_url(ext, extension_id)
-        pkg_resp = await self.client.get(vsix_url, follow_redirects=True)
-        if pkg_resp.status_code != 200:
-            raise FetchError(f"VSIX download returned {pkg_resp.status_code}")
-        return pkg_resp.content
+        return await self._get_package_bytes(vsix_url)
 
     async def fetch(self, extension_id: str) -> tuple[ExtensionMetadata, bytes | None]:
         """Single API call returning both metadata and package."""
@@ -83,10 +80,7 @@ class VSCodeFetcher(BaseFetcher):
         metadata = self._parse_metadata(ext, extension_id)
         try:
             vsix_url = self._vsix_url(ext, extension_id)
-            pkg_resp = await self.client.get(vsix_url, follow_redirects=True)
-            if pkg_resp.status_code != 200:
-                raise FetchError(f"VSIX download returned {pkg_resp.status_code}")
-            package: bytes | None = pkg_resp.content
+            package: bytes | None = await self._get_package_bytes(vsix_url)
         except FetchError:
             package = None
         return metadata, package

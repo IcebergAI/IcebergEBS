@@ -2,7 +2,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from app.inspector import PackageAnalysis
+from app.inspector import PackageAnalysis, PackageFinding
 from app.scoring import (
     compute_risk_score,
     score_code_behaviour,
@@ -159,6 +159,58 @@ def test_code_clean():
 
 def test_code_no_analysis():
     assert score_code_behaviour(None) == 7  # midpoint
+
+
+def test_code_findings_increase_code_behaviour_score():
+    a = PackageAnalysis(findings=[
+        PackageFinding(
+            code="dynamic_script_injection",
+            severity="high",
+            title="Dynamic script injection",
+            detail="test",
+            source="javascript",
+        ),
+        PackageFinding(
+            code="string_timer_execution",
+            severity="medium",
+            title="String timer",
+            detail="test",
+            source="javascript",
+        ),
+    ])
+    assert score_code_behaviour(a) == 6
+
+
+def test_code_findings_respect_cap():
+    a = PackageAnalysis(
+        uses_eval=True,
+        uses_remote_code=True,
+        obfuscation_score=10,
+        findings=[
+            PackageFinding(
+                code=f"remote_import_scripts_{i}",
+                severity="critical",
+                title="Remote importScripts",
+                detail="test",
+                source="javascript",
+            )
+            for i in range(5)
+        ],
+    )
+    assert score_code_behaviour(a) == 15
+
+
+def test_permission_findings_do_not_double_count_code_behaviour():
+    a = PackageAnalysis(findings=[
+        PackageFinding(
+            code="high_risk_permission",
+            severity="critical",
+            title="Critical permission",
+            detail="test",
+            source="manifest",
+        )
+    ])
+    assert score_code_behaviour(a) == 0
 
 
 # ---------------------------------------------------------------------------

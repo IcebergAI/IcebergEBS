@@ -17,6 +17,11 @@ _MEDIUM_PERMISSIONS = {
     "storage", "notifications", "contextMenus", "bookmarks",
     "identity", "geolocation", "scripting",
 }
+_FINDING_WEIGHTS = {
+    "critical": 6,
+    "high": 4,
+    "medium": 2,
+}
 
 
 class RiskDetail(NamedTuple):
@@ -113,6 +118,7 @@ def score_code_behaviour(analysis: PackageAnalysis | None) -> int:
         score += 5
     elif analysis.obfuscation_score >= 3:
         score += 3
+    score += min(_score_code_findings(analysis), 7)
     return min(score, 15)
 
 
@@ -184,4 +190,22 @@ def _looks_generic(publisher: str) -> bool:
         return True
     return False
 
+
+def _score_code_findings(analysis: PackageAnalysis) -> int:
+    score = 0
+    for finding in getattr(analysis, "findings", []):
+        if not _counts_toward_code_behaviour(finding):
+            continue
+        score += _FINDING_WEIGHTS.get(finding.severity, 0)
+    return score
+
+
+def _counts_toward_code_behaviour(finding) -> bool:
+    if finding.source == "javascript":
+        return True
+    if finding.code.startswith("csp_"):
+        return True
+    if finding.code == "manifest_v2":
+        return True
+    return False
 

@@ -33,6 +33,16 @@ class ExtensionIn(BaseModel):
     extension_id: str  # raw ID or full store URL
 
 
+class PackageFindingOut(BaseModel):
+    code: str
+    severity: str
+    title: str
+    detail: str
+    source: str
+    file: str | None = None
+    line: int | None = None
+
+
 class ExtensionOut(BaseModel):
     id: int
     store: str
@@ -52,12 +62,14 @@ class ExtensionOut(BaseModel):
     risk_score: int | None
     risk_detail: dict | None
     risk_level: str | None
+    findings: list[PackageFindingOut]
 
     @classmethod
     def from_db(cls, ext: Extension) -> "ExtensionOut":
         perms = json.loads(ext.permissions or "[]")
         analysis_raw = json.loads(ext.package_analysis or "null")
         host_perms = analysis_raw.get("host_permissions", []) if analysis_raw else []
+        findings = analysis_raw.get("findings", []) if analysis_raw else []
         detail = json.loads(ext.risk_detail or "null")
         risk_level = None
         if ext.risk_score is not None:
@@ -88,6 +100,7 @@ class ExtensionOut(BaseModel):
             risk_score=ext.risk_score,
             risk_detail=detail,
             risk_level=risk_level,
+            findings=[PackageFindingOut(**finding) for finding in findings],
         )
 
 

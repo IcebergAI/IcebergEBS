@@ -252,6 +252,28 @@ async def test_chrome_fetch_404():
             await fetcher.fetch_metadata("doesnotexist")
 
 
+@respx.mock
+async def test_package_download_rejects_large_content_length():
+    respx.get("https://example.com/large.vsix").mock(
+        return_value=httpx.Response(200, headers={"content-length": str(65 * 1024 * 1024)})
+    )
+    async with httpx.AsyncClient() as client:
+        fetcher = VSCodeFetcher(client)
+        with pytest.raises(FetchError):
+            await fetcher._get_package_bytes("https://example.com/large.vsix")
+
+
+@respx.mock
+async def test_package_download_rejects_stream_over_limit():
+    respx.get("https://example.com/large.vsix").mock(
+        return_value=httpx.Response(200, content=b"x" * (65 * 1024 * 1024))
+    )
+    async with httpx.AsyncClient() as client:
+        fetcher = VSCodeFetcher(client)
+        with pytest.raises(FetchError):
+            await fetcher._get_package_bytes("https://example.com/large.vsix")
+
+
 # ---------------------------------------------------------------------------
 # Edge fetcher — uses the getproductdetailsbycrxid JSON API
 # ---------------------------------------------------------------------------
