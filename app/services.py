@@ -1,5 +1,6 @@
 import json
 import logging
+from dataclasses import asdict
 from datetime import datetime, timezone
 
 import httpx
@@ -121,6 +122,7 @@ async def fetch_and_store(
             "total_size_bytes": analysis.total_size_bytes,
             "has_minified_code": analysis.has_minified_code,
             "manifest_version": analysis.manifest_version,
+            "findings": [asdict(finding) for finding in analysis.findings],
         })
 
     session.add(ext)

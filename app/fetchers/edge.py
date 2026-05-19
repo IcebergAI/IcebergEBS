@@ -49,16 +49,9 @@ class EdgeFetcher(BaseFetcher):
     async def download_package(self, extension_id: str) -> bytes:
         url = _DOWNLOAD_URL.format(extension_id=extension_id)
         logger.debug("Edge CRX download: %s", url)
-        resp = await self.client.get(url, follow_redirects=True)
-        logger.debug(
-            "Edge CRX response: %s content-type=%s size=%d",
-            resp.status_code,
-            resp.headers.get("content-type", "unknown"),
-            len(resp.content),
-        )
-        if resp.status_code != 200:
-            raise FetchError(f"CRX download returned {resp.status_code}")
-        return _strip_crx_header(resp.content)
+        content = await self._get_package_bytes(url)
+        logger.debug("Edge CRX downloaded: size=%d", len(content))
+        return _strip_crx_header(content)
 
     async def fetch(self, extension_id: str) -> tuple[ExtensionMetadata, bytes | None]:
         """Single API call for metadata; manifest from the response guarantees permissions

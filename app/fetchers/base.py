@@ -4,6 +4,8 @@ from datetime import datetime
 import httpx
 from pydantic import BaseModel
 
+_MAX_PACKAGE_DOWNLOAD_BYTES = 64 * 1024 * 1024  # bytes on the wire
+
 
 class ExtensionMetadata(BaseModel):
     name: str
@@ -40,3 +42,26 @@ class BaseFetcher(ABC):
         except Exception:
             package = None
         return metadata, package
+
+    async def _get_package_bytes(self, url: str) -> bytes:
+        """Download a package with an explicit cap before it enters memory."""
+        async with self.client.stream("GET", url, follow_redirects=True) as resp:
+            if resp.status_code != 200:
+                raise FetchError(f"Package download returned {resp.status_code}")
+
+            content_length = resp.headers.get("content-length")
+            if content_length:
+                try:
+                    if int(content_length) > _MAX_PACKAGE_DOWNLOAD_BYTES:
+                        raise FetchError("Package download too large")
+                except ValueError:
+                    pass
+
+            chunks: list[bytes] = []
+            total = 0
+            async for chunk in resp.aiter_bytes():
+                total += len(chunk)
+                if total > _MAX_PACKAGE_DOWNLOAD_BYTES:
+                    raise FetchError("Package download too large")
+                chunks.append(chunk)
+            return b"".join(chunks)
