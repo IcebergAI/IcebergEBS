@@ -178,10 +178,15 @@
 </div>
 
 {# Detection findings #}
-{% if package_analysis and package_analysis.findings %}
+{% if package_analysis and package_analysis.grouped_findings %}
 <div class="surface p-5 mb-4">
   <div class="flex items-center justify-between mb-3 flex-wrap gap-2">
-    <h2 class="section-title" style="margin:0">Detection findings <span class="font-normal" style="color:var(--ink-5)">· {{ package_analysis.findings|length }}</span></h2>
+    <h2 class="section-title" style="margin:0">
+      Detection findings
+      <span class="font-normal" style="color:var(--ink-5)">
+        · {{ package_analysis.grouped_findings|length }}{% if package_analysis.findings|length != package_analysis.grouped_findings|length %} grouped from {{ package_analysis.findings|length }}{% endif %}
+      </span>
+    </h2>
     <span class="text-[11.5px]" style="color:var(--ink-5)">Static heuristics from the downloaded package</span>
   </div>
 
@@ -191,30 +196,48 @@
     ('medium', 'Medium'),
     ('low', 'Low'),
   ] %}
-  <div class="flex flex-col gap-3">
+  <div class="flex flex-col gap-2.5">
     {% for severity, label in severities %}
-      {% set severity_findings = package_analysis.findings | selectattr('severity', 'equalto', severity) | list %}
+      {% set severity_findings = package_analysis.grouped_findings | selectattr('severity', 'equalto', severity) | list %}
       {% if severity_findings %}
       <div>
-        <div class="label-cap mb-2">{{ label }}</div>
+        <div class="label-cap mb-1.5">{{ label }}</div>
         <div class="grid grid-cols-1 lg:grid-cols-2 gap-2">
           {% for finding in severity_findings %}
-          <div class="surface-soft p-3">
-            <div class="flex items-start justify-between gap-3">
+          <div class="surface-soft p-2.5">
+            <div class="flex items-start justify-between gap-2">
               <div class="min-w-0">
                 <div class="flex items-center gap-2 flex-wrap">
                   <span class="badge badge-{{ severity }}">{{ severity }}</span>
-                  <span class="font-medium text-[13.5px]" style="color:var(--ink-8)">{{ finding.title }}</span>
+                  <span class="font-medium text-[13px]" style="color:var(--ink-8)">{{ finding.title }}</span>
+                  {% if finding.rows|length > 1 %}
+                  <span class="text-[11px]" style="color:var(--ink-5)">· {{ finding.rows|length }} {{ finding.row_label }}</span>
+                  {% endif %}
                 </div>
-                <p class="text-[12.5px] leading-relaxed mt-1.5" style="color:var(--ink-6)">{{ finding.detail }}</p>
               </div>
               <span class="badge badge-store">{{ finding.source }}</span>
             </div>
-            {% if finding.file %}
-            <div class="mono text-[11.5px] mt-2 truncate" style="color:var(--ink-5)">
-              {{ finding.file }}{% if finding.line is not none %}:{{ finding.line }}{% endif %}
+            <div class="mt-2 flex flex-col gap-1.5">
+              {% for section in finding.sections %}
+              <div class="{% if not loop.first %}border-t pt-1.5{% endif %}" style="border-color:var(--ink-3)">
+                {% if section.type == 'detail' %}
+                <div class="text-[12px] leading-relaxed" style="color:var(--ink-6)">{{ section.detail }}</div>
+                <div class="mt-1.5 mono text-[11px] leading-relaxed" style="color:var(--ink-5);overflow-wrap:anywhere">
+                  {{ section.locations|join(' · ') }}
+                </div>
+                {% else %}
+                {% if section.location %}
+                <div class="mono text-[11px] leading-relaxed break-all mb-1.5" style="color:var(--ink-5)">{{ section.location }}</div>
+                {% endif %}
+                <div class="flex flex-col gap-1">
+                  {% for detail in section.details %}
+                  <div class="text-[12px] leading-relaxed" style="color:var(--ink-6)">{{ detail }}</div>
+                  {% endfor %}
+                </div>
+                {% endif %}
+              </div>
+              {% endfor %}
             </div>
-            {% endif %}
           </div>
           {% endfor %}
         </div>

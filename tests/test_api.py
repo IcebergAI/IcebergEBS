@@ -142,6 +142,78 @@ async def test_extension_detail_renders_detection_findings(client):
     assert b"eval() usage" in page.content
 
 
+async def test_extension_detail_groups_duplicate_detection_findings(client, test_db, admin_user):
+    async with AsyncSession(test_db) as session:
+        ext = Extension(
+            user_id=admin_user.id,
+            store="vscode",
+            extension_id="testpub.grouped-ui",
+            name="Grouped UI Extension",
+            publisher="testpub",
+            version="1.0.0",
+            store_url="https://example.com",
+            package_analysis=json.dumps({
+                "findings": [
+                    {
+                        "code": "new_function_usage",
+                        "severity": "high",
+                        "title": "new Function usage",
+                        "detail": "new Function() compiles strings as code at runtime.",
+                        "source": "javascript",
+                        "file": "background/background.js",
+                        "line": 2,
+                    },
+                    {
+                        "code": "new_function_usage",
+                        "severity": "high",
+                        "title": "new Function usage",
+                        "detail": "new Function() compiles strings as code at runtime.",
+                        "source": "javascript",
+                        "file": "popup/popup.js",
+                        "line": 2,
+                    },
+                    {
+                        "code": "high_risk_permission",
+                        "severity": "high",
+                        "title": "High-risk permission",
+                        "detail": "Permission 'cookies' can expose sensitive user or browser data.",
+                        "source": "manifest",
+                        "file": None,
+                        "line": None,
+                    },
+                    {
+                        "code": "high_risk_permission",
+                        "severity": "high",
+                        "title": "High-risk permission",
+                        "detail": "Permission 'tabs' can expose sensitive user or browser data.",
+                        "source": "manifest",
+                        "file": None,
+                        "line": None,
+                    },
+                ],
+            }),
+        )
+        session.add(ext)
+        await session.commit()
+        await session.refresh(ext)
+        ext_id = ext.id
+
+    page = await client.get(f"/extensions/{ext_id}")
+    assert page.status_code == 200
+    assert page.text.count("new Function usage") == 1
+    assert page.text.count("new Function() compiles strings as code at runtime.") == 1
+    assert page.text.count("High-risk permission") == 1
+    assert page.text.count("manifest") == 1
+    assert "2 grouped from 4" in page.text
+    assert "2 locations" in page.text
+    assert "2 findings" in page.text
+    assert "background/background.js:2" in page.text
+    assert "popup/popup.js:2" in page.text
+    assert "background/background.js:2 · popup/popup.js:2" in page.text
+    assert "Permission &#39;cookies&#39; can expose sensitive user or browser data." in page.text
+    assert "Permission &#39;tabs&#39; can expose sensitive user or browser data." in page.text
+
+
 async def test_extension_detail_handles_old_package_analysis_without_findings(client, test_db, admin_user):
     async with AsyncSession(test_db) as session:
         ext = Extension(
