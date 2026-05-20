@@ -13,6 +13,7 @@ from app.config import settings
 from app.database import get_session
 from app.models import AlertDestination, AlertRule, Extension, FetchLog, User
 from app.routes.alerts import get_alert_log
+from app.threat_intel import build_threat_intel_indicators
 
 router = APIRouter()
 templates = Jinja2Templates(directory="app/templates")
@@ -262,6 +263,10 @@ async def extension_detail(
     host_permissions = []
     if package_analysis:
         package_analysis.setdefault("external_domains", [])
+        package_analysis.setdefault("external_urls", [])
+        package_analysis.setdefault("network_callout_urls", [])
+        package_analysis.setdefault("package_sha256", "")
+        package_analysis.setdefault("archive_sha256", "")
         package_analysis.setdefault("uses_eval", False)
         package_analysis.setdefault("uses_remote_code", False)
         package_analysis.setdefault("obfuscation_score", 0)
@@ -273,6 +278,15 @@ async def extension_detail(
             package_analysis["findings"] = []
         package_analysis["grouped_findings"] = _group_detection_findings(package_analysis["findings"])
         host_permissions = package_analysis.get("host_permissions", [])
+    threat_intel_indicators = build_threat_intel_indicators(package_analysis)
+    threat_intel_primary_indicators = [
+        indicator for indicator in threat_intel_indicators
+        if indicator.get("section") != "referenced"
+    ]
+    threat_intel_referenced_indicators = [
+        indicator for indicator in threat_intel_indicators
+        if indicator.get("section") == "referenced"
+    ]
 
     return _render(request, "extension_detail.html", {
         "ext": ext,
@@ -280,6 +294,9 @@ async def extension_detail(
         "host_permissions": host_permissions,
         "risk_detail": risk_detail,
         "package_analysis": package_analysis,
+        "threat_intel_indicators": threat_intel_indicators,
+        "threat_intel_primary_indicators": threat_intel_primary_indicators,
+        "threat_intel_referenced_indicators": threat_intel_referenced_indicators,
         "fetch_logs": fetch_logs,
     }, user=current_user)
 

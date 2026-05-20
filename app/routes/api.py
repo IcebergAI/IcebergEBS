@@ -18,6 +18,7 @@ from app.database import engine, get_session
 from app.fetchers.base import FetchError
 from app.models import AlertLog, AlertRule, Extension, FetchLog, InstallCountHistory, User
 from app.services import fetch_and_store
+from app.threat_intel import build_threat_intel_indicators
 
 router = APIRouter()
 
@@ -43,6 +44,22 @@ class PackageFindingOut(BaseModel):
     line: int | None = None
 
 
+class ThreatIntelLookupOut(BaseModel):
+    label: str
+    url: str
+    requires_copy: bool = False
+
+
+class ThreatIntelIndicatorOut(BaseModel):
+    type: str
+    section: str = "primary"
+    label: str
+    value: str
+    source: str
+    description: str | None = None
+    lookups: list[ThreatIntelLookupOut]
+
+
 class ExtensionOut(BaseModel):
     id: int
     store: str
@@ -63,6 +80,7 @@ class ExtensionOut(BaseModel):
     risk_detail: dict | None
     risk_level: str | None
     findings: list[PackageFindingOut]
+    threat_intel_indicators: list[ThreatIntelIndicatorOut]
 
     @classmethod
     def from_db(cls, ext: Extension) -> "ExtensionOut":
@@ -70,6 +88,7 @@ class ExtensionOut(BaseModel):
         analysis_raw = json.loads(ext.package_analysis or "null")
         host_perms = analysis_raw.get("host_permissions", []) if analysis_raw else []
         findings = analysis_raw.get("findings", []) if analysis_raw else []
+        threat_intel_indicators = build_threat_intel_indicators(analysis_raw)
         detail = json.loads(ext.risk_detail or "null")
         risk_level = None
         if ext.risk_score is not None:
@@ -101,6 +120,10 @@ class ExtensionOut(BaseModel):
             risk_detail=detail,
             risk_level=risk_level,
             findings=[PackageFindingOut(**finding) for finding in findings],
+            threat_intel_indicators=[
+                ThreatIntelIndicatorOut(**indicator)
+                for indicator in threat_intel_indicators
+            ],
         )
 
 

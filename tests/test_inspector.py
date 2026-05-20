@@ -1,6 +1,7 @@
 import io
 import json
 import zipfile
+from hashlib import sha256
 
 import pytest
 
@@ -60,6 +61,7 @@ def test_remote_code_detection():
     })
     result = inspect_package(data)
     assert result.uses_remote_code is True
+    assert result.network_callout_urls == ["https://evil.example.com/data"]
 
 
 def test_external_domain_extracted():
@@ -69,6 +71,17 @@ def test_external_domain_extracted():
     })
     result = inspect_package(data)
     assert any("badactor.io" in d for d in result.external_domains)
+    assert "https://tracker.badactor.io/collect" in result.external_urls
+
+
+def test_package_sha256_is_recorded():
+    data = make_zip({
+        "manifest.json": json.dumps({"manifest_version": 3, "name": "x", "version": "1"}),
+        "bg.js": "console.log('ok');",
+    })
+    result = inspect_package(data)
+    assert result.package_sha256 == sha256(data).hexdigest()
+    assert result.archive_sha256 == sha256(data).hexdigest()
 
 
 def test_safe_domains_not_flagged():
@@ -78,6 +91,8 @@ def test_safe_domains_not_flagged():
     })
     result = inspect_package(data)
     assert result.external_domains == []
+    assert result.external_urls == []
+    assert result.network_callout_urls == []
 
 
 def test_no_eval_clean_code():
@@ -114,10 +129,10 @@ def test_crx_header_stripped():
     # Prepend fake CRX3 header bytes
     fake_header = b"Cr24" + b"\x00" * 12
     crx_data = fake_header + zip_bytes
-    # The inspector doesn't strip headers — the fetcher does.
-    # Feed raw zip directly (after stripping) to inspector:
-    result = inspect_package(zip_bytes)
+    result = inspect_package(crx_data)
     assert result.manifest_version == 3
+    assert result.package_sha256 == sha256(crx_data).hexdigest()
+    assert result.archive_sha256 == sha256(zip_bytes).hexdigest()
 
 
 def test_vscode_package_json():
@@ -239,3 +254,46 @@ def test_external_domains_are_capped():
     })
     result = inspect_package(data)
     assert len(result.external_domains) == 500
+
+
+def test_external_urls_are_capped_and_deduped():
+    urls = "\n".join(f"https://tracker{i}.example/path" for i in range(600))
+    data = make_zip({
+        "manifest.json": json.dumps({"manifest_version": 3, "name": "x", "version": "1"}),
+        "background.js": urls + "\nhttps://tracker1.example/path",
+    })
+    result = inspect_package(data)
+    assert len(result.external_urls) == 500
+    assert result.external_urls.count("https://tracker1.example/path") == 1
+
+
+def test_external_urls_ignore_non_domain_hosts_and_strip_trailing_punctuation():
+    data = make_zip({
+        "manifest.json": json.dumps({"manifest_version": 3, "name": "x", "version": "1"}),
+        "background.js": "const local = 'https://interceptor'; const remote = 'https://evil.example/path)';",
+    })
+    result = inspect_package(data)
+    assert "interceptor" not in result.external_domains
+    assert "https://interceptor" not in result.external_urls
+    assert "evil.example" in result.external_domains
+    assert "https://evil.example/path" in result.external_urls
+
+
+def test_network_callout_urls_are_split_from_literal_references():
+    data = make_zip({
+        "manifest.json": json.dumps({"manifest_version": 3, "name": "x", "version": "1"}),
+        "background.js": "\n".join([
+            "const docs = 'http://www.w3.org/1998/Math/MathML';",
+            "fetch('https://api.example/data');",
+            "const xhr = new XMLHttpRequest(); xhr.open('POST', 'https://xhr.example/collect');",
+            "const ws = new WebSocket('wss://socket.example/ws');",
+            "navigator.sendBeacon('https://beacon.example/ping', '{}');",
+        ]),
+    })
+    result = inspect_package(data)
+    assert "http://www.w3.org/1998/Math/MathML" in result.external_urls
+    assert "https://api.example/data" in result.network_callout_urls
+    assert "https://xhr.example/collect" in result.network_callout_urls
+    assert "wss://socket.example/ws" in result.network_callout_urls
+    assert "https://beacon.example/ping" in result.network_callout_urls
+    assert "http://www.w3.org/1998/Math/MathML" not in result.network_callout_urls

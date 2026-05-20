@@ -253,6 +253,19 @@ async def test_chrome_fetch_404():
 
 
 @respx.mock
+async def test_chrome_download_package_preserves_raw_crx_bytes():
+    zip_bytes = _make_zip()
+    raw_crx = b"Cr24" + b"\x00" * 20 + zip_bytes
+    respx.get(url__regex=r".*clients2\.google\.com/service/update2/crx.*").mock(
+        return_value=httpx.Response(200, content=raw_crx)
+    )
+    async with httpx.AsyncClient() as client:
+        fetcher = ChromeFetcher(client)
+        pkg = await fetcher.download_package("cjpalhdlnbpafiamejdnhcphjbkeiagm")
+    assert pkg == raw_crx
+
+
+@respx.mock
 async def test_package_download_rejects_large_content_length():
     respx.get("https://example.com/large.vsix").mock(
         return_value=httpx.Response(200, headers={"content-length": str(65 * 1024 * 1024)})
@@ -353,14 +366,15 @@ async def test_edge_fetch_upgrades_to_crx_when_available():
         return_value=httpx.Response(200, json=EDGE_API_RESPONSE)
     )
     crx_zip = _make_zip()
+    raw_crx = b"Cr24" + b"\x00" * 20 + crx_zip
     respx.get(url__regex=r".*extensionwebstorebase.*").mock(
-        return_value=httpx.Response(200, content=crx_zip)
+        return_value=httpx.Response(200, content=raw_crx)
     )
     async with httpx.AsyncClient() as client:
         fetcher = EdgeFetcher(client)
         meta, pkg_bytes = await fetcher.fetch("testid")
 
-    assert pkg_bytes == crx_zip  # got the real package, not the manifest fallback
+    assert pkg_bytes == raw_crx  # got the real package, not the manifest fallback
 
 
 @respx.mock
