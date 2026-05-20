@@ -39,7 +39,7 @@ class ChromeFetcher(BaseFetcher):
 
     async def download_package(self, extension_id: str) -> bytes:
         url = _DOWNLOAD_URL.format(extension_id=extension_id)
-        return _strip_crx_header(await self._get_package_bytes(url))
+        return await self._get_package_bytes(url)
 
 
 def _parse_page(html: str, extension_id: str, url: str) -> ExtensionMetadata:

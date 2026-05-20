@@ -91,6 +91,22 @@
   </div>
 
   <div class="surface p-6 mb-4">
+    <h2 class="section-title">Threat Intelligence</h2>
+    <p class="text-[13.5px] leading-relaxed mb-3" style="color:var(--ink-6)">
+      Marvin extracts observable indicators from the inspected package, including package
+      hashes, external domains, and JavaScript network callouts. Referenced URLs that are
+      only found as literal strings are kept separate from callouts. The Threat Intelligence
+      panel provides copy controls and manual lookup links for external tools such as
+      VirusTotal and AlienVault OTX.
+    </p>
+    <p class="text-[12px] leading-relaxed" style="color:var(--ink-5)">
+      Lookups are manual and privacy-preserving by default. Marvin does not call external
+      threat-intelligence APIs or submit packages; clicking an external lookup link sends the
+      selected indicator to that service.
+    </p>
+  </div>
+
+  <div class="surface p-6 mb-4">
     <h2 class="section-title">Users &amp; accounts</h2>
     <p class="text-[13.5px] leading-relaxed mb-2" style="color:var(--ink-6)">
       Marvin is multi-user. Each user maintains their own isolated list of monitored

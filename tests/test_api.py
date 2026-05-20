@@ -97,11 +97,34 @@ async def test_add_extension_returns_and_persists_findings(client):
     data = r.json()
     codes = {finding["code"] for finding in data["findings"]}
     assert {"eval_usage", "remote_fetch", "dynamic_script_injection", "manifest_v2"} <= codes
+    indicators = data["threat_intel_indicators"]
+    assert any(i["type"] == "sha256" and len(i["value"]) == 64 for i in indicators)
+    assert any(i["type"] == "domain" and i["value"] == "evil.example" for i in indicators)
+    assert any(i["type"] == "url" and i["value"] == "https://evil.example/data" for i in indicators)
+    assert any(
+        lookup["label"] == "VirusTotal"
+        for indicator in indicators
+        for lookup in indicator["lookups"]
+    )
+    domain_indicator = next(i for i in indicators if i["type"] == "domain" and i["value"] == "evil.example")
+    assert domain_indicator["label"] == "Network callout domain"
+    assert domain_indicator["section"] == "network"
+    domain_otx = next(lookup for lookup in domain_indicator["lookups"] if lookup["label"] == "AlienVault OTX")
+    assert domain_otx["url"] == "https://otx.alienvault.com/indicator/hostname/evil.example"
+    assert domain_otx["requires_copy"] is False
+    url_indicator = next(i for i in indicators if i["type"] == "url" and i["value"] == "https://evil.example/data")
+    assert url_indicator["label"] == "Network callout URL"
+    assert url_indicator["section"] == "network"
+    url_otx = next(lookup for lookup in url_indicator["lookups"] if lookup["label"] == "AlienVault OTX")
+    assert url_otx["url"] == "https://otx.alienvault.com/indicator/url/https:%2F%2Fevil.example%2Fdata"
+    assert url_otx["requires_copy"] is False
 
     r2 = await client.get(f"/api/extensions/{data['id']}")
     assert r2.status_code == 200
     persisted_codes = {finding["code"] for finding in r2.json()["findings"]}
     assert codes == persisted_codes
+    persisted_indicators = r2.json()["threat_intel_indicators"]
+    assert persisted_indicators == indicators
 
 
 async def test_old_package_analysis_without_findings_returns_empty(client, test_db, admin_user):
@@ -140,6 +163,33 @@ async def test_extension_detail_renders_detection_findings(client):
     assert page.status_code == 200
     assert b"Detection findings" in page.content
     assert b"eval() usage" in page.content
+
+
+async def test_extension_detail_renders_threat_intelligence_panel(client):
+    with patch("app.fetchers.VSCodeFetcher") as MockFetcher:
+        instance = MockFetcher.return_value
+        instance.fetch = AsyncMock(return_value=(_fake_metadata(), _risky_vsix()))
+        r = await client.post("/api/extensions", json={
+            "store": "vscode",
+            "extension_id": "testpub.threat-intel",
+        })
+    ext_id = r.json()["id"]
+
+    page = await client.get(f"/extensions/{ext_id}")
+    assert page.status_code == 200
+    assert "External domains" in page.text
+    assert "Threat Intelligence" in page.text
+    assert "<details" in page.text
+    assert "Package hash" in page.text
+    assert "External tools may show no report when they have not seen that exact indicator." not in page.text
+    assert "Network callout URL" in page.text
+    assert '<span class="font-semibold text-[13px]" style="color:var(--ink-8)">Referenced URLs</span>' not in page.text
+    assert "Network call in code" not in page.text
+    assert "Found in code" not in page.text
+    assert "https://evil.example/data" in page.text
+    assert "VirusTotal" in page.text
+    assert "AlienVault OTX" in page.text
+    assert "URLhaus" not in page.text
 
 
 async def test_extension_detail_groups_duplicate_detection_findings(client, test_db, admin_user):
@@ -234,6 +284,37 @@ async def test_extension_detail_handles_old_package_analysis_without_findings(cl
     page = await client.get(f"/extensions/{ext_id}")
     assert page.status_code == 200
     assert b"Detection findings" not in page.content
+
+
+async def test_extension_detail_explains_archive_content_hash(client, test_db, admin_user):
+    async with AsyncSession(test_db) as session:
+        ext = Extension(
+            user_id=admin_user.id,
+            store="chrome",
+            extension_id="archive-hash-ui",
+            name="Archive Hash UI",
+            publisher="testpub",
+            version="1.0.0",
+            store_url="https://example.com",
+            package_analysis=json.dumps({
+                "permissions": [],
+                "host_permissions": [],
+                "package_sha256": "a" * 64,
+                "archive_sha256": "b" * 64,
+            }),
+        )
+        session.add(ext)
+        await session.commit()
+        await session.refresh(ext)
+        ext_id = ext.id
+
+    page = await client.get(f"/extensions/{ext_id}")
+    assert page.status_code == 200
+    assert "Archive content hash" in page.text
+    assert (
+        "SHA-256 of the archive payload inside the downloaded package. "
+        "This can help when a lookup provider indexed the unpacked archive instead of the signed package."
+    ) in page.text
 
 
 async def test_add_extension_duplicate(client):

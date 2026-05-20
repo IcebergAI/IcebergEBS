@@ -3,6 +3,8 @@ import json
 import re
 import zipfile
 from dataclasses import dataclass, field
+from hashlib import sha256
+from urllib.parse import urlparse
 
 
 @dataclass
@@ -21,6 +23,10 @@ class PackageAnalysis:
     permissions: list[str] = field(default_factory=list)
     host_permissions: list[str] = field(default_factory=list)
     external_domains: list[str] = field(default_factory=list)
+    external_urls: list[str] = field(default_factory=list)
+    network_callout_urls: list[str] = field(default_factory=list)
+    package_sha256: str = ""
+    archive_sha256: str = ""
     findings: list[PackageFinding] = field(default_factory=list)
     uses_eval: bool = False
     uses_remote_code: bool = False
@@ -44,6 +50,9 @@ _MAX_TOTAL_BYTES = 50 * 1024 * 1024  # 50 MB total declared uncompressed
 _MAX_MANIFEST_BYTES = 1024 * 1024
 _MAX_FINDINGS = 200
 _MAX_EXTERNAL_DOMAINS = 500
+_MAX_EXTERNAL_URLS = 500
+_MAX_NETWORK_CALLOUT_URLS = 500
+_ZIP_MAGIC = b"PK\x03\x04"
 
 
 # Domains that are noise — well-known CDNs/services not worth flagging
@@ -64,7 +73,8 @@ _HIGH_PERMISSIONS = {
 }
 _BROAD_HOST_PATTERNS = {"<all_urls>", "*://*/*", "http://*/*", "https://*/*"}
 
-_URL_RE = re.compile(r'https?://([a-zA-Z0-9._-]+\.[a-zA-Z]{2,})')
+_URL_LITERAL_TAIL = r'[^\s\'"`<>{}\\]+'
+_URL_RE = re.compile(r'https?://' + _URL_LITERAL_TAIL)
 _EVAL_RE = re.compile(r'\beval\s*\(|new\s+Function\s*\(')
 _REMOTE_FETCH_RE = re.compile(
     r'(?:fetch|XMLHttpRequest|xhr\.open)\s*\(\s*[\'"]https?://'
@@ -85,14 +95,27 @@ _XHR_REMOTE_RE = re.compile(
 _WEBSOCKET_REMOTE_RE = re.compile(r'\bnew\s+WebSocket\s*\(\s*[\'"`]wss?://', re.IGNORECASE)
 _EVENTSOURCE_REMOTE_RE = re.compile(r'\bnew\s+EventSource\s*\(\s*[\'"`]https?://', re.IGNORECASE)
 _SENDBEACON_REMOTE_RE = re.compile(r'\bnavigator\.sendBeacon\s*\(\s*[\'"`]https?://', re.IGNORECASE)
+_NETWORK_CALLOUT_URL_PATTERNS = (
+    re.compile(r'\bfetch\s*\(\s*[\'"`]((?:https?)://' + _URL_LITERAL_TAIL + r')', re.IGNORECASE),
+    re.compile(r'\bimportScripts\s*\(\s*[\'"`]((?:https?)://' + _URL_LITERAL_TAIL + r')', re.IGNORECASE),
+    re.compile(r'\bnew\s+WebSocket\s*\(\s*[\'"`]((?:wss?)://' + _URL_LITERAL_TAIL + r')', re.IGNORECASE),
+    re.compile(r'\bnew\s+EventSource\s*\(\s*[\'"`]((?:https?)://' + _URL_LITERAL_TAIL + r')', re.IGNORECASE),
+    re.compile(r'\bnavigator\.sendBeacon\s*\(\s*[\'"`]((?:https?)://' + _URL_LITERAL_TAIL + r')', re.IGNORECASE),
+    re.compile(
+        r'\.open\s*\(\s*[\'"`](?:GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)[\'"`]\s*,\s*[\'"`]((?:https?)://' + _URL_LITERAL_TAIL + r')',
+        re.IGNORECASE,
+    ),
+    re.compile(r'\.src\s*=\s*[\'"`]((?:https?)://' + _URL_LITERAL_TAIL + r')', re.IGNORECASE),
+)
 
 
 def inspect_package(data: bytes) -> PackageAnalysis:
     """Inspect a zip package (CRX or VSIX) and return a PackageAnalysis."""
     try:
-        zf = zipfile.ZipFile(io.BytesIO(data))
+        zip_payload = _zip_payload(data)
+        zf = zipfile.ZipFile(io.BytesIO(zip_payload))
     except zipfile.BadZipFile as exc:
-        raise InspectorError(f"Not a valid zip: {exc}")
+        raise InspectorError(f"Not a valid zip or CRX: {exc}")
 
     infolist = zf.infolist()
     if len(infolist) > _MAX_FILE_COUNT:
@@ -103,6 +126,8 @@ def inspect_package(data: bytes) -> PackageAnalysis:
         raise InspectorError(f"Package declared uncompressed size too large ({total_declared} bytes)")
 
     analysis = PackageAnalysis()
+    analysis.package_sha256 = sha256(data).hexdigest()
+    analysis.archive_sha256 = sha256(zip_payload).hexdigest()
     analysis.file_count = len(infolist)
     analysis.total_size_bytes = total_declared
 
@@ -126,8 +151,20 @@ def inspect_package(data: bytes) -> PackageAnalysis:
         _analyse_js(source, analysis, name)
 
     analysis.external_domains = sorted(set(analysis.external_domains))[:_MAX_EXTERNAL_DOMAINS]
+    analysis.external_urls = sorted(set(analysis.external_urls))[:_MAX_EXTERNAL_URLS]
+    analysis.network_callout_urls = sorted(set(analysis.network_callout_urls))[:_MAX_NETWORK_CALLOUT_URLS]
     analysis.obfuscation_score = min(analysis.obfuscation_score, 10)
     return analysis
+
+
+def _zip_payload(data: bytes) -> bytes:
+    """Return the embedded ZIP payload from a raw ZIP/VSIX or CRX package."""
+    if data.startswith(_ZIP_MAGIC):
+        return data
+    offset = data.find(_ZIP_MAGIC)
+    if offset == -1:
+        raise InspectorError("Not a valid zip or CRX: no zip signature found")
+    return data[offset:]
 
 
 def _load_manifest(zf: zipfile.ZipFile) -> dict | None:
@@ -365,12 +402,16 @@ def _analyse_js(source: str, analysis: PackageAnalysis, filename: str) -> None:
             detail=detail,
         )
 
-    # Extract external domains
+    analysis.network_callout_urls.extend(_extract_network_callout_urls(source))
+
+    # Extract external domains and URLs
     for m in _URL_RE.finditer(source):
-        domain = m.group(1).lower()
-        # Strip www prefix for comparison
-        base_domain = domain.removeprefix("www.")
-        if not _is_safe_domain(base_domain):
+        url = _clean_url(m.group(0))
+        domain = _domain_from_url(url)
+        if not domain:
+            continue
+        if not _is_safe_domain(domain.removeprefix("www.")):
+            analysis.external_urls.append(url)
             analysis.external_domains.append(domain)
 
     # Minification detection
@@ -411,6 +452,29 @@ def _is_safe_domain(domain: str) -> bool:
         if domain == safe or domain.endswith("." + safe):
             return True
     return False
+
+
+def _extract_network_callout_urls(source: str) -> list[str]:
+    urls: list[str] = []
+    for pattern in _NETWORK_CALLOUT_URL_PATTERNS:
+        for match in pattern.finditer(source):
+            url = _clean_url(match.group(1))
+            domain = _domain_from_url(url)
+            if domain and not _is_safe_domain(domain.removeprefix("www.")):
+                urls.append(url)
+    return urls
+
+
+def _clean_url(raw: str) -> str:
+    return raw.rstrip(".,;:)]}")
+
+
+def _domain_from_url(url: str) -> str:
+    try:
+        hostname = (urlparse(url).hostname or "").lower()
+    except ValueError:
+        return ""
+    return hostname if "." in hostname else ""
 
 
 def _obfuscation_score(source: str) -> int:

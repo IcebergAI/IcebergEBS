@@ -293,6 +293,91 @@
 </div>
 {% endif %}
 
+{# Threat intelligence manual lookup #}
+{% if threat_intel_indicators %}
+<details class="surface p-5 mb-4">
+  <summary class="cursor-pointer" style="list-style-position:inside">
+    <h2 class="section-title" style="display:inline;margin:0">Threat Intelligence <span class="font-normal" style="color:var(--ink-5)">· {{ threat_intel_indicators|length }} indicators</span></h2>
+  </summary>
+  <div class="mt-3">
+    <div class="mb-3">
+      <p class="text-[12px] mt-1" style="color:var(--ink-5)">
+        Network callouts are external destinations used in detected call patterns. Referenced URLs are literal strings and may not be requested at runtime.
+      </p>
+    </div>
+    {% if threat_intel_primary_indicators %}
+    <div class="surface-soft overflow-hidden">
+      {% for indicator in threat_intel_primary_indicators %}
+      <div class="p-3" style="{% if not loop.last %}border-bottom:1px solid var(--ink-3){% endif %}">
+        <div class="flex items-start justify-between gap-3 flex-wrap">
+          <div class="flex items-center gap-2 flex-wrap">
+            <span class="badge badge-store">{{ indicator.label }}</span>
+          </div>
+          <div class="flex items-center justify-end gap-1.5 flex-wrap">
+            <button class="btn btn-ghost btn-sm" data-copy-value="{{ indicator.value|e }}" onclick="copyIndicator(this)">Copy</button>
+            {% for lookup in indicator.lookups %}
+            <a class="btn btn-secondary btn-sm"
+               href="{{ lookup.url }}"
+               target="_blank"
+               rel="noopener noreferrer"
+               title="{% if lookup.requires_copy %}Copy the indicator first, then search in {{ lookup.label }}{% else %}Open {{ lookup.label }} lookup{% endif %}">
+              {{ lookup.label }}
+            </a>
+            {% endfor %}
+          </div>
+        </div>
+        <div class="mono text-[12px] leading-relaxed mt-2" style="color:var(--ink-7);overflow-wrap:anywhere">{{ indicator.value }}</div>
+        {% if indicator.description %}
+        <div class="text-[12px] leading-relaxed mt-1" style="color:var(--ink-5)">{{ indicator.description }}</div>
+        {% endif %}
+      </div>
+      {% endfor %}
+    </div>
+    {% endif %}
+    {% if threat_intel_referenced_indicators %}
+    <details class="surface-soft mt-3 overflow-hidden">
+      <summary class="cursor-pointer p-3" style="list-style-position:inside">
+        <span class="font-semibold text-[13px]" style="color:var(--ink-8)">Referenced URLs</span>
+        <span class="text-[12px]" style="color:var(--ink-5)">· {{ threat_intel_referenced_indicators|length }} literal strings</span>
+      </summary>
+      <div class="px-3 pb-3">
+        <p class="text-[12px] mb-2" style="color:var(--ink-5)">
+          These URLs were found in code but were not tied to a detected network call pattern.
+        </p>
+        <div class="surface-soft overflow-hidden">
+          {% for indicator in threat_intel_referenced_indicators %}
+          <div class="p-3" style="{% if not loop.last %}border-bottom:1px solid var(--ink-3){% endif %}">
+            <div class="flex items-start justify-between gap-3 flex-wrap">
+              <div class="flex items-center gap-2 flex-wrap">
+                <span class="badge badge-store">{{ indicator.label }}</span>
+              </div>
+              <div class="flex items-center justify-end gap-1.5 flex-wrap">
+                <button class="btn btn-ghost btn-sm" data-copy-value="{{ indicator.value|e }}" onclick="copyIndicator(this)">Copy</button>
+                {% for lookup in indicator.lookups %}
+                <a class="btn btn-secondary btn-sm"
+                   href="{{ lookup.url }}"
+                   target="_blank"
+                   rel="noopener noreferrer"
+                   title="{% if lookup.requires_copy %}Copy the indicator first, then search in {{ lookup.label }}{% else %}Open {{ lookup.label }} lookup{% endif %}">
+                  {{ lookup.label }}
+                </a>
+                {% endfor %}
+              </div>
+            </div>
+            <div class="mono text-[12px] leading-relaxed mt-2" style="color:var(--ink-7);overflow-wrap:anywhere">{{ indicator.value }}</div>
+            {% if indicator.description %}
+            <div class="text-[12px] leading-relaxed mt-1" style="color:var(--ink-5)">{{ indicator.description }}</div>
+            {% endif %}
+          </div>
+          {% endfor %}
+        </div>
+      </div>
+    </details>
+    {% endif %}
+  </div>
+</details>
+{% endif %}
+
 {# Fetch history #}
 {% if fetch_logs %}
 <div class="surface overflow-hidden">
@@ -361,6 +446,18 @@ async function toggleWatchlist(id, current) {
     body: JSON.stringify({ watchlist: newVal }),
   });
   if (r.ok) location.reload();
+}
+
+async function copyIndicator(btn) {
+  const value = btn.dataset.copyValue || '';
+  const original = btn.textContent;
+  try {
+    await navigator.clipboard.writeText(value);
+    btn.textContent = 'Copied';
+    setTimeout(() => { btn.textContent = original; }, 1400);
+  } catch {
+    window.prompt('Copy indicator', value);
+  }
 }
 </script>
 {% endblock %}
