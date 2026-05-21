@@ -7,6 +7,7 @@ from urllib.parse import urlparse
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
+from sqlalchemy import or_, update as sa_update
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
@@ -170,14 +171,12 @@ async def delete_destination(
     dest = await session.get(AlertDestination, dest_id)
     if not dest or dest.user_id != current_user.id:
         raise HTTPException(status_code=404, detail="Not found")
-    # Remove dependent rules first
+    # Orphan logs for rules being removed, then delete those rules.
     rules = (await session.exec(
         select(AlertRule).where(AlertRule.destination_id == dest_id)
     )).all()
     for r in rules:
-        logs = (await session.exec(select(AlertLog).where(AlertLog.rule_id == r.id))).all()
-        for al in logs:
-            await session.delete(al)
+        await session.execute(sa_update(AlertLog).where(AlertLog.rule_id == r.id).values(rule_id=None))
         await session.delete(r)
     await session.delete(dest)
     await session.commit()
@@ -269,9 +268,7 @@ async def delete_rule(
     rule = await session.get(AlertRule, rule_id)
     if not rule or rule.user_id != current_user.id:
         raise HTTPException(status_code=404, detail="Not found")
-    logs = (await session.exec(select(AlertLog).where(AlertLog.rule_id == rule_id))).all()
-    for al in logs:
-        await session.delete(al)
+    await session.execute(sa_update(AlertLog).where(AlertLog.rule_id == rule_id).values(rule_id=None))
     await session.delete(rule)
     await session.commit()
     return {"ok": True}
@@ -283,29 +280,45 @@ async def delete_rule(
 
 async def get_alert_log(user_id: int, session: AsyncSession, limit: int = 50) -> list[dict]:
     """Shared helper used by both the JSON API and the server-side page render."""
+    # Load current rules so legacy logs (pre-migration, no user_id) are still found.
     rules = (await session.exec(
         select(AlertRule).where(AlertRule.user_id == user_id)
     )).all()
-    if not rules:
-        return []
-
-    rule_ids = [r.id for r in rules]
     rule_map = {r.id: r for r in rules}
+    rule_ids = list(rule_map.keys())
 
-    dest_ids = list({r.destination_id for r in rules})
-    dests = (await session.exec(
-        select(AlertDestination).where(AlertDestination.id.in_(dest_ids))
-    )).all()
-    dest_map = {d.id: d for d in dests}
+    # New logs carry user_id directly; legacy logs are matched via their rule_id.
+    if rule_ids:
+        log_filter = or_(AlertLog.user_id == user_id, AlertLog.rule_id.in_(rule_ids))
+    else:
+        log_filter = (AlertLog.user_id == user_id)
 
     logs = (await session.exec(
         select(AlertLog)
-        .where(AlertLog.rule_id.in_(rule_ids))
+        .where(log_filter)
         .order_by(AlertLog.sent_at.desc())
         .limit(limit)
     )).all()
     if not logs:
         return []
+
+    # Batch load snapshot destinations (stored on new logs).
+    snap_dest_ids = list({log.destination_id for log in logs if log.destination_id is not None})
+    snap_dest_map: dict[int, AlertDestination] = {}
+    if snap_dest_ids:
+        snap_dests = (await session.exec(
+            select(AlertDestination).where(AlertDestination.id.in_(snap_dest_ids))
+        )).all()
+        snap_dest_map = {d.id: d for d in snap_dests}
+
+    # Batch load current rule destinations as a fallback for legacy logs.
+    rule_dest_ids = list({r.destination_id for r in rules})
+    rule_dest_map: dict[int, AlertDestination] = {}
+    if rule_dest_ids:
+        rule_dests = (await session.exec(
+            select(AlertDestination).where(AlertDestination.id.in_(rule_dest_ids))
+        )).all()
+        rule_dest_map = {d.id: d for d in rule_dests}
 
     ext_ids = list({log.extension_id for log in logs})
     exts = (await session.exec(
@@ -315,8 +328,16 @@ async def get_alert_log(user_id: int, session: AsyncSession, limit: int = 50) ->
 
     result = []
     for log in logs:
-        rule = rule_map.get(log.rule_id)
-        dest = dest_map.get(rule.destination_id) if rule else None
+        # Prefer the destination snapshot stored at fire time; fall back to
+        # the current rule's destination for rows written before the migration.
+        if log.destination_id is not None:
+            dest = snap_dest_map.get(log.destination_id)
+        elif log.rule_id is not None and log.rule_id in rule_map:
+            rule = rule_map[log.rule_id]
+            dest = rule_dest_map.get(rule.destination_id)
+        else:
+            dest = None
+
         ext = ext_map.get(log.extension_id)
         result.append({
             "id": log.id,

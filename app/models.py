@@ -67,7 +67,7 @@ class AlertDestination(SQLModel, table=True):
 class AlertRule(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     user_id: int = Field(foreign_key="user.id", index=True)
-    destination_id: int = Field(foreign_key="alertdestination.id")
+    destination_id: int = Field(foreign_key="alertdestination.id", index=True)
     extension_id: Optional[int] = Field(default=None, foreign_key="extension.id")
     event_type: str  # "risk_level_change" | "publisher_change" | "permission_change" | "new_version"
     enabled: bool = True
@@ -76,8 +76,10 @@ class AlertRule(SQLModel, table=True):
 
 class AlertLog(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
-    rule_id: int = Field(foreign_key="alertrule.id")
-    extension_id: int = Field(foreign_key="extension.id")
+    rule_id: Optional[int] = Field(default=None, foreign_key="alertrule.id", index=True)
+    destination_id: Optional[int] = Field(default=None, foreign_key="alertdestination.id")
+    extension_id: int = Field(foreign_key="extension.id", index=True)
+    user_id: Optional[int] = Field(default=None, foreign_key="user.id", index=True)
     event_type: str
     detail: str  # JSON: {"old": ..., "new": ...}
     sent_at: datetime = Field(default_factory=_utcnow)

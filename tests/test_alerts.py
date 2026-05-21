@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, MagicMock
 import httpx
 import pytest
 import respx
+from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.main import app as fastapi_app
@@ -445,3 +446,179 @@ async def test_test_destination_failure(client, test_db, admin_user):
         assert r.status_code == 502
     finally:
         fastapi_app.state.http_client = original
+
+
+# ---------------------------------------------------------------------------
+# fire_alerts edge cases
+# ---------------------------------------------------------------------------
+
+@respx.mock
+async def test_fire_alerts_logs_webhook_failure(test_db, admin_user):
+    """When the webhook returns an error status, an AlertLog row with success=False is committed."""
+    webhook_url = "https://hooks.example.com/fail-log-test"
+    respx.post(webhook_url).mock(return_value=httpx.Response(500))
+
+    async with AsyncSession(test_db) as session:
+        dest = AlertDestination(user_id=admin_user.id, label="Fail", target=webhook_url, enabled=True)
+        session.add(dest)
+        await session.commit()
+        await session.refresh(dest)
+        dest_id = dest.id
+
+        ext = Extension(
+            user_id=admin_user.id, store="vscode", extension_id="test.faillog",
+            name="Fail Log", publisher="Pub", version="1.0.0",
+            store_url="https://example.com", risk_score=60, permissions='[]',
+            last_fetched_at=datetime(2024, 1, 1, tzinfo=timezone.utc),
+        )
+        session.add(ext)
+        await session.commit()
+        await session.refresh(ext)
+
+        rule = AlertRule(
+            user_id=admin_user.id, destination_id=dest_id,
+            event_type="risk_level_change", enabled=True,
+        )
+        session.add(rule)
+        await session.commit()
+        await session.refresh(ext)
+
+        events = [ChangeEvent("risk_level_change", "low", "high")]
+        async with httpx.AsyncClient() as http:
+            await fire_alerts(events, ext, test_db, http)
+
+    async with AsyncSession(test_db) as session:
+        logs = (await session.exec(select(AlertLog))).all()
+    assert len(logs) == 1
+    assert logs[0].success is False
+    assert logs[0].error is not None
+    assert logs[0].destination_id is not None
+
+
+@respx.mock
+async def test_fire_alerts_skips_disabled_destination(test_db, admin_user):
+    """An enabled rule pointing to a disabled destination fires no webhook and writes no log."""
+    webhook_url = "https://hooks.example.com/disabled-dest-test"
+    respx.post(webhook_url).mock(return_value=httpx.Response(200))
+
+    async with AsyncSession(test_db) as session:
+        dest = AlertDestination(user_id=admin_user.id, label="Disabled", target=webhook_url, enabled=False)
+        session.add(dest)
+        await session.commit()
+        await session.refresh(dest)
+        dest_id = dest.id
+
+        ext = Extension(
+            user_id=admin_user.id, store="vscode", extension_id="test.disableddest",
+            name="Disabled Dest", publisher="Pub", version="1.0.0",
+            store_url="https://example.com", risk_score=60, permissions='[]',
+            last_fetched_at=datetime(2024, 1, 1, tzinfo=timezone.utc),
+        )
+        session.add(ext)
+        await session.commit()
+        await session.refresh(ext)
+
+        rule = AlertRule(
+            user_id=admin_user.id, destination_id=dest_id,
+            event_type="risk_level_change", enabled=True,
+        )
+        session.add(rule)
+        await session.commit()
+        await session.refresh(ext)
+
+        events = [ChangeEvent("risk_level_change", "low", "high")]
+        async with httpx.AsyncClient() as http:
+            await fire_alerts(events, ext, test_db, http)
+
+    assert respx.calls.call_count == 0
+    async with AsyncSession(test_db) as session:
+        logs = (await session.exec(select(AlertLog))).all()
+    assert len(logs) == 0
+
+
+# ---------------------------------------------------------------------------
+# Alert log history preservation
+# ---------------------------------------------------------------------------
+
+async def test_delete_rule_preserves_alert_logs(client, test_db, admin_user):
+    """Deleting a rule orphans its logs (sets rule_id=None) rather than deleting them."""
+    r_dest = await client.post("/api/alerts/destinations", json={
+        "label": "Hook", "target": "https://hooks.example.com/preserve-rule",
+    })
+    dest_id = r_dest.json()["id"]
+    r_rule = await client.post("/api/alerts/rules", json={
+        "destination_id": dest_id, "event_type": "new_version",
+    })
+    rule_id = r_rule.json()["id"]
+
+    async with AsyncSession(test_db) as session:
+        ext = Extension(
+            user_id=admin_user.id, store="chrome", extension_id="preserve-rule-ext",
+            name="Preserve", publisher="p", version="1.0", store_url="https://example.com",
+            risk_score=10, permissions='[]',
+            last_fetched_at=datetime(2024, 1, 1, tzinfo=timezone.utc),
+        )
+        session.add(ext)
+        await session.commit()
+        await session.refresh(ext)
+
+        session.add(AlertLog(
+            rule_id=rule_id, destination_id=dest_id, extension_id=ext.id,
+            user_id=admin_user.id, event_type="new_version",
+            detail=json.dumps({"old": "1.0", "new": "2.0"}), success=True,
+        ))
+        await session.commit()
+
+    r_del = await client.delete(f"/api/alerts/rules/{rule_id}")
+    assert r_del.status_code == 200
+
+    async with AsyncSession(test_db) as session:
+        logs = (await session.exec(select(AlertLog))).all()
+    assert len(logs) == 1
+    assert logs[0].rule_id is None
+
+    r_log = await client.get("/api/alerts/log")
+    assert r_log.status_code == 200
+    assert len(r_log.json()) == 1
+
+
+async def test_delete_destination_preserves_alert_logs(client, test_db, admin_user):
+    """Deleting a destination cascades to rules but orphans logs rather than deleting them."""
+    r_dest = await client.post("/api/alerts/destinations", json={
+        "label": "Hook", "target": "https://hooks.example.com/preserve-dest",
+    })
+    dest_id = r_dest.json()["id"]
+    r_rule = await client.post("/api/alerts/rules", json={
+        "destination_id": dest_id, "event_type": "new_version",
+    })
+    rule_id = r_rule.json()["id"]
+
+    async with AsyncSession(test_db) as session:
+        ext = Extension(
+            user_id=admin_user.id, store="chrome", extension_id="preserve-dest-ext",
+            name="Preserve", publisher="p", version="1.0", store_url="https://example.com",
+            risk_score=10, permissions='[]',
+            last_fetched_at=datetime(2024, 1, 1, tzinfo=timezone.utc),
+        )
+        session.add(ext)
+        await session.commit()
+        await session.refresh(ext)
+
+        session.add(AlertLog(
+            rule_id=rule_id, destination_id=dest_id, extension_id=ext.id,
+            user_id=admin_user.id, event_type="new_version",
+            detail=json.dumps({"old": "1.0", "new": "2.0"}), success=True,
+        ))
+        await session.commit()
+
+    r_del = await client.delete(f"/api/alerts/destinations/{dest_id}")
+    assert r_del.status_code == 200
+
+    async with AsyncSession(test_db) as session:
+        logs = (await session.exec(select(AlertLog))).all()
+    assert len(logs) == 1
+    assert logs[0].rule_id is None
+
+    r_log = await client.get("/api/alerts/log")
+    assert r_log.status_code == 200
+    assert len(r_log.json()) == 1

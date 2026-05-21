@@ -106,6 +106,13 @@ async def fire_alerts(
         if not rules:
             return
 
+        # Batch load all destinations referenced by matching rules to avoid N+1 queries.
+        dest_ids = list({r.destination_id for r in rules})
+        dests = (await session.exec(
+            select(AlertDestination).where(AlertDestination.id.in_(dest_ids))
+        )).all()
+        dest_map = {d.id: d for d in dests}
+
         ext_payload = {
             "id": extension.id,
             "name": extension.name,
@@ -116,14 +123,14 @@ async def fire_alerts(
             ext_payload["marvin_url"] = f"{settings.app_base_url.rstrip('/')}/extensions/{extension.id}"
 
         for rule in rules:
-            dest = await session.get(AlertDestination, rule.destination_id)
+            dest = dest_map.get(rule.destination_id)
             if not dest or not dest.enabled:
                 continue
 
             event = event_map[rule.event_type]
-            text = _alert_text(event.event_type, extension.name, event.old_value, event.new_value)
+            alert_text = _alert_text(event.event_type, extension.name, event.old_value, event.new_value)
             payload = {
-                "text": text,
+                "text": alert_text,
                 "event": event.event_type,
                 "extension": ext_payload,
                 "change": {"old": event.old_value, "new": event.new_value},
@@ -141,7 +148,7 @@ async def fire_alerts(
                 )
             except Exception as exc:
                 success = False
-                error = str(exc)
+                error = str(exc)[:2000]
                 logger.warning(
                     "Alert webhook failed: event=%s ext=%d dest=%d error=%s",
                     event.event_type, extension.id, dest.id, exc,
@@ -149,7 +156,9 @@ async def fire_alerts(
 
             session.add(AlertLog(
                 rule_id=rule.id,
+                destination_id=dest.id,
                 extension_id=extension.id,
+                user_id=extension.user_id,
                 event_type=event.event_type,
                 detail=json.dumps({"old": event.old_value, "new": event.new_value}),
                 success=success,
