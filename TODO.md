@@ -26,6 +26,4 @@
 ## Known bugs / tech debt
 
 - **`delete_user` inconsistency** — `app/routes/users.py` cascade-deletes `AlertLog` rows when a user is deleted, whereas `delete_rule` and `delete_destination` now nullify `rule_id`/`destination_id` instead. User deletion should follow the same preserve-history pattern.
-- **`_domain_from_url` duplication** — identical helper exists in both `app/inspector.py` and `app/threat_intel.py`. Extract to a shared utility.
 - **No cap on threat intel indicator count** — `build_threat_intel_indicators` can emit ~1500 indicator dicts in the worst case (500 external URLs + 500 network callout URLs + domains). The individual lists are capped but the indicator builder iterates all of them uncapped.
-- **`_migrate()` not exercised in tests** — `conftest.py` uses `create_all` directly; the incremental migration paths in `database._migrate()` have no test coverage.

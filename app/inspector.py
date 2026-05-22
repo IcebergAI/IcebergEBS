@@ -4,7 +4,8 @@ import re
 import zipfile
 from dataclasses import dataclass, field
 from hashlib import sha256
-from urllib.parse import urlparse
+
+from app.utils import domain_from_url as _domain_from_url
 
 
 @dataclass
@@ -468,13 +469,6 @@ def _extract_network_callout_urls(source: str) -> list[str]:
 def _clean_url(raw: str) -> str:
     return raw.rstrip(".,;:)]}")
 
-
-def _domain_from_url(url: str) -> str:
-    try:
-        hostname = (urlparse(url).hostname or "").lower()
-    except ValueError:
-        return ""
-    return hostname if "." in hostname else ""
 
 
 def _obfuscation_score(source: str) -> int:

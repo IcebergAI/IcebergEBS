@@ -1,5 +1,7 @@
 from base64 import urlsafe_b64encode
-from urllib.parse import quote, urlparse
+from urllib.parse import quote
+
+from app.utils import domain_from_url as _domain_from_url
 
 OTX_LABEL = "AlienVault OTX"
 CODE_SOURCE_LABEL = "Found in code"
@@ -147,13 +149,6 @@ def _virustotal_url_report_url(url: str) -> str:
     url_id = urlsafe_b64encode(url.encode()).decode().rstrip("=")
     return f"https://www.virustotal.com/gui/url/{url_id}/detection"
 
-
-def _domain_from_url(url: str) -> str:
-    try:
-        hostname = (urlparse(url).hostname or "").lower()
-    except ValueError:
-        return ""
-    return hostname if "." in hostname else ""
 
 
 def _is_reference_noise_url(url: str) -> bool:
