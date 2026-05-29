@@ -38,9 +38,8 @@ class RiskDetail(NamedTuple):
 def score_permissions(permissions: list[str], host_permissions: list[str] | None = None) -> int:
     all_perms = set(permissions) | set(host_permissions or [])
     if all_perms & _CRITICAL_PERMISSIONS:
-        base = 25
-        extras = len(all_perms & _CRITICAL_PERMISSIONS) - 1
-        return min(base + extras * 2, 25)
+        # Any critical permission maxes out this category (capped at 25).
+        return 25
     if all_perms & _HIGH_PERMISSIONS:
         return 15
     if all_perms & _MEDIUM_PERMISSIONS:

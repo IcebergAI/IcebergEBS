@@ -1,10 +1,6 @@
-import asyncio
-import ipaddress
 import logging
-import socket
 from datetime import datetime
 from typing import Annotated
-from urllib.parse import urlparse
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -17,6 +13,7 @@ from app.auth import require_api_auth
 from app.config import settings
 from app.database import get_session
 from app.models import AlertDestination, AlertLog, AlertRule, Extension, User
+from app.webhooks import WebhookValidationError, send_webhook, validate_webhook_url
 
 logger = logging.getLogger(__name__)
 
@@ -24,73 +21,13 @@ router = APIRouter()
 
 VALID_EVENT_TYPES = {"risk_level_change", "publisher_change", "permission_change", "new_version"}
 
-_BLOCKED_HOSTNAMES = frozenset({"localhost", "localtest.me"})
-
-
-def _check_ip_allowed(ip_str: str) -> None:
-    """Raise HTTPException if the IP is private, loopback, link-local, or reserved."""
-    try:
-        addr = ipaddress.ip_address(ip_str)
-    except ValueError:
-        return
-    if not addr.is_global or addr.is_loopback or addr.is_link_local or addr.is_reserved:
-        raise HTTPException(
-            status_code=422,
-            detail="Webhook URL must not point to a private or reserved address",
-        )
-
 
 async def _validate_webhook_url(url: str) -> None:
-    """Reject URLs that could be used for SSRF against internal services.
-
-    Resolves the hostname at validation time so DNS rebinding cannot be used
-    to later redirect the webhook POST to a private address.
-    """
+    """Validate a destination webhook URL, translating failures to HTTP 422."""
     try:
-        parsed = urlparse(url)
-    except Exception:
-        raise HTTPException(status_code=422, detail="Invalid webhook URL")
-
-    if parsed.scheme not in ("http", "https"):
-        raise HTTPException(status_code=422, detail="Webhook URL must use http or https")
-
-    hostname = (parsed.hostname or "").lower()
-    if not hostname:
-        raise HTTPException(status_code=422, detail="Webhook URL has no hostname")
-
-    # Block exact matches and subdomains (e.g. foo.localhost, sub.localtest.me)
-    if hostname in _BLOCKED_HOSTNAMES or any(
-        hostname.endswith("." + h) for h in _BLOCKED_HOSTNAMES
-    ):
-        raise HTTPException(status_code=422, detail="Webhook URL hostname is not allowed")
-
-    # If the hostname is a bare IP, validate it directly.
-    try:
-        _check_ip_allowed(hostname)
-        return  # It's a valid global IP — no DNS lookup needed.
-    except HTTPException:
-        raise
-    except ValueError:
-        pass  # Not a bare IP — fall through to DNS resolution.
-
-    # Resolve the hostname and validate every returned address. This prevents
-    # DNS rebinding: an attacker cannot register a domain that resolves to a
-    # public IP at creation time and later flip DNS to an internal address,
-    # because we reject any domain whose current resolution includes private IPs.
-    loop = asyncio.get_event_loop()
-    try:
-        infos = await loop.run_in_executor(
-            None, lambda: socket.getaddrinfo(hostname, None, type=socket.SOCK_STREAM)
-        )
-    except socket.gaierror:
-        raise HTTPException(status_code=422, detail="Webhook URL hostname could not be resolved")
-
-    if not infos:
-        raise HTTPException(status_code=422, detail="Webhook URL hostname could not be resolved")
-
-    for info in infos:
-        ip_str = info[4][0]
-        _check_ip_allowed(ip_str)
+        await validate_webhook_url(url)
+    except WebhookValidationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
 
 
 # ---------------------------------------------------------------------------
@@ -427,7 +364,7 @@ async def test_destination(
     }
     client: httpx.AsyncClient = request.app.state.http_client
     try:
-        resp = await client.post(dest.target, json=payload, timeout=10.0, follow_redirects=False)
+        resp = await send_webhook(client, dest.target, payload)
         resp.raise_for_status()
         return {"ok": True, "status_code": resp.status_code}
     except Exception as exc:

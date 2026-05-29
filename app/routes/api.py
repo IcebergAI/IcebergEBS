@@ -266,9 +266,25 @@ async def add_extension(
     session.add(ext)
     await session.commit()
     await session.refresh(ext)
+    ext_id = ext.id
 
     client: httpx.AsyncClient = request.app.state.http_client
-    return ExtensionOut.from_db(await _fetch_and_score(ext, session, client))
+    try:
+        scored = await _fetch_and_score(ext, session, client)
+    except HTTPException:
+        # The first fetch failed — discard the placeholder row (and any failure
+        # FetchLog created during the attempt) so the user isn't left with an
+        # unanalysed extension stuck in their list.
+        for fl in (await session.exec(
+            select(FetchLog).where(FetchLog.extension_id == ext_id)
+        )).all():
+            await session.delete(fl)
+        orphan = await session.get(Extension, ext_id)
+        if orphan is not None:
+            await session.delete(orphan)
+        await session.commit()
+        raise
+    return ExtensionOut.from_db(scored)
 
 
 @router.get("/extensions/{ext_id}", response_model=ExtensionOut)

@@ -11,6 +11,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.config import settings
 from app.models import AlertDestination, AlertLog, AlertRule, Extension
+from app.webhooks import send_webhook
 
 logger = logging.getLogger(__name__)
 
@@ -140,7 +141,7 @@ async def fire_alerts(
             success = True
             error: str | None = None
             try:
-                resp = await client.post(dest.target, json=payload, timeout=10.0, follow_redirects=False)
+                resp = await send_webhook(client, dest.target, payload)
                 resp.raise_for_status()
                 logger.info(
                     "Alert webhook fired: event=%s ext=%d dest=%d status=%d",

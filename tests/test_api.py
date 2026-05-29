@@ -317,6 +317,23 @@ async def test_extension_detail_explains_archive_content_hash(client, test_db, a
     ) in page.text
 
 
+async def test_add_extension_fetch_failure_leaves_no_placeholder(client):
+    """If the first fetch fails, the placeholder extension is rolled back, not persisted."""
+    with patch("app.fetchers.VSCodeFetcher") as MockFetcher:
+        instance = MockFetcher.return_value
+        instance.fetch = AsyncMock(side_effect=FetchError("store unavailable"))
+        r = await client.post("/api/extensions", json={
+            "store": "vscode",
+            "extension_id": "testpub.ghost-ext",
+        })
+
+    assert r.status_code == 502
+    # The failed add must not leave an unanalysed extension behind.
+    r_list = await client.get("/api/extensions")
+    assert r_list.status_code == 200
+    assert all(e["extension_id"] != "testpub.ghost-ext" for e in r_list.json())
+
+
 async def test_add_extension_duplicate(client):
     with patch("app.fetchers.VSCodeFetcher") as MockFetcher:
         instance = MockFetcher.return_value

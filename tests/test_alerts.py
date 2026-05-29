@@ -1,6 +1,6 @@
 import json
 from datetime import datetime, timezone
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
@@ -11,6 +11,30 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 from app.main import app as fastapi_app
 from app.models import AlertDestination, AlertLog, AlertRule, Extension
 from app.notifications import ChangeEvent, detect_changes, fire_alerts
+from app.webhooks import WebhookValidationError, send_webhook
+
+# A fixed public IP the webhook resolver is patched to return, so the SSRF-pinning
+# send path is exercised deterministically without real DNS. The pinned request
+# therefore targets this IP literal (with the original Host header preserved).
+_PINNED_IP = "93.184.216.34"
+
+
+def _patch_resolver(ip: str = _PINNED_IP):
+    """Patch DNS resolution in the webhook send path to a fixed public IP."""
+    return patch("app.webhooks._resolve_host", new=AsyncMock(return_value=[ip]))
+
+
+@pytest.fixture(autouse=True)
+def _stub_webhook_dns():
+    """Keep webhook URL validation independent of real DNS across all tests.
+
+    Tests use example hostnames (e.g. hooks.example.com) that may or may not
+    resolve; stubbing the resolver to a fixed public IP makes both validation
+    and the IP-pinned send path deterministic. Individual tests can nest their
+    own patch (e.g. to a private IP) to override this default.
+    """
+    with _patch_resolver():
+        yield
 
 
 # ---------------------------------------------------------------------------
@@ -203,7 +227,8 @@ async def test_delete_rule(client):
 async def test_fire_alerts_posts_webhook(test_db, admin_user):
     """fire_alerts POSTs to the webhook URL when a matching rule exists."""
     webhook_url = "https://hooks.example.com/fire-test"
-    respx.post(webhook_url).mock(return_value=httpx.Response(200))
+    # The send path pins to the resolved IP, so respx matches the IP literal URL.
+    route = respx.post(f"https://{_PINNED_IP}/fire-test").mock(return_value=httpx.Response(200))
 
     async with AsyncSession(test_db) as session:
         dest = AlertDestination(user_id=admin_user.id, label="Test", target=webhook_url, enabled=True)
@@ -239,10 +264,13 @@ async def test_fire_alerts_posts_webhook(test_db, admin_user):
         await session.refresh(ext)  # re-load after commit expires the object
 
         events = [ChangeEvent("risk_level_change", "low", "high")]
-        async with httpx.AsyncClient() as http:
-            await fire_alerts(events, ext, test_db, http)
+        with _patch_resolver():
+            async with httpx.AsyncClient() as http:
+                await fire_alerts(events, ext, test_db, http)
 
     assert respx.calls.call_count == 1
+    # The original hostname is preserved in the Host header despite IP pinning.
+    assert respx.calls[0].request.headers["Host"] == "hooks.example.com"
     sent = json.loads(respx.calls[0].request.content)
     assert sent["event"] == "risk_level_change"
     assert sent["change"]["old"] == "low"
@@ -348,6 +376,33 @@ async def test_fire_alerts_extension_scoped_rule(test_db, admin_user):
 
 
 # ---------------------------------------------------------------------------
+# send_webhook SSRF protection (IP pinning at send time)
+# ---------------------------------------------------------------------------
+
+@respx.mock
+async def test_send_webhook_pins_to_validated_ip():
+    """send_webhook connects to the resolved IP while preserving the Host header."""
+    route = respx.post(f"https://{_PINNED_IP}/hook").mock(return_value=httpx.Response(200))
+    with _patch_resolver():
+        async with httpx.AsyncClient() as http:
+            resp = await send_webhook(http, "https://feed.example.com/hook", {"x": 1})
+    assert resp.status_code == 200
+    assert route.called
+    assert route.calls[0].request.headers["Host"] == "feed.example.com"
+
+
+async def test_send_webhook_blocks_rebind_to_private_ip():
+    """If the host resolves to a private IP at send time, no request is made."""
+    posted = AsyncMock()
+    fake_client = MagicMock()
+    fake_client.post = posted
+    with patch("app.webhooks._resolve_host", new=AsyncMock(return_value=["10.0.0.5"])):
+        with pytest.raises(WebhookValidationError):
+            await send_webhook(fake_client, "https://rebind.example.com/hook", {"x": 1})
+    posted.assert_not_awaited()
+
+
+# ---------------------------------------------------------------------------
 # Alert log endpoint
 # ---------------------------------------------------------------------------
 
@@ -418,7 +473,8 @@ async def test_test_destination_success(client, test_db, admin_user):
     fastapi_app.state.http_client = AsyncMock()
     fastapi_app.state.http_client.post = AsyncMock(return_value=mock_resp)
     try:
-        r = await client.post(f"/api/alerts/destinations/{dest_id}/test")
+        with _patch_resolver():
+            r = await client.post(f"/api/alerts/destinations/{dest_id}/test")
         assert r.status_code == 200
         assert r.json()["ok"] is True
         call_args = fastapi_app.state.http_client.post.call_args
@@ -442,7 +498,8 @@ async def test_test_destination_failure(client, test_db, admin_user):
     fastapi_app.state.http_client = AsyncMock()
     fastapi_app.state.http_client.post = AsyncMock(side_effect=httpx.ConnectError("refused"))
     try:
-        r = await client.post(f"/api/alerts/destinations/{dest_id}/test")
+        with _patch_resolver():
+            r = await client.post(f"/api/alerts/destinations/{dest_id}/test")
         assert r.status_code == 502
     finally:
         fastapi_app.state.http_client = original
@@ -456,7 +513,7 @@ async def test_test_destination_failure(client, test_db, admin_user):
 async def test_fire_alerts_logs_webhook_failure(test_db, admin_user):
     """When the webhook returns an error status, an AlertLog row with success=False is committed."""
     webhook_url = "https://hooks.example.com/fail-log-test"
-    respx.post(webhook_url).mock(return_value=httpx.Response(500))
+    respx.post(f"https://{_PINNED_IP}/fail-log-test").mock(return_value=httpx.Response(500))
 
     async with AsyncSession(test_db) as session:
         dest = AlertDestination(user_id=admin_user.id, label="Fail", target=webhook_url, enabled=True)
@@ -484,8 +541,9 @@ async def test_fire_alerts_logs_webhook_failure(test_db, admin_user):
         await session.refresh(ext)
 
         events = [ChangeEvent("risk_level_change", "low", "high")]
-        async with httpx.AsyncClient() as http:
-            await fire_alerts(events, ext, test_db, http)
+        with _patch_resolver():
+            async with httpx.AsyncClient() as http:
+                await fire_alerts(events, ext, test_db, http)
 
     async with AsyncSession(test_db) as session:
         logs = (await session.exec(select(AlertLog))).all()

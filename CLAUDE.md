@@ -37,7 +37,8 @@ API-first design. All data flows through FastAPI endpoints; the UI consumes them
 - `app/inspector.py` — static analysis of downloaded zip packages (CRX/VSIX)
 - `app/scoring.py` — pure scoring functions, `compute_risk_score()` → `RiskDetail` NamedTuple
 - `app/services.py` — `fetch_and_store(ext, session, client, engine=None)`: shared pipeline used by both API routes and the scheduler; stages changes but does **not** commit — the caller commits; pass `engine` to enable alert processing
-- `app/notifications.py` — `detect_changes()` + `fire_alerts()`: compares old/new extension state and POSTs to matching webhook destinations; `fire_alerts()` takes an `AsyncEngine` and commits `AlertLog` rows in its own dedicated session, independent of the caller's transaction
+- `app/notifications.py` — `detect_changes()` + `fire_alerts()`: compares old/new extension state and POSTs to matching webhook destinations (via `app.webhooks.send_webhook`); `fire_alerts()` takes an `AsyncEngine` and commits `AlertLog` rows in its own dedicated session, independent of the caller's transaction
+- `app/webhooks.py` — `validate_webhook_url()` (SSRF validation: scheme/blocklist/IP-range checks, returns the resolved public IPs) and `send_webhook()` (validates + resolves + connects to the pinned IP, preserving the original `Host` header and TLS SNI). DNS resolution is isolated in `_resolve_host()` so tests can stub it. Both `alerts.py` and `notifications.py` send through this module
 - `app/scheduler.py` — APScheduler `AsyncIOScheduler` background watchlist refresh; each extension is processed in its own `AsyncSession` + commit so a single failure cannot corrupt or roll back changes for the entire batch
 - `app/routes/api.py` — JSON API routes for extensions (`/api/extensions/...`)
 - `app/routes/alerts.py` — JSON API routes for alert destinations, rules, and log (`/api/alerts/...`)
@@ -106,7 +107,7 @@ venv/bin/python -m pytest tests/ -v
 - Validate code to ensure there are no serious security flaws.
 - Ensure authentication is applied to endpoints that shouldn't be public.
 - `verify_credentials` in `auth.py` always pays the bcrypt cost via `_DUMMY_HASH` when the username doesn't exist — never short-circuit before bcrypt runs or you leak username existence via timing.
-- Webhook URLs in `alerts.py` are validated against a hostname blocklist (including subdomain suffixes) and IP range checks (`is_global`, `is_loopback`, `is_link_local`, `is_reserved`) to prevent SSRF.
+- Webhook SSRF protection lives in `app/webhooks.py`. URLs are validated against a hostname blocklist (including subdomain suffixes) and IP range checks (`is_global`, `is_loopback`, `is_link_local`, `is_reserved`). Validation runs both at destination create/update time **and again at send time** in `send_webhook()`, which resolves the host and connects to the validated IP directly (IP pinning) — closing the DNS-rebinding TOCTOU window between validation and the request. Redirects are disabled (`follow_redirects=False`) so a 3xx cannot bounce the POST to a private address.
 - Jinja2 autoescaping is on by default — do not disable it.
 - Session cookies: HttpOnly + SameSite=Lax, signed with itsdangerous `URLSafeTimedSerializer`
 

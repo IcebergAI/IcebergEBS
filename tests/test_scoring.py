@@ -22,10 +22,9 @@ def test_permissions_critical():
     assert score_permissions(["<all_urls>"], []) == 25
 
 
-def test_permissions_critical_extra_adds_points():
+def test_permissions_multiple_critical_still_capped():
+    # Any critical permission maxes the category; extra critical perms don't exceed the cap.
     s = score_permissions(["debugger", "nativeMessaging", "<all_urls>"], [])
-    assert s > 25 - 1  # at least 25 + some extras, capped at 25... wait that's wrong
-    # Actually capped at 25
     assert s == 25
 
 
