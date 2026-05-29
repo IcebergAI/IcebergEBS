@@ -178,8 +178,7 @@ async def test_extension_detail_renders_threat_intelligence_panel(client):
     page = await client.get(f"/extensions/{ext_id}")
     assert page.status_code == 200
     assert "External domains" in page.text
-    assert "Threat Intelligence" in page.text
-    assert "<details" in page.text
+    assert "Observable indicators" in page.text
     assert "Package hash" in page.text
     assert "External tools may show no report when they have not seen that exact indicator." not in page.text
     assert "Network callout URL" in page.text
@@ -283,7 +282,8 @@ async def test_extension_detail_handles_old_package_analysis_without_findings(cl
 
     page = await client.get(f"/extensions/{ext_id}")
     assert page.status_code == 200
-    assert b"Detection findings" not in page.content
+    # Tabs always render, but the findings panel should show the empty-state message
+    assert b"No detection findings for this extension." in page.content
 
 
 async def test_extension_detail_explains_archive_content_hash(client, test_db, admin_user):

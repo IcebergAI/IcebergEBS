@@ -358,3 +358,204 @@ tbody tr:hover td { background: var(--ink-1); }
   .topbar { padding: 0 16px; }
   .search { width: 100%; }
 }
+
+/* ─────────────────────────────────────────────────────────────
+   Marvin · Redesign additions
+   New patterns introduced by the UI review — built on the existing
+   token system (app.css). Tabs, sub-nav, trend chart, switches,
+   review-document helpers. Nothing here overrides base tokens.
+   ───────────────────────────────────────────────────────────── */
+
+/* ── Tabbed sub-navigation (extension detail) ─────────────── */
+.tabbar {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  border-bottom: 1px solid var(--ink-3);
+  margin-bottom: 20px;
+  overflow-x: auto;
+}
+.tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 9px 13px 11px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--ink-5);
+  border: none;
+  background: none;
+  cursor: pointer;
+  white-space: nowrap;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  transition: color 0.12s, border-color 0.12s;
+}
+.tab:hover { color: var(--ink-7); }
+.tab.active { color: var(--ink-8); border-bottom-color: var(--accent); }
+.tab .count {
+  font-family: 'IBM Plex Mono', ui-monospace, monospace;
+  font-size: 10.5px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--ink-2);
+  color: var(--ink-6);
+}
+.tab.active .count { background: var(--accent-bg); color: var(--accent); }
+.tab .count.alert { background: var(--risk-critical-bg); color: var(--badge-critical-color); }
+
+/* ── Switch (watchlist, etc.) ─────────────────────────────── */
+.switch {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--ink-7);
+  background: none;
+  border: none;
+  padding: 0;
+  font-family: inherit;
+}
+.switch .track {
+  position: relative;
+  width: 34px; height: 19px;
+  border-radius: 999px;
+  background: var(--ink-3);
+  transition: background 0.15s;
+  flex: none;
+}
+.switch .thumb {
+  position: absolute;
+  top: 2px; left: 2px;
+  width: 15px; height: 15px;
+  border-radius: 999px;
+  background: white;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.25);
+  transition: transform 0.15s;
+}
+.switch.on .track { background: var(--accent); }
+.switch.on .thumb { transform: translateX(15px); }
+
+/* ── Trend chart ──────────────────────────────────────────── */
+.trend { width: 100%; }
+.trend .grid-line { stroke: var(--ink-2); stroke-width: 1; }
+.trend .band { opacity: 0.10; }
+.trend path.area { stroke: none; }
+.trend path.line { fill: none; stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+.trend .dot { stroke: var(--surface); stroke-width: 2; }
+.trend .axis-label { font-family: 'IBM Plex Mono', ui-monospace, monospace; font-size: 10px; fill: var(--ink-5); }
+
+/* ── Mini KPI inline stat ─────────────────────────────────── */
+.kpi-row { display: flex; flex-wrap: wrap; gap: 28px; }
+.kpi .v { font-size: 19px; font-weight: 600; color: var(--ink-8); letter-spacing: -0.01em; font-variant-numeric: tabular-nums; }
+.kpi .v.mono { font-family: 'IBM Plex Mono', ui-monospace, monospace; }
+
+/* ── Delta pill (score change) ────────────────────────────── */
+.delta {
+  display: inline-flex; align-items: center; gap: 3px;
+  font-family: 'IBM Plex Mono', ui-monospace, monospace;
+  font-size: 11px; font-weight: 500;
+  padding: 1px 6px; border-radius: 999px;
+}
+.delta.up   { background: var(--risk-critical-bg); color: var(--badge-critical-color); }
+.delta.down { background: var(--risk-low-bg);      color: var(--badge-low-color); }
+.delta.flat { background: var(--ink-1);            color: var(--ink-5); }
+
+/* ── Segmented filter control ─────────────────────────────── */
+.seg {
+  display: inline-flex;
+  background: var(--ink-1);
+  border: 1px solid var(--ink-3);
+  border-radius: 8px;
+  padding: 2px;
+  gap: 2px;
+}
+.seg button {
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--ink-6);
+  background: none;
+  border: none;
+  padding: 5px 11px;
+  border-radius: 6px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.12s, color 0.12s;
+}
+.seg button:hover { color: var(--ink-8); }
+.seg button.active { background: var(--surface); color: var(--ink-8); box-shadow: 0 1px 2px rgba(0,0,0,0.08), 0 0 0 1px var(--ink-3); }
+
+/* ── Severity rail (left accent on finding cards) ─────────── */
+.finding {
+  background: var(--ink-1);
+  border: 1px solid var(--ink-3);
+  border-radius: 9px;
+  padding: 11px 13px;
+  position: relative;
+  overflow: hidden;
+}
+.finding::before {
+  content: "";
+  position: absolute; left: 0; top: 0; bottom: 0;
+  width: 3px;
+}
+.finding.sev-critical::before { background: var(--risk-critical); }
+.finding.sev-high::before     { background: var(--risk-high); }
+.finding.sev-medium::before   { background: var(--risk-medium); }
+.finding.sev-low::before      { background: var(--risk-low); }
+
+/* ── Chip (sentence-rule label) ───────────────────────────── */
+.chip {
+  display: inline-flex; align-items: center; gap: 5px;
+  font-size: 11.5px; font-weight: 500;
+  padding: 3px 9px; border-radius: 999px;
+  background: var(--ink-1); color: var(--ink-6); border: 1px solid var(--ink-3);
+}
+
+/* ── Callout / annotation (review doc) ────────────────────── */
+.callout {
+  border-radius: 10px;
+  padding: 14px 16px;
+  font-size: 13.5px;
+  line-height: 1.55;
+}
+.callout.problem { background: var(--risk-critical-bg); border: 1px solid color-mix(in oklch, var(--risk-critical) 28%, transparent); }
+.callout.fix     { background: var(--risk-low-bg);      border: 1px solid color-mix(in oklch, var(--risk-low) 28%, transparent); }
+
+.tag-num {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 22px; height: 22px; flex: none;
+  border-radius: 999px;
+  background: var(--ink-8); color: var(--ink-0);
+  font-size: 11px; font-weight: 600;
+  font-family: 'IBM Plex Mono', ui-monospace, monospace;
+}
+
+/* ── Review doc layout ────────────────────────────────────── */
+.review-prose p { font-size: 14px; line-height: 1.65; color: var(--ink-6); }
+.review-prose strong { color: var(--ink-8); font-weight: 600; }
+
+.before-after { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+@media (max-width: 720px) { .before-after { grid-template-columns: 1fr; } }
+.ba-col { border-radius: 10px; padding: 13px 15px; font-size: 13px; line-height: 1.5; }
+.ba-col .ba-label { font-size: 10.5px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; margin-bottom: 6px; }
+.ba-col.before { background: var(--ink-1); border: 1px solid var(--ink-3); }
+.ba-col.before .ba-label { color: var(--ink-5); }
+.ba-col.after { background: var(--accent-bg); border: 1px solid color-mix(in oklch, var(--accent) 22%, transparent); }
+.ba-col.after .ba-label { color: var(--accent); }
+.ba-col ul { margin: 0; padding-left: 16px; color: var(--ink-6); }
+.ba-col li { margin-bottom: 3px; }
+
+/* card grid for review nav */
+.screen-link {
+  display: block;
+  background: var(--surface);
+  border: 1px solid var(--ink-3);
+  border-radius: 12px;
+  padding: 16px;
+  transition: border-color 0.12s, transform 0.12s, box-shadow 0.12s;
+}
+.screen-link:hover { border-color: var(--accent); transform: translateY(-2px); box-shadow: 0 8px 24px oklch(0.05 0.01 240 / 0.10); text-decoration: none; }

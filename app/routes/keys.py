@@ -16,6 +16,8 @@ router = APIRouter()
 class ApiKeyOut(BaseModel):
     id: int
     label: str
+    key_prefix: str
+    key_suffix: str
     readonly: bool
     created_at: datetime
     last_used_at: Optional[datetime]
@@ -44,6 +46,8 @@ async def list_keys(
         ApiKeyOut(
             id=k.id,
             label=k.label,
+            key_prefix=k.key_prefix,
+            key_suffix=k.key_suffix,
             readonly=k.readonly,
             created_at=k.created_at,
             last_used_at=k.last_used_at,
@@ -59,11 +63,15 @@ async def create_key(
     session: Annotated[AsyncSession, Depends(get_session)],
 ):
     raw_key = generate_api_key()
+    key_prefix = raw_key[:12]
+    key_suffix = raw_key[-4:]
     api_key = ApiKey(
         user_id=current_user.id,
         label=body.label,
         readonly=body.readonly,
         key_hash=hash_api_key(raw_key),
+        key_prefix=key_prefix,
+        key_suffix=key_suffix,
     )
     session.add(api_key)
     await session.commit()
@@ -71,6 +79,8 @@ async def create_key(
     return ApiKeyCreateOut(
         id=api_key.id,
         label=api_key.label,
+        key_prefix=api_key.key_prefix,
+        key_suffix=api_key.key_suffix,
         readonly=api_key.readonly,
         created_at=api_key.created_at,
         last_used_at=api_key.last_used_at,

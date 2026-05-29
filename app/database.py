@@ -30,6 +30,12 @@ async def init_db() -> None:
 async def _migrate(conn) -> None:
     """Incremental schema changes that create_all cannot apply to existing tables."""
     if _is_sqlite:
+        # apikey: add display prefix/suffix columns (only if table already exists)
+        result = await conn.execute(text("PRAGMA table_info(apikey)"))
+        existing_apikey_cols = {row[1] for row in result.fetchall()}
+        if existing_apikey_cols and "key_prefix" not in existing_apikey_cols:
+            await conn.execute(text("ALTER TABLE apikey ADD COLUMN key_prefix TEXT NOT NULL DEFAULT ''"))
+            await conn.execute(text("ALTER TABLE apikey ADD COLUMN key_suffix TEXT NOT NULL DEFAULT ''"))
         result = await conn.execute(text("PRAGMA table_info(alertlog)"))
         existing_cols = {row[1] for row in result.fetchall()}
         if "user_id" not in existing_cols:
@@ -72,6 +78,8 @@ async def _migrate(conn) -> None:
             "CREATE INDEX IF NOT EXISTS ix_alertlog_extension_id ON alertlog(extension_id)",
             "CREATE INDEX IF NOT EXISTS ix_alertlog_user_id ON alertlog(user_id)",
             "CREATE INDEX IF NOT EXISTS ix_alertrule_destination_id ON alertrule(destination_id)",
+            "ALTER TABLE apikey ADD COLUMN IF NOT EXISTS key_prefix TEXT NOT NULL DEFAULT ''",
+            "ALTER TABLE apikey ADD COLUMN IF NOT EXISTS key_suffix TEXT NOT NULL DEFAULT ''",
         ]:
             try:
                 await conn.execute(text(stmt))

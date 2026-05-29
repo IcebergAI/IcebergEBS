@@ -79,6 +79,8 @@ class ApiKey(SQLModel, table=True):
     user_id: int = Field(foreign_key="user.id", index=True)
     label: str
     key_hash: str = Field(index=True)  # SHA-256 hex of raw key
+    key_prefix: str = ""   # first 12 chars of raw key for display
+    key_suffix: str = ""   # last 4 chars of raw key for display
     readonly: bool = False
     created_at: datetime = Field(default_factory=_utcnow)
     last_used_at: Optional[datetime] = None

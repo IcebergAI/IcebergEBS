@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% block title %}Marvin — Alerts &amp; webhooks{% endblock %}
+{% block nav_account %}active{% endblock %}
 
 {% block content %}
 <div x-data="accountPrefs()">
@@ -10,13 +11,118 @@
   <span style="color:var(--ink-7)">Alerts &amp; webhooks</span>
 </div>
 <h1 class="page-title">Alerts &amp; webhooks</h1>
-<p class="page-sub mb-6">Send notifications to Slack, PagerDuty, or any webhook URL whenever a watched extension changes.</p>
+<p class="page-sub mb-5">Notify Slack, PagerDuty, or any webhook when a watched extension changes risk, publisher, permissions, or version.</p>
+
+{# ── KPI strip ───────────────────────────────────────────── #}
+<div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-7">
+  <div class="surface p-4">
+    <div class="label-cap">Destinations</div>
+    <div class="kpi"><div class="v mt-1.5" x-text="destinations.length"></div></div>
+  </div>
+  <div class="surface p-4">
+    <div class="label-cap">Active rules</div>
+    <div class="kpi"><div class="v mt-1.5" x-text="rules.filter(r=>r.enabled).length"></div></div>
+  </div>
+  <div class="surface p-4">
+    <div class="label-cap">Fired · 7 days</div>
+    <div class="kpi"><div class="v mt-1.5" x-text="alertLog.filter(r=>r.success && daysSince(r.sent_at)<7).length"></div></div>
+  </div>
+  <div class="surface p-4">
+    <div class="label-cap">Failed · 7 days</div>
+    <div class="kpi"><div class="v mt-1.5" style="color:var(--risk-critical)" x-text="alertLog.filter(r=>!r.success && daysSince(r.sent_at)<7).length"></div></div>
+  </div>
+</div>
+
+{# ── Rules ───────────────────────────────────────────────── #}
+<section class="mb-8">
+  <div class="flex items-center justify-between mb-3">
+    <h2 class="section-title" style="margin:0">Rules</h2>
+    <button class="btn btn-primary btn-sm" @click="showAddRule=!showAddRule" :disabled="destinations.length===0">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
+      New rule
+    </button>
+  </div>
+
+  <template x-if="destinations.length===0">
+    <div class="text-[12.5px] mb-3" style="color:var(--ink-5)">Add a destination below before creating rules.</div>
+  </template>
+
+  {# ── Add rule form (sentence grammar) ─────────────────── #}
+  <div class="surface p-5 mb-3" x-show="showAddRule" x-cloak>
+    <div class="flex items-end gap-3 flex-wrap">
+      <div class="text-[13px] pb-2" style="color:var(--ink-6)">When</div>
+      <div>
+        <label class="label-cap block mb-1.5">Event</label>
+        <select x-model="ruleForm.event_type" style="width:auto;min-width:170px">
+          <option value="risk_level_change">Risk level change</option>
+          <option value="publisher_change">Publisher change</option>
+          <option value="permission_change">Permission change</option>
+          <option value="new_version">New version</option>
+        </select>
+      </div>
+      <div class="text-[13px] pb-2" style="color:var(--ink-6)">on</div>
+      <div>
+        <label class="label-cap block mb-1.5">Scope</label>
+        <select x-model="ruleForm.extension_id" style="width:auto;min-width:160px">
+          <option value="">All extensions</option>
+          <template x-for="e in extensions" :key="e.id">
+            <option :value="e.id" x-text="'[' + e.store + '] ' + e.name"></option>
+          </template>
+        </select>
+      </div>
+      <div class="text-[13px] pb-2" style="color:var(--ink-6)">notify</div>
+      <div>
+        <label class="label-cap block mb-1.5">Destination</label>
+        <select x-model="ruleForm.destination_id" style="width:auto;min-width:160px">
+          <template x-for="d in destinations" :key="d.id">
+            <option :value="d.id" x-text="d.label"></option>
+          </template>
+        </select>
+      </div>
+      <div class="flex gap-2 pb-0.5">
+        <div x-show="ruleError" class="text-[12.5px] self-center" style="color:var(--risk-critical)" x-text="ruleError"></div>
+        <button class="btn btn-primary btn-sm" @click="addRule()" :disabled="ruleSaving">
+          <span x-show="!ruleSaving">Save rule</span><span x-show="ruleSaving">Saving…</span>
+        </button>
+        <button class="btn btn-ghost btn-sm" @click="showAddRule=false;resetRuleForm()">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <template x-if="rules.length === 0 && !showAddRule">
+    <div class="surface p-6 text-center text-[13px]" style="color:var(--ink-5)"
+         x-text="destinations.length===0 ? 'Add a destination below, then create a rule.' : 'No rules yet.'"></div>
+  </template>
+
+  {# ── Sentence-form rule rows ───────────────────────────── #}
+  <div class="flex flex-col gap-2" x-show="rules.length > 0">
+    <template x-for="r in rules" :key="r.id">
+      <div class="surface px-4 py-3 flex items-center justify-between gap-3 flex-wrap">
+        <div class="flex items-center gap-2 text-[13.5px] flex-wrap" style="color:var(--ink-6)">
+          <span style="color:var(--ink-5)">When</span>
+          <span class="chip" x-text="eventLabel(r.event_type)"></span>
+          <span style="color:var(--ink-5)">on</span>
+          <span class="chip" x-text="r.ext_name || 'All extensions'"></span>
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--ink-4)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+          <span class="chip" style="background:var(--accent-bg);color:var(--accent);border-color:color-mix(in oklch,var(--accent) 22%,transparent)" x-text="r.dest_label"></span>
+        </div>
+        <div class="flex items-center gap-2">
+          <button class="switch" :class="r.enabled && 'on'" @click="toggleRule(r)">
+            <span class="track"><span class="thumb"></span></span>
+            <span class="text-[12px]" style="color:var(--ink-5)" x-text="r.enabled ? 'On' : 'Off'"></span>
+          </button>
+          <button class="btn btn-danger btn-sm" @click="deleteRule(r.id)">Delete</button>
+        </div>
+      </div>
+    </template>
+  </div>
+</section>
 
 {# ── Destinations ────────────────────────────────────────── #}
 <section class="mb-8">
   <div class="flex items-center justify-between mb-3">
     <h2 class="section-title" style="margin:0">Destinations</h2>
-    <button class="btn btn-primary btn-sm" @click="showAddDest=!showAddDest">
+    <button class="btn btn-secondary btn-sm" @click="showAddDest=!showAddDest">
       <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
       New destination
     </button>
@@ -80,103 +186,29 @@
   </template>
 </section>
 
-{# ── Rules ───────────────────────────────────────────────── #}
-<section class="mb-8">
-  <div class="flex items-center justify-between mb-3">
-    <h2 class="section-title" style="margin:0">Rules</h2>
-    <button class="btn btn-primary btn-sm" @click="showAddRule=!showAddRule" :disabled="destinations.length===0">
-      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
-      New rule
-    </button>
-  </div>
-
-  <template x-if="destinations.length===0">
-    <div class="text-[12.5px] mb-3" style="color:var(--ink-5)">Add a destination before creating rules.</div>
-  </template>
-
-  <div class="surface p-5 mb-3" x-show="showAddRule" x-cloak style="max-width:520px">
-    <div class="flex flex-col gap-3">
-      <div>
-        <label class="label-cap block mb-1.5">Event</label>
-        <select x-model="ruleForm.event_type">
-          <option value="risk_level_change">Risk level change</option>
-          <option value="publisher_change">Publisher change</option>
-          <option value="permission_change">Permission change</option>
-          <option value="new_version">New version</option>
-        </select>
-      </div>
-      <div>
-        <label class="label-cap block mb-1.5">Destination</label>
-        <select x-model="ruleForm.destination_id">
-          <template x-for="d in destinations" :key="d.id">
-            <option :value="d.id" x-text="d.label"></option>
-          </template>
-        </select>
-      </div>
-      <div>
-        <label class="label-cap block mb-1.5">Extension <span style="text-transform:none;letter-spacing:0;font-weight:400;color:var(--ink-5)">(optional — leave blank for all)</span></label>
-        <select x-model="ruleForm.extension_id">
-          <option value="">All extensions</option>
-          <template x-for="e in extensions" :key="e.id">
-            <option :value="e.id" x-text="'[' + e.store + '] ' + e.name"></option>
-          </template>
-        </select>
-      </div>
-      <div x-show="ruleError" class="text-[12.5px]" style="color:var(--risk-critical)" x-text="ruleError"></div>
-      <div class="flex gap-2">
-        <button class="btn btn-primary btn-sm" @click="addRule()" :disabled="ruleSaving">
-          <span x-show="!ruleSaving">Save</span><span x-show="ruleSaving">Saving…</span>
-        </button>
-        <button class="btn btn-ghost btn-sm" @click="showAddRule=false;resetRuleForm()">Cancel</button>
-      </div>
-    </div>
-  </div>
-
-  <template x-if="rules.length === 0 && !showAddRule">
-    <div class="surface p-6 text-center text-[13px]" style="color:var(--ink-5)">
-      No rules configured.
-    </div>
-  </template>
-
-  <template x-if="rules.length > 0">
-    <div class="surface overflow-hidden">
-    <table>
-      <thead><tr><th>Event</th><th>Destination</th><th>Scope</th><th>Status</th><th></th></tr></thead>
-      <tbody>
-        <template x-for="r in rules" :key="r.id">
-          <tr>
-            <td x-text="eventLabel(r.event_type)"></td>
-            <td style="color:var(--ink-6)" x-text="r.dest_label"></td>
-            <td style="color:var(--ink-5)" x-text="r.ext_name || 'All extensions'"></td>
-            <td>
-              <button class="badge" @click="toggleRule(r)"
-                      :style="r.enabled ? 'background:var(--risk-low-bg);color:oklch(0.32 0.10 155);border-color:color-mix(in oklch, var(--risk-low) 25%, transparent)' : 'background:var(--ink-1);color:var(--ink-5);border-color:var(--ink-3)'"
-                      x-text="r.enabled ? '● enabled' : '○ disabled'"></button>
-            </td>
-            <td class="text-right"><button class="btn btn-danger btn-sm" @click="deleteRule(r.id)">Delete</button></td>
-          </tr>
-        </template>
-      </tbody>
-    </table>
-    </div>
-  </template>
-</section>
-
 {# ── Activity ────────────────────────────────────────────── #}
 <section>
-  <div class="flex items-center justify-between mb-3">
+  <div class="flex items-center justify-between mb-3 flex-wrap gap-2">
     <h2 class="section-title" style="margin:0">Recent activity</h2>
-    <button class="btn btn-secondary btn-sm" @click="loadLog()">Refresh</button>
+    <div class="flex items-center gap-2">
+      <div class="seg">
+        <button :class="logFilter==='all' && 'active'" @click="logFilter='all'">All</button>
+        <button :class="logFilter==='delivered' && 'active'" @click="logFilter='delivered'">Delivered</button>
+        <button :class="logFilter==='failed' && 'active'" @click="logFilter='failed'">Failed</button>
+      </div>
+      <button class="btn btn-secondary btn-sm" @click="loadLog()">Refresh</button>
+    </div>
   </div>
-  <template x-if="alertLog.length === 0">
-    <div class="surface p-6 text-center text-[13px]" style="color:var(--ink-5)">No alerts fired yet.</div>
+  <template x-if="filteredLog.length === 0">
+    <div class="surface p-6 text-center text-[13px]" style="color:var(--ink-5)"
+         x-text="alertLog.length === 0 ? 'No alerts fired yet.' : 'No matching entries.'"></div>
   </template>
-  <template x-if="alertLog.length > 0">
+  <template x-if="filteredLog.length > 0">
     <div class="surface overflow-hidden">
     <table>
       <thead><tr><th>Time</th><th>Event</th><th>Extension</th><th>Destination</th><th>Status</th></tr></thead>
       <tbody>
-        <template x-for="row in alertLog" :key="row.id">
+        <template x-for="row in filteredLog" :key="row.id">
           <tr>
             <td class="mono text-[12px]" style="color:var(--ink-5)" x-text="formatTime(row.sent_at)"></td>
             <td x-text="eventLabel(row.event_type)"></td>
@@ -215,10 +247,16 @@ function accountPrefs() {
     destForm: { label: '', target: '' },
     showAddRule: false, ruleSaving: false, ruleError: '',
     ruleForm: { event_type: 'risk_level_change', destination_id: '', extension_id: '' },
+    logFilter: 'all',
     globalError: '',
     init() {
       if (this.destinations.length > 0) this.ruleForm.destination_id = this.destinations[0].id;
     },
+    get filteredLog() {
+      if (this.logFilter === 'all') return this.alertLog;
+      return this.alertLog.filter(r => this.logFilter === 'delivered' ? r.success : !r.success);
+    },
+    daysSince(iso) { return (Date.now() - new Date(iso)) / 86400000; },
     async loadLog() {
       try {
         const r = await fetch('/api/alerts/log');

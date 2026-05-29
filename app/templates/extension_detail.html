@@ -10,22 +10,28 @@
   {% else %}{% set risk_level = 'low' %}{% endif %}
 {% endif %}
 
-{# Map risk_level → stroke colour for the gauge #}
 {% set gauge_color =
     'oklch(0.60 0.18 22)' if risk_level == 'critical' else
     'oklch(0.68 0.16 50)' if risk_level == 'high' else
     'oklch(0.74 0.14 85)' if risk_level == 'medium' else
     'oklch(0.66 0.14 155)' %}
 
-{# Breadcrumb + actions #}
-<div class="flex items-center justify-between mb-4 flex-wrap gap-2">
+<div x-data="extDetail()">
+
+{# ── Action row ──────────────────────────────────────────── #}
+<div class="flex items-center justify-between mb-4 flex-wrap gap-3">
   <div class="flex items-center gap-2 text-[12.5px]" style="color:var(--ink-5)">
     <a href="/">Extensions</a>
     <span>/</span>
     <span style="color:var(--ink-7)">{{ ext.name }}</span>
   </div>
   <div class="flex items-center gap-2">
-    <button class="btn btn-secondary btn-sm" onclick="refreshNow({{ ext.id }})">
+    <button class="switch" :class="watchlist && 'on'" @click="toggleWatchlist()" title="Auto-refresh on background scheduler">
+      <span class="track"><span class="thumb"></span></span>
+      <span x-text="watchlist ? 'Watching' : 'Not watching'"></span>
+    </button>
+    <div class="w-px h-5 mx-1" style="background:var(--ink-3)"></div>
+    <button class="btn btn-secondary btn-sm" onclick="refreshNow({{ ext.id }}, event)">
       <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 15-6.7L21 8"/><path d="M21 3v5h-5"/></svg>
       Refresh now
     </button>
@@ -37,10 +43,9 @@
   </div>
 </div>
 
-{# Header card #}
-<div class="surface p-6 mb-4">
+{# ── Header card ─────────────────────────────────────────── #}
+<div class="surface p-6 mb-5">
   <div class="flex gap-6 flex-wrap">
-    {# Gauge #}
     <div class="gauge" style="flex:none">
       {% if ext.risk_score is not none %}
       <svg width="130" height="130" viewBox="0 0 130 130">
@@ -92,119 +97,177 @@
           <dt class="label-cap">Last fetched</dt>
           <dd class="text-[13.5px] mt-1" style="color:var(--ink-8)">{{ ext.last_fetched_at.strftime('%b %d, %H:%M') if ext.last_fetched_at else 'never' }}</dd>
         </div>
-        <div>
-          <dt class="label-cap">Watchlist</dt>
-          <dd class="mt-1">
-            <button id="watchlist-btn" class="inline-flex items-center gap-2 cursor-pointer text-[13px]"
-                    style="color:var(--ink-7);background:none;border:none;padding:0"
-                    onclick="toggleWatchlist({{ ext.id }}, {{ 'true' if ext.watchlist else 'false' }})">
-              <span class="relative inline-block w-8 h-[18px] rounded-full transition"
-                    style="background: {{ 'var(--accent)' if ext.watchlist else 'var(--ink-3)' }}">
-                <span class="absolute top-[2px] w-[14px] h-[14px] bg-white rounded-full transition-all"
-                      style="{{ 'right: 2px' if ext.watchlist else 'left: 2px' }}"></span>
-              </span>
-              <span>{{ 'Enabled' if ext.watchlist else 'Disabled' }}</span>
-            </button>
-          </dd>
-        </div>
       </dl>
     </div>
   </div>
 </div>
 
-<div class="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-4">
-  {# Score breakdown #}
-  {% if risk_detail %}
-  <div class="surface p-5 lg:col-span-2">
-    <div class="flex items-center justify-between mb-3">
-      <h2 class="section-title" style="margin:0">Score breakdown</h2>
-      <a href="/help" class="text-[12px]">Methodology →</a>
-    </div>
-
-    {% set rows = [
-      ('Permissions',      risk_detail.permissions,      25, 'Danger level of declared permissions'),
-      ('Popularity',       risk_detail.popularity,       20, 'Install count / sudden drop'),
-      ('Publisher',        risk_detail.publisher,        15, 'Ownership change / verification'),
-      ('Staleness',        risk_detail.staleness,        15, 'Time since last author update'),
-      ('Code behaviour',   risk_detail.code_behaviour,   15, 'eval / remote code / obfuscation'),
-      ('External domains', risk_detail.external_domains, 10, 'Unknown external URLs in code'),
-    ] %}
-    <div class="flex flex-col">
-      {% for label, value, max, note in rows %}
-      {% set pct = (value / max * 100)|round(1) %}
-      {% set band = 'low' if pct < 25 else ('medium' if pct < 50 else ('high' if pct < 75 else 'critical')) %}
-      {% set band_color =
-          'oklch(0.60 0.18 22)' if band == 'critical' else
-          'oklch(0.68 0.16 50)' if band == 'high' else
-          'oklch(0.74 0.14 85)' if band == 'medium' else
-          'oklch(0.66 0.14 155)' %}
-      <div class="flex items-center gap-3 py-2.5" style="border-bottom: 1px solid var(--ink-2)">
-        <div class="w-32 text-[13px]" style="color:var(--ink-7)">{{ label }}</div>
-        <div class="flex-1 score-bar-track"><div class="score-bar-fill" style="width: {{ pct }}%; background: {{ band_color }}"></div></div>
-        <div class="mono text-[12.5px] tabular-nums w-16 text-right"><span style="color:var(--ink-8);font-weight:500">{{ value }}</span><span style="color:var(--ink-5)"> / {{ max }}</span></div>
-        <div class="hidden md:block w-52 text-[11.5px]" style="color:var(--ink-5)">{{ note }}</div>
-      </div>
-      {% endfor %}
-      <div class="flex items-center gap-3 pt-3 mt-1" style="border-top: 1px solid var(--ink-3)">
-        <div class="w-32 text-[13px] font-semibold" style="color:var(--ink-8)">Total</div>
-        <div class="flex-1 score-bar-track"><div class="score-bar-fill" style="width: {{ risk_detail.total }}%; background: {{ gauge_color }}"></div></div>
-        <div class="mono text-[13px] font-semibold tabular-nums w-16 text-right" style="color:var(--ink-8)">{{ risk_detail.total }} / 100</div>
-        <div class="hidden md:block w-52"><span class="badge badge-{{ risk_level }}">{{ risk_level }} risk</span></div>
-      </div>
-    </div>
-  </div>
-  {% endif %}
-
-  {# Package summary #}
-  {% if package_analysis %}
-  <div class="surface p-5">
-    <h2 class="section-title">Package summary</h2>
-    <dl class="grid grid-cols-2 gap-y-3 gap-x-3">
-      <div><dt class="label-cap">Manifest</dt><dd class="text-[13.5px] mt-0.5 mono" style="color:var(--ink-8)">MV{{ package_analysis.manifest_version }}</dd></div>
-      <div><dt class="label-cap">Files</dt><dd class="text-[13.5px] mt-0.5 mono tabular-nums" style="color:var(--ink-8)">{{ package_analysis.file_count }}</dd></div>
-      <div><dt class="label-cap">Size</dt><dd class="text-[13.5px] mt-0.5 mono tabular-nums" style="color:var(--ink-8)">{{ (package_analysis.total_size_bytes / 1024)|round(1) }} KB</dd></div>
-      <div><dt class="label-cap">Obfuscation</dt>
-        <dd class="text-[13.5px] mt-0.5">
-          <span style="color: {% if package_analysis.obfuscation_score >= 6 %}var(--risk-critical){% elif package_analysis.obfuscation_score >= 3 %}var(--risk-high){% else %}var(--ink-8){% endif %}">{{ package_analysis.obfuscation_score }}</span><span style="color:var(--ink-5)">/10</span>
-        </dd>
-      </div>
-      <div><dt class="label-cap">eval()</dt><dd class="text-[13.5px] mt-0.5" style="color: {% if package_analysis.uses_eval %}var(--risk-high){% else %}var(--risk-low){% endif %}">{{ 'detected' if package_analysis.uses_eval else 'none' }}</dd></div>
-      <div><dt class="label-cap">Remote code</dt><dd class="text-[13.5px] mt-0.5" style="color: {% if package_analysis.uses_remote_code %}var(--risk-high){% else %}var(--risk-low){% endif %}">{{ 'detected' if package_analysis.uses_remote_code else 'none' }}</dd></div>
-      <div><dt class="label-cap">Minified</dt><dd class="text-[13.5px] mt-0.5" style="color:var(--ink-8)">{{ 'yes' if package_analysis.has_minified_code else 'no' }}</dd></div>
-      <div><dt class="label-cap">Domains</dt><dd class="text-[13.5px] mt-0.5" style="color:var(--ink-8)">{{ package_analysis.external_domains|length }} unknown</dd></div>
-    </dl>
-  </div>
-  {% endif %}
+{# ── Tab bar ─────────────────────────────────────────────── #}
+<div class="tabbar">
+  <button class="tab" :class="tab==='overview' && 'active'" @click="tab='overview'">Overview</button>
+  <button class="tab" :class="tab==='findings' && 'active'" @click="tab='findings'">
+    Detection findings
+    <span class="count" :class="findingsCount > 0 && 'alert'" x-text="findingsCount"></span>
+  </button>
+  <button class="tab" :class="tab==='intel' && 'active'" @click="tab='intel'">
+    Threat intel <span class="count" x-text="intelCount"></span>
+  </button>
+  <button class="tab" :class="tab==='history' && 'active'" @click="tab='history'">
+    History <span class="count" x-text="historyCount"></span>
+  </button>
 </div>
 
-{# Detection findings #}
-{% if package_analysis and package_analysis.grouped_findings %}
-<div class="surface p-5 mb-4">
-  <div class="flex items-center justify-between mb-3 flex-wrap gap-2">
-    <h2 class="section-title" style="margin:0">
-      Detection findings
-      <span class="font-normal" style="color:var(--ink-5)">
-        · {{ package_analysis.grouped_findings|length }}{% if package_analysis.findings|length != package_analysis.grouped_findings|length %} grouped from {{ package_analysis.findings|length }}{% endif %}
-      </span>
-    </h2>
-    <span class="text-[11.5px]" style="color:var(--ink-5)">Static heuristics from the downloaded package</span>
+{# ═══════════ OVERVIEW ═══════════ #}
+<div x-show="tab==='overview'" class="flex flex-col gap-4">
+
+  {# Risk trend mini strip #}
+  {% if score_history %}
+  <div class="surface p-5">
+    <h2 class="section-title" style="margin:0">Risk trend</h2>
+    <div id="risk-trend-mini" class="mt-3"></div>
+  </div>
+  {% endif %}
+
+  {# Score breakdown + Package summary #}
+  <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
+    {% if risk_detail %}
+    <div class="surface p-5 lg:col-span-2">
+      <div class="flex items-center justify-between mb-3">
+        <h2 class="section-title" style="margin:0">Score breakdown</h2>
+        <a href="/help" class="text-[12px]">Methodology →</a>
+      </div>
+
+      {% set rows = [
+        ('Permissions',      risk_detail.permissions,      25, 'Danger level of declared permissions'),
+        ('Popularity',       risk_detail.popularity,       20, 'Install count / sudden drop'),
+        ('Publisher',        risk_detail.publisher,        15, 'Ownership change / verification'),
+        ('Staleness',        risk_detail.staleness,        15, 'Time since last author update'),
+        ('Code behaviour',   risk_detail.code_behaviour,   15, 'eval / remote code / obfuscation'),
+        ('External domains', risk_detail.external_domains, 10, 'Unknown external URLs in code'),
+      ] %}
+      <div class="flex flex-col">
+        {% for label, value, max, note in rows %}
+        {% set pct = (value / max * 100)|round(1) %}
+        {% set band = 'low' if pct < 25 else ('medium' if pct < 50 else ('high' if pct < 75 else 'critical')) %}
+        {% set band_color =
+            'oklch(0.60 0.18 22)' if band == 'critical' else
+            'oklch(0.68 0.16 50)' if band == 'high' else
+            'oklch(0.74 0.14 85)' if band == 'medium' else
+            'oklch(0.66 0.14 155)' %}
+        <div class="flex items-center gap-3 py-2.5" style="border-bottom: 1px solid var(--ink-2)">
+          <div class="w-32 text-[13px]" style="color:var(--ink-7)">{{ label }}</div>
+          <div class="flex-1 score-bar-track"><div class="score-bar-fill" style="width: {{ pct }}%; background: {{ band_color }}"></div></div>
+          <div class="mono text-[12.5px] tabular-nums w-16 text-right"><span style="color:var(--ink-8);font-weight:500">{{ value }}</span><span style="color:var(--ink-5)"> / {{ max }}</span></div>
+          <div class="hidden md:block w-52 text-[11.5px]" style="color:var(--ink-5)">{{ note }}</div>
+        </div>
+        {% endfor %}
+        <div class="flex items-center gap-3 pt-3 mt-1" style="border-top: 1px solid var(--ink-3)">
+          <div class="w-32 text-[13px] font-semibold" style="color:var(--ink-8)">Total</div>
+          <div class="flex-1 score-bar-track"><div class="score-bar-fill" style="width: {{ risk_detail.total }}%; background: {{ gauge_color }}"></div></div>
+          <div class="mono text-[13px] font-semibold tabular-nums w-16 text-right" style="color:var(--ink-8)">{{ risk_detail.total }} / 100</div>
+          <div class="hidden md:block w-52"><span class="badge badge-{{ risk_level }}">{{ risk_level }} risk</span></div>
+        </div>
+      </div>
+    </div>
+    {% endif %}
+
+    {% if package_analysis %}
+    <div class="surface p-5">
+      <h2 class="section-title">Package summary</h2>
+      <dl class="grid grid-cols-2 gap-y-3 gap-x-3">
+        <div><dt class="label-cap">Manifest</dt><dd class="text-[13.5px] mt-0.5 mono" style="color:var(--ink-8)">MV{{ package_analysis.manifest_version }}</dd></div>
+        <div><dt class="label-cap">Files</dt><dd class="text-[13.5px] mt-0.5 mono tabular-nums" style="color:var(--ink-8)">{{ package_analysis.file_count }}</dd></div>
+        <div><dt class="label-cap">Size</dt><dd class="text-[13.5px] mt-0.5 mono tabular-nums" style="color:var(--ink-8)">{{ (package_analysis.total_size_bytes / 1024)|round(1) }} KB</dd></div>
+        <div><dt class="label-cap">Obfuscation</dt>
+          <dd class="text-[13.5px] mt-0.5">
+            <span style="color: {% if package_analysis.obfuscation_score >= 6 %}var(--risk-critical){% elif package_analysis.obfuscation_score >= 3 %}var(--risk-high){% else %}var(--ink-8){% endif %}">{{ package_analysis.obfuscation_score }}</span><span style="color:var(--ink-5)">/10</span>
+          </dd>
+        </div>
+        <div><dt class="label-cap">eval()</dt><dd class="text-[13.5px] mt-0.5" style="color: {% if package_analysis.uses_eval %}var(--risk-high){% else %}var(--risk-low){% endif %}">{{ 'detected' if package_analysis.uses_eval else 'none' }}</dd></div>
+        <div><dt class="label-cap">Remote code</dt><dd class="text-[13.5px] mt-0.5" style="color: {% if package_analysis.uses_remote_code %}var(--risk-high){% else %}var(--risk-low){% endif %}">{{ 'detected' if package_analysis.uses_remote_code else 'none' }}</dd></div>
+        <div><dt class="label-cap">Minified</dt><dd class="text-[13.5px] mt-0.5" style="color:var(--ink-8)">{{ 'yes' if package_analysis.has_minified_code else 'no' }}</dd></div>
+        <div><dt class="label-cap">Domains</dt><dd class="text-[13.5px] mt-0.5" style="color:var(--ink-8)">{{ package_analysis.external_domains|length }} unknown</dd></div>
+      </dl>
+    </div>
+    {% endif %}
   </div>
 
-  {% set severities = [
-    ('critical', 'Critical'),
-    ('high', 'High'),
-    ('medium', 'Medium'),
-    ('low', 'Low'),
-  ] %}
-  <div class="flex flex-col gap-2.5">
-    {% for severity, label in severities %}
-      {% set severity_findings = package_analysis.grouped_findings | selectattr('severity', 'equalto', severity) | list %}
-      {% if severity_findings %}
-      <div>
-        <div class="label-cap mb-1.5">{{ label }}</div>
-        <div class="grid grid-cols-1 lg:grid-cols-2 gap-2">
+  {# Permissions #}
+  {% if permissions or host_permissions %}
+  <div class="surface p-5">
+    <div class="flex items-center justify-between mb-3">
+      <h2 class="section-title" style="margin:0">Permissions <span class="font-normal" style="color:var(--ink-5)">· {{ (permissions|length) + (host_permissions|length) }} declared</span></h2>
+      <div class="flex items-center gap-2 text-[11.5px]" style="color:var(--ink-5)">
+        <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full" style="background:var(--risk-critical)"></span>critical</span>
+        <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full" style="background:var(--risk-high)"></span>high</span>
+        <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full" style="background:var(--risk-medium)"></span>medium</span>
+      </div>
+    </div>
+    <div class="flex flex-wrap gap-1.5">
+      {% for p in host_permissions %}
+        <span class="perm-tag {% if '<all_urls>' in p or 'http://*/*' in p or 'https://*/*' in p %}perm-critical{% else %}perm-high{% endif %}">{{ p }}</span>
+      {% endfor %}
+      {% for p in permissions %}
+        {% if p in ['debugger', 'nativeMessaging', 'proxy', 'webRequest', 'webRequestBlocking'] %}
+          <span class="perm-tag perm-critical">{{ p }}</span>
+        {% elif p in ['cookies', 'history', 'tabs', 'browsingData', 'downloads', 'management', 'clipboardRead', 'contentSettings'] %}
+          <span class="perm-tag perm-high">{{ p }}</span>
+        {% elif p in ['storage', 'notifications', 'contextMenus', 'bookmarks', 'identity', 'geolocation', 'scripting'] %}
+          <span class="perm-tag perm-medium">{{ p }}</span>
+        {% else %}
+          <span class="perm-tag perm-low">{{ p }}</span>
+        {% endif %}
+      {% endfor %}
+    </div>
+  </div>
+  {% endif %}
+
+  {# External domains #}
+  {% if package_analysis and package_analysis.external_domains %}
+  <div class="surface p-5">
+    <h2 class="section-title">External domains <span class="font-normal" style="color:var(--ink-5)">· {{ package_analysis.external_domains|length }}</span></h2>
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-x-6">
+      {% for d in package_analysis.external_domains %}
+      <div class="flex items-center justify-between text-[12.5px] mono py-1.5" style="border-bottom: 1px solid var(--ink-2);color:var(--ink-7)">
+        <span>{{ d }}</span>
+        <span class="text-[10.5px]" style="color:var(--ink-5)">unknown</span>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+  {% endif %}
+
+</div>{# end overview panel #}
+
+{# ═══════════ DETECTION FINDINGS ═══════════ #}
+<div x-show="tab==='findings'" class="flex flex-col gap-4">
+  {% if package_analysis and package_analysis.grouped_findings %}
+  <div class="surface p-5">
+    <div class="flex items-center justify-between mb-3 flex-wrap gap-2">
+      <h2 class="section-title" style="margin:0">
+        Detection findings
+        <span class="font-normal" style="color:var(--ink-5)">
+          · {{ package_analysis.grouped_findings|length }}{% if package_analysis.findings|length != package_analysis.grouped_findings|length %} grouped from {{ package_analysis.findings|length }}{% endif %}
+        </span>
+      </h2>
+      <div class="seg">
+        <button :class="sev==='all' && 'active'" @click="sev='all'">All</button>
+        <button :class="sev==='critical' && 'active'" @click="sev='critical'">Critical</button>
+        <button :class="sev==='high' && 'active'" @click="sev='high'">High</button>
+        <button :class="sev==='medium' && 'active'" @click="sev='medium'">Medium</button>
+        <button :class="sev==='low' && 'active'" @click="sev='low'">Low</button>
+      </div>
+    </div>
+    <p class="text-[11.5px] mb-4" style="color:var(--ink-5)">Static heuristics from the downloaded package — no code is executed and no external services are called.</p>
+
+    <div class="flex flex-col gap-3">
+      {% set severities = [('critical', 'Critical'), ('high', 'High'), ('medium', 'Medium'), ('low', 'Low')] %}
+      {% for severity, label in severities %}
+        {% set severity_findings = package_analysis.grouped_findings | selectattr('severity', 'equalto', severity) | list %}
+        {% if severity_findings %}
           {% for finding in severity_findings %}
-          <div class="surface-soft p-2.5">
+          <div class="finding sev-{{ severity }}"
+               x-show="sev === 'all' || sev === '{{ severity }}'">
             <div class="flex items-start justify-between gap-2">
               <div class="min-w-0">
                 <div class="flex items-center gap-2 flex-wrap">
@@ -215,7 +278,7 @@
                   {% endif %}
                 </div>
               </div>
-              <span class="badge badge-store">{{ finding.source }}</span>
+              <span class="badge badge-store" style="flex-shrink:0">{{ finding.source }}</span>
             </div>
             <div class="mt-2 flex flex-col gap-1.5">
               {% for section in finding.sections %}
@@ -240,71 +303,27 @@
             </div>
           </div>
           {% endfor %}
-        </div>
-      </div>
-      {% endif %}
-    {% endfor %}
-  </div>
-</div>
-{% endif %}
-
-{# Permissions #}
-{% if permissions or host_permissions %}
-<div class="surface p-5 mb-4">
-  <div class="flex items-center justify-between mb-3">
-    <h2 class="section-title" style="margin:0">Permissions <span class="font-normal" style="color:var(--ink-5)">· {{ (permissions|length) + (host_permissions|length) }} declared</span></h2>
-    <div class="flex items-center gap-2 text-[11.5px]" style="color:var(--ink-5)">
-      <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full" style="background:var(--risk-critical)"></span>critical</span>
-      <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full" style="background:var(--risk-high)"></span>high</span>
-      <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full" style="background:var(--risk-medium)"></span>medium</span>
+        {% endif %}
+      {% endfor %}
     </div>
   </div>
-  <div class="flex flex-wrap gap-1.5">
-    {% for p in host_permissions %}
-      <span class="perm-tag {% if '<all_urls>' in p or 'http://*/*' in p or 'https://*/*' in p %}perm-critical{% else %}perm-high{% endif %}">{{ p }}</span>
-    {% endfor %}
-    {% for p in permissions %}
-      {% if p in ['debugger', 'nativeMessaging', 'proxy', 'webRequest', 'webRequestBlocking'] %}
-        <span class="perm-tag perm-critical">{{ p }}</span>
-      {% elif p in ['cookies', 'history', 'tabs', 'browsingData', 'downloads', 'management', 'clipboardRead', 'contentSettings'] %}
-        <span class="perm-tag perm-high">{{ p }}</span>
-      {% elif p in ['storage', 'notifications', 'contextMenus', 'bookmarks', 'identity', 'geolocation', 'scripting'] %}
-        <span class="perm-tag perm-medium">{{ p }}</span>
-      {% else %}
-        <span class="perm-tag perm-low">{{ p }}</span>
-      {% endif %}
-    {% endfor %}
-  </div>
-</div>
-{% endif %}
+  {% else %}
+  <div class="surface p-6 text-center text-[13px]" style="color:var(--ink-5)">No detection findings for this extension.</div>
+  {% endif %}
+</div>{# end findings panel #}
 
-{# External domains #}
-{% if package_analysis and package_analysis.external_domains %}
-<div class="surface p-5 mb-4">
-  <h2 class="section-title">External domains <span class="font-normal" style="color:var(--ink-5)">· {{ package_analysis.external_domains|length }}</span></h2>
-  <div class="grid grid-cols-1 md:grid-cols-2 gap-x-6">
-    {% for d in package_analysis.external_domains %}
-    <div class="flex items-center justify-between text-[12.5px] mono py-1.5" style="border-bottom: 1px solid var(--ink-2);color:var(--ink-7)">
-      <span>{{ d }}</span>
-      <span class="text-[10.5px]" style="color:var(--ink-5)">unknown</span>
+{# ═══════════ THREAT INTEL ═══════════ #}
+<div x-show="tab==='intel'" class="flex flex-col gap-4">
+  {% if threat_intel_indicators %}
+  <div class="surface p-5">
+    <div class="flex items-center justify-between mb-1 flex-wrap gap-2">
+      <h2 class="section-title" style="margin:0">Observable indicators <span class="font-normal" style="color:var(--ink-5)">· {{ threat_intel_indicators|length }}</span></h2>
+      <span class="text-[11.5px]" style="color:var(--ink-5)">Lookups are manual &amp; privacy-preserving</span>
     </div>
-    {% endfor %}
-  </div>
-</div>
-{% endif %}
+    <p class="text-[12px] mb-4" style="color:var(--ink-5)">
+      Network callouts are destinations used in detected call patterns. Referenced URLs are literal strings and may not be requested at runtime.
+    </p>
 
-{# Threat intelligence manual lookup #}
-{% if threat_intel_indicators %}
-<details class="surface p-5 mb-4">
-  <summary class="cursor-pointer" style="list-style-position:inside">
-    <h2 class="section-title" style="display:inline;margin:0">Threat Intelligence <span class="font-normal" style="color:var(--ink-5)">· {{ threat_intel_indicators|length }} indicators</span></h2>
-  </summary>
-  <div class="mt-3">
-    <div class="mb-3">
-      <p class="text-[12px] mt-1" style="color:var(--ink-5)">
-        Network callouts are external destinations used in detected call patterns. Referenced URLs are literal strings and may not be requested at runtime.
-      </p>
-    </div>
     {% if threat_intel_primary_indicators %}
     <div class="surface-soft overflow-hidden">
       {% for indicator in threat_intel_primary_indicators %}
@@ -334,6 +353,7 @@
       {% endfor %}
     </div>
     {% endif %}
+
     {% if threat_intel_referenced_indicators %}
     <details class="surface-soft mt-3 overflow-hidden">
       <summary class="cursor-pointer p-3" style="list-style-position:inside">
@@ -375,58 +395,113 @@
     </details>
     {% endif %}
   </div>
-</details>
-{% endif %}
+  {% else %}
+  <div class="surface p-6 text-center text-[13px]" style="color:var(--ink-5)">No threat intelligence indicators for this extension.</div>
+  {% endif %}
+</div>{# end intel panel #}
 
-{# Fetch history #}
-{% if fetch_logs %}
-<div class="surface overflow-hidden">
-  <div class="px-5 pt-4 pb-3 flex items-center justify-between">
-    <h2 class="section-title" style="margin:0">Fetch history</h2>
-    <span class="text-[11.5px]" style="color:var(--ink-5)">Last {{ fetch_logs|length }}</span>
+{# ═══════════ HISTORY ═══════════ #}
+<div x-show="tab==='history'" class="flex flex-col gap-4">
+
+  {# Full risk chart #}
+  {% if score_history %}
+  <div class="surface p-5">
+    <div class="flex items-center justify-between mb-3">
+      <h2 class="section-title" style="margin:0">Risk score history</h2>
+      <span class="text-[11.5px]" style="color:var(--ink-5)">{{ score_history|length }} data point{{ 's' if score_history|length != 1 }}</span>
+    </div>
+    <div id="risk-trend"></div>
   </div>
-  <table>
-    <thead>
-      <tr><th>Time</th><th>Result</th><th>Score change</th><th>Notes</th></tr>
-    </thead>
-    <tbody>
-      {% for log in fetch_logs %}
-      <tr>
-        <td class="mono" style="color:var(--ink-6)">{{ log.fetched_at.strftime('%b %d, %H:%M') }}</td>
-        <td>
-          {% if log.success %}
-          <span class="badge badge-low">success</span>
-          {% else %}
-          <span class="badge badge-critical">failed</span>
-          {% endif %}
-        </td>
-        <td class="mono">
-          {% if log.risk_score_before is not none and log.risk_score_after is not none %}
-            {{ log.risk_score_before }} → <span style="color:var(--ink-8);font-weight:500">{{ log.risk_score_after }}</span>
-          {% elif log.risk_score_after is not none %}
-            → {{ log.risk_score_after }}
-          {% else %}
-            <span style="color:var(--ink-5)">—</span>
-          {% endif %}
-        </td>
-        <td style="color: {% if log.error_message %}var(--risk-critical){% else %}var(--ink-5){% endif %}">{{ log.error_message or '' }}</td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
-</div>
-{% endif %}
+  {% endif %}
 
+  {# Fetch history table #}
+  {% if fetch_logs %}
+  <div class="surface overflow-hidden">
+    <div class="px-5 pt-4 pb-3 flex items-center justify-between">
+      <h2 class="section-title" style="margin:0">Fetch history</h2>
+      <span class="text-[11.5px]" style="color:var(--ink-5)">Last {{ fetch_logs|length }}</span>
+    </div>
+    <table>
+      <thead>
+        <tr><th>Time</th><th>Result</th><th>Score change</th><th>Notes</th></tr>
+      </thead>
+      <tbody>
+        {% for log in fetch_logs %}
+        <tr>
+          <td class="mono" style="color:var(--ink-6)">{{ log.fetched_at.strftime('%b %d, %H:%M') }}</td>
+          <td>
+            {% if log.success %}
+            <span class="badge badge-low">success</span>
+            {% else %}
+            <span class="badge badge-critical">failed</span>
+            {% endif %}
+          </td>
+          <td class="mono">
+            {% if log.risk_score_before is not none and log.risk_score_after is not none %}
+              {% set delta = log.risk_score_after - log.risk_score_before %}
+              {{ log.risk_score_before }} →
+              <span style="color:var(--ink-8);font-weight:500">{{ log.risk_score_after }}</span>
+              {% if delta > 0 %}
+              <span class="delta up">▲ {{ delta }}</span>
+              {% elif delta < 0 %}
+              <span class="delta down">▼ {{ -delta }}</span>
+              {% endif %}
+            {% elif log.risk_score_after is not none %}
+              → {{ log.risk_score_after }}
+            {% else %}
+              <span style="color:var(--ink-5)">—</span>
+            {% endif %}
+          </td>
+          <td style="color: {% if log.error_message %}var(--risk-critical){% else %}var(--ink-5){% endif %}">{{ log.error_message or '' }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div class="surface p-6 text-center text-[13px]" style="color:var(--ink-5)">No fetch history yet.</div>
+  {% endif %}
+
+</div>{# end history panel #}
+
+{# JSON island for trend chart #}
+<script type="application/json" id="score-history">{{ score_history | tojson }}</script>
+
+</div>{# end x-data="extDetail()" #}
+
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/js/trend-chart.js"></script>
 <script>
-async function refreshNow(id) {
+function extDetail() {
+  return {
+    tab: 'overview',
+    sev: 'all',
+    watchlist: {{ ext.watchlist | tojson }},
+    findingsCount: {{ (package_analysis.grouped_findings | length) if (package_analysis and package_analysis.grouped_findings) else 0 }},
+    intelCount: {{ threat_intel_primary_indicators | length }},
+    historyCount: {{ fetch_logs | length }},
+    async toggleWatchlist() {
+      const r = await fetch('/api/extensions/{{ ext.id }}/watchlist', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ watchlist: !this.watchlist }),
+      });
+      if (r.ok) this.watchlist = !this.watchlist;
+    },
+  };
+}
+
+async function refreshNow(id, event) {
   const btn = event.currentTarget;
   btn.disabled = true;
-  const orig = btn.textContent;
+  const orig = btn.innerHTML;
   btn.textContent = 'Refreshing…';
   try {
     const r = await fetch('/api/extensions/' + id + '/refresh', { method: 'POST' });
     if (r.ok) location.reload();
-    else { const d = await r.json(); alert(d.detail || 'Refresh failed'); btn.textContent = orig; }
+    else { const d = await r.json(); alert(d.detail || 'Refresh failed'); btn.innerHTML = orig; }
   } finally { btn.disabled = false; }
 }
 
@@ -435,17 +510,6 @@ async function deleteExt(id) {
   const r = await fetch('/api/extensions/' + id, { method: 'DELETE' });
   if (r.ok) window.location.href = '/';
   else alert('Delete failed');
-}
-
-async function toggleWatchlist(id, current) {
-  const btn = document.getElementById('watchlist-btn');
-  const newVal = !current;
-  const r = await fetch('/api/extensions/' + id + '/watchlist', {
-    method: 'PATCH',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({ watchlist: newVal }),
-  });
-  if (r.ok) location.reload();
 }
 
 async function copyIndicator(btn) {

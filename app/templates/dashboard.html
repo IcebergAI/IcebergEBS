@@ -130,11 +130,21 @@ function dashboardData() {
     sort: 'risk_score',
     dir: 'desc',
     filter: 'all',
+    query: new URLSearchParams(location.search).get('q') || '',
     extensions: {{ extensions | tojson }},
     get filtered() {
-      if (this.filter === 'all') return this.extensions;
-      if (this.filter === 'watchlist') return this.extensions.filter(e => e.watchlist);
-      return this.extensions.filter(e => e.store === this.filter);
+      let list = this.extensions;
+      if (this.filter === 'watchlist') list = list.filter(e => e.watchlist);
+      else if (this.filter !== 'all') list = list.filter(e => e.store === this.filter);
+      if (this.query) {
+        const q = this.query.toLowerCase();
+        list = list.filter(e =>
+          (e.name || '').toLowerCase().includes(q) ||
+          (e.publisher || '').toLowerCase().includes(q) ||
+          (e.extension_id || '').toLowerCase().includes(q)
+        );
+      }
+      return list;
     },
     get sorted() {
       return [...this.filtered].sort((a, b) => {

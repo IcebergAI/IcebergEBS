@@ -1,4 +1,5 @@
 import json
+from datetime import datetime, timedelta, timezone
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
@@ -19,6 +20,22 @@ router = APIRouter()
 templates = Jinja2Templates(directory="app/templates")
 
 _FLASH_COOKIE = "marvin_flash"
+
+
+def _ago(dt) -> str:
+    if not dt:
+        return "—"
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    mins = int((datetime.now(timezone.utc) - dt).total_seconds() // 60)
+    if mins < 1:
+        return "just now"
+    if mins < 60:
+        return f"{mins}m ago"
+    hrs = mins // 60
+    if hrs < 24:
+        return f"{hrs}h ago"
+    return f"{hrs // 24}d ago"
 
 
 def _get_flash(request: Request) -> str | None:
@@ -212,11 +229,23 @@ async def dashboard(
     )).all()
 
     high_risk = sum(1 for e in extensions if e.risk_score is not None and e.risk_score >= 50)
+    watchlist_count = sum(1 for e in extensions if e.watchlist)
+    fetched = [e.last_fetched_at for e in extensions if e.last_fetched_at]
+    last_refresh = max(fetched) if fetched else None
+    next_refresh = (
+        last_refresh + timedelta(minutes=settings.fetch_interval_minutes)
+        if last_refresh else None
+    )
 
     return _render(request, "dashboard.html", {
         "extensions": [_ext_to_dict(e) for e in extensions],
         "extensions_count": len(extensions),
         "high_risk_count": high_risk,
+        "watchlist_count": watchlist_count,
+        "last_refresh_label": _ago(last_refresh),
+        "next_refresh_label": (
+            f"next ~{next_refresh.strftime('%H:%M')} UTC" if next_refresh else "next: scheduled"
+        ),
     }, user=current_user)
 
 
@@ -287,6 +316,11 @@ async def extension_detail(
         indicator for indicator in threat_intel_indicators
         if indicator.get("section") == "referenced"
     ]
+    score_history = [
+        {"d": log.fetched_at.strftime("%b %d"), "s": log.risk_score_after}
+        for log in reversed(fetch_logs)
+        if log.success and log.risk_score_after is not None
+    ]
 
     return _render(request, "extension_detail.html", {
         "ext": ext,
@@ -298,6 +332,7 @@ async def extension_detail(
         "threat_intel_primary_indicators": threat_intel_primary_indicators,
         "threat_intel_referenced_indicators": threat_intel_referenced_indicators,
         "fetch_logs": fetch_logs,
+        "score_history": score_history,
     }, user=current_user)
 
 
@@ -405,6 +440,8 @@ async def account_keys_page(
         {
             "id": k.id,
             "label": k.label,
+            "key_prefix": k.key_prefix,
+            "key_suffix": k.key_suffix,
             "readonly": k.readonly,
             "created_at": k.created_at.isoformat(),
             "last_used_at": k.last_used_at.isoformat() if k.last_used_at else None,
