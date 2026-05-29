@@ -10,6 +10,7 @@ logger = logging.getLogger(__name__)
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
+from sqlalchemy import delete as sa_delete
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
@@ -17,6 +18,7 @@ from app.auth import require_api_auth
 from app.database import engine, get_session
 from app.fetchers.base import FetchError
 from app.models import AlertLog, AlertRule, Extension, FetchLog, InstallCountHistory, User
+from app.scoring import risk_level
 from app.services import fetch_and_store
 from app.threat_intel import build_threat_intel_indicators
 
@@ -90,16 +92,6 @@ class ExtensionOut(BaseModel):
         findings = analysis_raw.get("findings", []) if analysis_raw else []
         threat_intel_indicators = build_threat_intel_indicators(analysis_raw)
         detail = json.loads(ext.risk_detail or "null")
-        risk_level = None
-        if ext.risk_score is not None:
-            if ext.risk_score >= 75:
-                risk_level = "critical"
-            elif ext.risk_score >= 50:
-                risk_level = "high"
-            elif ext.risk_score >= 25:
-                risk_level = "medium"
-            else:
-                risk_level = "low"
         return cls(
             id=ext.id,
             store=ext.store,
@@ -118,7 +110,7 @@ class ExtensionOut(BaseModel):
             watchlist=ext.watchlist,
             risk_score=ext.risk_score,
             risk_detail=detail,
-            risk_level=risk_level,
+            risk_level=risk_level(ext.risk_score),
             findings=[PackageFindingOut(**finding) for finding in findings],
             threat_intel_indicators=[
                 ThreatIntelIndicatorOut(**indicator)
@@ -309,15 +301,12 @@ async def delete_extension(
     if not ext or ext.user_id != current_user.id:
         raise HTTPException(status_code=404, detail="Not found")
 
-    # Remove all child rows referencing this extension
-    for log in (await session.exec(select(AlertLog).where(AlertLog.extension_id == ext_id))).all():
-        await session.delete(log)
-    for rule in (await session.exec(select(AlertRule).where(AlertRule.extension_id == ext_id))).all():
-        await session.delete(rule)
-    for fl in (await session.exec(select(FetchLog).where(FetchLog.extension_id == ext_id))).all():
-        await session.delete(fl)
-    for h in (await session.exec(select(InstallCountHistory).where(InstallCountHistory.extension_id == ext_id))).all():
-        await session.delete(h)
+    # Remove all child rows referencing this extension in FK-safe order.
+    # AlertLog references both the extension and (optionally) a rule, so it goes first.
+    await session.execute(sa_delete(AlertLog).where(AlertLog.extension_id == ext_id))
+    await session.execute(sa_delete(AlertRule).where(AlertRule.extension_id == ext_id))
+    await session.execute(sa_delete(FetchLog).where(FetchLog.extension_id == ext_id))
+    await session.execute(sa_delete(InstallCountHistory).where(InstallCountHistory.extension_id == ext_id))
 
     await session.delete(ext)
     await session.commit()

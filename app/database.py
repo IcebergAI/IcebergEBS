@@ -1,3 +1,4 @@
+import logging
 from collections.abc import AsyncGenerator
 
 from sqlmodel import SQLModel
@@ -6,6 +7,8 @@ from sqlalchemy.ext.asyncio import create_async_engine, AsyncEngine
 from sqlalchemy import text
 
 from app.config import settings
+
+logger = logging.getLogger(__name__)
 
 _is_sqlite = settings.database_url.startswith("sqlite")
 _pool_kwargs = {} if _is_sqlite else {
@@ -83,8 +86,12 @@ async def _migrate(conn) -> None:
         ]:
             try:
                 await conn.execute(text(stmt))
-            except Exception:
-                pass  # already applied
+            except Exception as exc:
+                # Most of these statements are idempotent (IF NOT EXISTS / DROP
+                # NOT NULL on an already-nullable column) and won't raise. Log
+                # anything that does so a genuine migration failure is visible
+                # instead of being silently swallowed.
+                logger.warning("Migration step failed (may already be applied): %s — %s", stmt, exc)
 
 
 async def get_session() -> AsyncGenerator[AsyncSession, None]:

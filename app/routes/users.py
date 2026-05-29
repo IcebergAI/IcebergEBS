@@ -2,10 +2,11 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel, Field
+from sqlalchemy import delete as sa_delete, or_
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from app.auth import clear_session, hash_password, verify_password, require_admin, require_auth
+from app.auth import clear_session, hash_password, verify_password, require_admin, require_api_auth
 from app.database import get_session
 from app.models import AlertDestination, AlertLog, AlertRule, ApiKey, Extension, FetchLog, InstallCountHistory, User
 
@@ -75,47 +76,34 @@ async def delete_user(
     if not target:
         raise HTTPException(status_code=404, detail="User not found")
 
-    # Delete owned data before the user row to avoid FK violations
-    extensions = (await session.exec(
-        select(Extension).where(Extension.user_id == user_id)
+    # Collect the user's extension and rule ids so child rows can be removed in
+    # bulk (and in FK-safe order) rather than row-by-row.
+    ext_ids = (await session.exec(
+        select(Extension.id).where(Extension.user_id == user_id)
     )).all()
-    for ext in extensions:
-        logs = (await session.exec(select(FetchLog).where(FetchLog.extension_id == ext.id))).all()
-        for log in logs:
-            await session.delete(log)
-        history = (await session.exec(
-            select(InstallCountHistory).where(InstallCountHistory.extension_id == ext.id)
-        )).all()
-        for h in history:
-            await session.delete(h)
-        rules_for_ext = (await session.exec(
-            select(AlertRule).where(AlertRule.extension_id == ext.id)
-        )).all()
-        for r in rules_for_ext:
-            logs_for_rule = (await session.exec(
-                select(AlertLog).where(AlertLog.rule_id == r.id)
-            )).all()
-            for al in logs_for_rule:
-                await session.delete(al)
-            await session.delete(r)
-        await session.delete(ext)
-
-    rules = (await session.exec(select(AlertRule).where(AlertRule.user_id == user_id))).all()
-    for r in rules:
-        logs_for_rule = (await session.exec(select(AlertLog).where(AlertLog.rule_id == r.id))).all()
-        for al in logs_for_rule:
-            await session.delete(al)
-        await session.delete(r)
-
-    dests = (await session.exec(
-        select(AlertDestination).where(AlertDestination.user_id == user_id)
+    rule_ids = (await session.exec(
+        select(AlertRule.id).where(AlertRule.user_id == user_id)
     )).all()
-    for d in dests:
-        await session.delete(d)
 
-    api_keys = (await session.exec(select(ApiKey).where(ApiKey.user_id == user_id))).all()
-    for k in api_keys:
-        await session.delete(k)
+    # AlertLog rows owned by this user — directly (user_id), via one of their
+    # extensions, or via one of their rules (covers legacy logs with a null user_id).
+    log_conditions = [AlertLog.user_id == user_id]
+    if ext_ids:
+        log_conditions.append(AlertLog.extension_id.in_(ext_ids))
+    if rule_ids:
+        log_conditions.append(AlertLog.rule_id.in_(rule_ids))
+    await session.execute(sa_delete(AlertLog).where(or_(*log_conditions)))
+
+    # Rules and destinations next (referenced by logs, reference extensions/user).
+    await session.execute(sa_delete(AlertRule).where(AlertRule.user_id == user_id))
+    await session.execute(sa_delete(AlertDestination).where(AlertDestination.user_id == user_id))
+
+    if ext_ids:
+        await session.execute(sa_delete(FetchLog).where(FetchLog.extension_id.in_(ext_ids)))
+        await session.execute(sa_delete(InstallCountHistory).where(InstallCountHistory.extension_id.in_(ext_ids)))
+
+    await session.execute(sa_delete(ApiKey).where(ApiKey.user_id == user_id))
+    await session.execute(sa_delete(Extension).where(Extension.user_id == user_id))
 
     await session.delete(target)
     await session.commit()
@@ -126,7 +114,7 @@ async def delete_user(
 async def change_password(
     body: ChangePasswordIn,
     response: Response,
-    current_user: Annotated[User, Depends(require_auth)],
+    current_user: Annotated[User, Depends(require_api_auth)],
     session: Annotated[AsyncSession, Depends(get_session)],
 ):
     if not verify_password(body.current_password, current_user.password_hash):

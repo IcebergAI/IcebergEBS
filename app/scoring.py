@@ -162,11 +162,18 @@ def compute_risk_score(
         code_behaviour=code,
         external_domains=domains,
         total=total,
-        risk_level=_risk_level(total),
+        risk_level=risk_level(total),
     )
 
 
-def _risk_level(score: int) -> str:
+def risk_level(score: int | None) -> str | None:
+    """Map a 0–100 risk score to its severity band. Returns None for an unknown score.
+
+    Single source of truth for the score → level thresholds, shared by the API
+    serialiser and the alert change detector.
+    """
+    if score is None:
+        return None
     if score >= 75:
         return "critical"
     if score >= 50:

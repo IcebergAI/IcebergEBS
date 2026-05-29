@@ -11,6 +11,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.config import settings
 from app.models import AlertDestination, AlertLog, AlertRule, Extension
+from app.scoring import risk_level as _risk_level
 from app.webhooks import send_webhook
 
 logger = logging.getLogger(__name__)
@@ -21,18 +22,6 @@ class ChangeEvent:
     event_type: str
     old_value: Any
     new_value: Any
-
-
-def _risk_level(score: int | None) -> str | None:
-    if score is None:
-        return None
-    if score >= 75:
-        return "critical"
-    if score >= 50:
-        return "high"
-    if score >= 25:
-        return "medium"
-    return "low"
 
 
 def detect_changes(old: Extension, new: Extension) -> list[ChangeEvent]:

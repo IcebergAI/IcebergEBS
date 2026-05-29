@@ -105,6 +105,76 @@ async def test_change_password_wrong_current(client):
     assert r.status_code == 400
 
 
+async def test_change_password_unauthenticated_returns_401(anon_client):
+    """The /api password route must return 401, not a 303 redirect to /login."""
+    r = await anon_client.patch(
+        "/api/users/me/password",
+        json={"current_password": "x", "new_password": "newpass123"},
+        follow_redirects=False,
+    )
+    assert r.status_code == 401
+
+
+async def test_delete_user_cascades_owned_data(client, test_db, admin_user):
+    """Deleting a user removes all of their extensions, logs, rules, destinations and keys."""
+    from app.models import (
+        AlertDestination, AlertLog, AlertRule, ApiKey,
+        Extension, FetchLog, InstallCountHistory,
+    )
+
+    async with AsyncSession(test_db) as s:
+        victim = User(username="victim", password_hash=hash_password("pw"), is_admin=False)
+        s.add(victim)
+        await s.commit()
+        await s.refresh(victim)
+        vid = victim.id
+
+        ext = Extension(
+            user_id=vid, store="chrome", extension_id="victim.ext", name="V",
+            publisher="p", version="1.0", store_url="https://example.com",
+        )
+        dest = AlertDestination(user_id=vid, label="hook", target="https://hooks.example.com/v")
+        s.add(ext)
+        s.add(dest)
+        s.add(ApiKey(user_id=vid, label="k", key_hash="deadbeef"))
+        await s.commit()
+        await s.refresh(ext)
+        await s.refresh(dest)
+        ext_id, dest_id = ext.id, dest.id
+
+        rule = AlertRule(user_id=vid, destination_id=dest_id, extension_id=ext_id, event_type="new_version")
+        s.add(rule)
+        s.add(FetchLog(extension_id=ext_id, success=True))
+        s.add(InstallCountHistory(extension_id=ext_id, install_count=5))
+        await s.commit()
+        await s.refresh(rule)
+        rule_id = rule.id
+
+        s.add(AlertLog(
+            rule_id=rule_id, destination_id=dest_id, extension_id=ext_id, user_id=vid,
+            event_type="new_version", detail="{}", success=True,
+        ))
+        # An orphaned log owned only via user_id (rule_id null) — the old loop missed these.
+        s.add(AlertLog(
+            rule_id=None, destination_id=dest_id, extension_id=ext_id, user_id=vid,
+            event_type="new_version", detail="{}", success=True,
+        ))
+        await s.commit()
+
+    r_del = await client.delete(f"/api/users/{vid}")
+    assert r_del.status_code == 200
+
+    async with AsyncSession(test_db) as s:
+        assert (await s.exec(select(Extension).where(Extension.user_id == vid))).all() == []
+        assert (await s.exec(select(AlertRule).where(AlertRule.user_id == vid))).all() == []
+        assert (await s.exec(select(AlertDestination).where(AlertDestination.user_id == vid))).all() == []
+        assert (await s.exec(select(ApiKey).where(ApiKey.user_id == vid))).all() == []
+        assert (await s.exec(select(AlertLog).where(AlertLog.user_id == vid))).all() == []
+        assert (await s.exec(select(FetchLog))).all() == []
+        assert (await s.exec(select(InstallCountHistory))).all() == []
+        assert await s.get(User, vid) is None
+
+
 async def test_user_isolation(client, test_db):
     """User A cannot see User B's extensions through list endpoint."""
     from app.models import Extension
