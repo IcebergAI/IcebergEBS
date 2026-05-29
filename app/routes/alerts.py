@@ -1,5 +1,7 @@
+import asyncio
 import ipaddress
 import logging
+import socket
 from datetime import datetime
 from typing import Annotated
 from urllib.parse import urlparse
@@ -25,8 +27,25 @@ VALID_EVENT_TYPES = {"risk_level_change", "publisher_change", "permission_change
 _BLOCKED_HOSTNAMES = frozenset({"localhost", "localtest.me"})
 
 
-def _validate_webhook_url(url: str) -> None:
-    """Reject URLs that could be used for SSRF against internal services."""
+def _check_ip_allowed(ip_str: str) -> None:
+    """Raise HTTPException if the IP is private, loopback, link-local, or reserved."""
+    try:
+        addr = ipaddress.ip_address(ip_str)
+    except ValueError:
+        return
+    if not addr.is_global or addr.is_loopback or addr.is_link_local or addr.is_reserved:
+        raise HTTPException(
+            status_code=422,
+            detail="Webhook URL must not point to a private or reserved address",
+        )
+
+
+async def _validate_webhook_url(url: str) -> None:
+    """Reject URLs that could be used for SSRF against internal services.
+
+    Resolves the hostname at validation time so DNS rebinding cannot be used
+    to later redirect the webhook POST to a private address.
+    """
     try:
         parsed = urlparse(url)
     except Exception:
@@ -45,17 +64,33 @@ def _validate_webhook_url(url: str) -> None:
     ):
         raise HTTPException(status_code=422, detail="Webhook URL hostname is not allowed")
 
+    # If the hostname is a bare IP, validate it directly.
     try:
-        addr = ipaddress.ip_address(hostname)
-        # is_global covers private, loopback, link-local, and reserved ranges.
-        # The explicit checks are belt-and-suspenders for future Python changes.
-        if not addr.is_global or addr.is_loopback or addr.is_link_local or addr.is_reserved:
-            raise HTTPException(
-                status_code=422,
-                detail="Webhook URL must not point to a private or reserved address",
-            )
+        _check_ip_allowed(hostname)
+        return  # It's a valid global IP — no DNS lookup needed.
+    except HTTPException:
+        raise
     except ValueError:
-        pass  # Not a bare IP — hostname is fine
+        pass  # Not a bare IP — fall through to DNS resolution.
+
+    # Resolve the hostname and validate every returned address. This prevents
+    # DNS rebinding: an attacker cannot register a domain that resolves to a
+    # public IP at creation time and later flip DNS to an internal address,
+    # because we reject any domain whose current resolution includes private IPs.
+    loop = asyncio.get_event_loop()
+    try:
+        infos = await loop.run_in_executor(
+            None, lambda: socket.getaddrinfo(hostname, None, type=socket.SOCK_STREAM)
+        )
+    except socket.gaierror:
+        raise HTTPException(status_code=422, detail="Webhook URL hostname could not be resolved")
+
+    if not infos:
+        raise HTTPException(status_code=422, detail="Webhook URL hostname could not be resolved")
+
+    for info in infos:
+        ip_str = info[4][0]
+        _check_ip_allowed(ip_str)
 
 
 # ---------------------------------------------------------------------------
@@ -126,7 +161,7 @@ async def create_destination(
     current_user: Annotated[User, Depends(require_auth)],
     session: Annotated[AsyncSession, Depends(get_session)],
 ):
-    _validate_webhook_url(body.target)
+    await _validate_webhook_url(body.target)
     dest = AlertDestination(
         user_id=current_user.id,
         label=body.label,
@@ -152,7 +187,7 @@ async def update_destination(
     if body.label is not None:
         dest.label = body.label
     if body.target is not None:
-        _validate_webhook_url(body.target)
+        await _validate_webhook_url(body.target)
         dest.target = body.target
     if body.enabled is not None:
         dest.enabled = body.enabled
