@@ -11,7 +11,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 from app.auth import clear_session, get_current_user, require_auth, require_admin, set_session, verify_credentials
 from app.config import settings
 from app.database import get_session
-from app.models import AlertDestination, AlertRule, Extension, FetchLog, User
+from app.models import AlertDestination, AlertRule, ApiKey, Extension, FetchLog, User
 from app.routes.alerts import get_alert_log
 from app.threat_intel import build_threat_intel_indicators
 
@@ -384,6 +384,34 @@ async def account_page(
         "extensions": extensions_data,
         "alert_log": alert_log_data,
     }, user=current_user)
+
+
+# ---------------------------------------------------------------------------
+# Account — API keys
+# ---------------------------------------------------------------------------
+
+@router.get("/account/keys", response_class=HTMLResponse)
+async def account_keys_page(
+    request: Request,
+    current_user: Annotated[User, Depends(require_auth)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+):
+    keys = (await session.exec(
+        select(ApiKey)
+        .where(ApiKey.user_id == current_user.id)
+        .order_by(ApiKey.created_at)
+    )).all()
+    keys_data = [
+        {
+            "id": k.id,
+            "label": k.label,
+            "readonly": k.readonly,
+            "created_at": k.created_at.isoformat(),
+            "last_used_at": k.last_used_at.isoformat() if k.last_used_at else None,
+        }
+        for k in keys
+    ]
+    return _render(request, "account_keys.html", {"keys": keys_data}, user=current_user)
 
 
 # ---------------------------------------------------------------------------

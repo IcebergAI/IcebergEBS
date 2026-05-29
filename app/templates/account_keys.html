@@ -1,0 +1,187 @@
+{% extends "base.html" %}
+{% block title %}Marvin — API keys{% endblock %}
+{% block nav_keys %}rail-link-active{% endblock %}
+
+{% block content %}
+<div x-data="apiKeysPage()">
+
+<div class="flex items-center gap-2 text-[12.5px] mb-2" style="color:var(--ink-5)">
+  <span>Account</span>
+  <span>/</span>
+  <span style="color:var(--ink-7)">API keys</span>
+</div>
+<h1 class="page-title">API keys</h1>
+<p class="text-[13px] mb-6" style="color:var(--ink-5)">
+  Bearer tokens for SOAR platforms, scripts, and other machine-to-machine integrations.
+  Send requests with <code class="mono text-[12px]" style="background:var(--ink-1);padding:1px 5px;border-radius:4px;border:1px solid var(--ink-3)">Authorization: Bearer &lt;key&gt;</code>.
+  Keys inherit your account permissions — read-only keys can only make GET requests.
+</p>
+
+{# ── New key reveal ──────────────────────────────────────────── #}
+<template x-if="newKey">
+  <div class="surface p-5 mb-6" style="border:1.5px solid var(--risk-low);background:var(--risk-low-bg)">
+    <div class="flex items-start gap-3">
+      <div class="flex-1 min-w-0">
+        <div class="label-cap mb-1.5" style="color:oklch(0.32 0.10 155)">Key created — copy it now</div>
+        <p class="text-[12.5px] mb-3" style="color:var(--ink-6)">This is the only time the key will be shown. Store it in a secrets manager or environment variable.</p>
+        <div class="flex items-center gap-2">
+          <code class="mono text-[12px] break-all flex-1 px-2.5 py-2 rounded" style="background:var(--ink-0);color:var(--ink-8);border:1px solid var(--ink-3);display:block;word-break:break-all" x-text="newKey"></code>
+          <button class="btn btn-secondary btn-sm" style="flex-shrink:0" @click="copyKey()" x-text="copied ? '✓ Copied' : 'Copy'"></button>
+        </div>
+      </div>
+      <button @click="newKey='';copied=false" class="flex-shrink-0" style="color:var(--ink-4);margin-top:2px;padding:2px">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+      </button>
+    </div>
+  </div>
+</template>
+
+{# ── Keys list ────────────────────────────────────────────────── #}
+<section>
+  <div class="flex items-center justify-between mb-3">
+    <h2 class="section-title" style="margin:0">Keys</h2>
+    <button class="btn btn-primary btn-sm" @click="showAdd=!showAdd">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
+      New key
+    </button>
+  </div>
+
+  {# ── Add form ──────────────────────────────────────────────── #}
+  <div class="surface p-5 mb-3" x-show="showAdd" x-cloak style="max-width:520px">
+    <div class="flex flex-col gap-3">
+      <div>
+        <label class="label-cap block mb-1.5">Label</label>
+        <input type="text" x-model="form.label" placeholder="e.g. SOAR integration" @keydown.enter="createKey()" autofocus>
+      </div>
+      <div class="flex items-center gap-2.5">
+        <input type="checkbox" id="readonly-check" x-model="form.readonly"
+               style="width:15px;height:15px;accent-color:var(--accent);flex-shrink:0;cursor:pointer">
+        <label for="readonly-check" class="text-[13px]" style="color:var(--ink-7);cursor:pointer">
+          Read-only
+          <span class="text-[12px]" style="color:var(--ink-5)">(GET requests only — recommended for alert ingestion)</span>
+        </label>
+      </div>
+      <div x-show="formError" class="text-[12.5px]" style="color:var(--risk-critical)" x-text="formError"></div>
+      <div class="flex gap-2">
+        <button class="btn btn-primary btn-sm" @click="createKey()" :disabled="saving">
+          <span x-show="!saving">Create key</span><span x-show="saving">Creating…</span>
+        </button>
+        <button class="btn btn-ghost btn-sm" @click="showAdd=false;resetForm()">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  {# ── Empty state ───────────────────────────────────────────── #}
+  <template x-if="keys.length === 0 && !showAdd">
+    <div class="surface p-6 text-center text-[13px]" style="color:var(--ink-5)">
+      No API keys — create one to enable machine-to-machine access.
+    </div>
+  </template>
+
+  {# ── Table ────────────────────────────────────────────────── #}
+  <template x-if="keys.length > 0">
+    <div class="surface overflow-hidden">
+      <table>
+        <thead>
+          <tr>
+            <th>Label</th>
+            <th>Access</th>
+            <th>Created</th>
+            <th>Last used</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          <template x-for="k in keys" :key="k.id">
+            <tr>
+              <td class="font-medium" style="color:var(--ink-8)" x-text="k.label"></td>
+              <td>
+                <span x-show="k.readonly" class="badge badge-medium">read-only</span>
+                <span x-show="!k.readonly" class="badge" style="background:var(--ink-1);color:var(--ink-6);border-color:var(--ink-3)">read-write</span>
+              </td>
+              <td class="mono text-[12px]" style="color:var(--ink-5)" x-text="formatDate(k.created_at)"></td>
+              <td class="mono text-[12px]" style="color:var(--ink-5)" x-text="k.last_used_at ? formatDate(k.last_used_at) : '—'"></td>
+              <td class="text-right">
+                <button class="btn btn-danger btn-sm" @click="revokeKey(k.id)">Revoke</button>
+              </td>
+            </tr>
+          </template>
+        </tbody>
+      </table>
+    </div>
+  </template>
+</section>
+
+<div x-show="globalError" class="mt-3 text-[12.5px]" style="color:var(--risk-critical)" x-text="globalError"></div>
+
+</div>
+
+<script>
+function apiKeysPage() {
+  return {
+    keys: {{ keys | tojson }},
+    showAdd: false,
+    saving: false,
+    form: { label: '', readonly: false },
+    formError: '',
+    globalError: '',
+    newKey: '',
+    copied: false,
+
+    formatDate(iso) {
+      return new Date(iso).toLocaleString(undefined, { dateStyle: 'short', timeStyle: 'short' });
+    },
+    resetForm() {
+      this.form = { label: '', readonly: false };
+      this.formError = '';
+    },
+    async copyKey() {
+      try {
+        await navigator.clipboard.writeText(this.newKey);
+        this.copied = true;
+        setTimeout(() => { this.copied = false; }, 2000);
+      } catch { /* clipboard unavailable */ }
+    },
+    async createKey() {
+      this.formError = '';
+      if (!this.form.label.trim()) { this.formError = 'Label is required'; return; }
+      this.saving = true;
+      try {
+        const r = await fetch('/api/keys', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ label: this.form.label.trim(), readonly: this.form.readonly }),
+        });
+        const data = await r.json();
+        if (r.ok) {
+          this.keys.push({
+            id: data.id,
+            label: data.label,
+            readonly: data.readonly,
+            created_at: data.created_at,
+            last_used_at: data.last_used_at,
+          });
+          this.newKey = data.raw_key;
+          this.copied = false;
+          this.showAdd = false;
+          this.resetForm();
+          window.scrollTo({ top: 0, behavior: 'smooth' });
+        } else {
+          this.formError = data.detail || 'Failed to create key';
+        }
+      } catch { this.formError = 'Network error'; }
+      finally { this.saving = false; }
+    },
+    async revokeKey(id) {
+      if (!confirm('Revoke this API key? Any integrations using it will stop working immediately.')) return;
+      const r = await fetch(`/api/keys/${id}`, { method: 'DELETE' });
+      if (r.ok) {
+        this.keys = this.keys.filter(k => k.id !== id);
+      } else {
+        this.globalError = 'Failed to revoke key';
+      }
+    },
+  };
+}
+</script>
+{% endblock %}

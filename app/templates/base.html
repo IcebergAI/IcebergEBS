@@ -55,6 +55,10 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12a8 8 0 1 0 16 0 8 8 0 0 0-16 0Z"/><path d="M12 7v5l3 2"/></svg>
         Alerts &amp; webhooks
       </a>
+      <a href="/account/keys" class="rail-link {% block nav_keys %}{% endblock %}">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="7.5" cy="15.5" r="4.5"/><path d="M21 8.5 11.5 18l-2-2"/><path d="m19 6.5-2 2"/></svg>
+        API keys
+      </a>
       {% if is_admin %}
       <a href="/admin/users" class="rail-link {% block nav_admin %}{% endblock %}">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="9" r="3.5"/><path d="M3.5 19c.7-3 3-4.5 5.5-4.5s4.8 1.5 5.5 4.5"/><circle cx="17" cy="8" r="2.5"/><path d="M14 14.5c1-1 2-1.5 3-1.5 2.2 0 4 1.5 4.5 3.5"/></svg>
@@ -94,6 +98,7 @@
              class="absolute right-7 top-12 surface py-1.5"
              style="min-width:200px;box-shadow:0 8px 24px oklch(0.05 0.01 240 / 0.25);z-index:20">
           <a href="/account" class="block px-3 py-2 text-[13px] hover:bg-[var(--ink-1)]" style="color:var(--ink-7)" @click="open=false">Alerts &amp; webhooks</a>
+          <a href="/account/keys" class="block px-3 py-2 text-[13px] hover:bg-[var(--ink-1)]" style="color:var(--ink-7)" @click="open=false">API keys</a>
           <a href="/account/password" class="block px-3 py-2 text-[13px] hover:bg-[var(--ink-1)]" style="color:var(--ink-7)" @click="open=false">Change password</a>
           <div class="my-1 mx-3 border-t" style="border-color:var(--ink-3)"></div>
           <button @click="dark=!dark; document.documentElement.setAttribute('data-theme', dark?'dark':'light'); localStorage.setItem('marvin-theme', dark?'dark':'light'); open=false"
