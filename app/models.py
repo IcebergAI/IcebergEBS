@@ -74,6 +74,16 @@ class AlertRule(SQLModel, table=True):
     created_at: datetime = Field(default_factory=_utcnow)
 
 
+class ApiKey(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    user_id: int = Field(foreign_key="user.id", index=True)
+    label: str
+    key_hash: str = Field(index=True)  # SHA-256 hex of raw key
+    readonly: bool = False
+    created_at: datetime = Field(default_factory=_utcnow)
+    last_used_at: Optional[datetime] = None
+
+
 class AlertLog(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     rule_id: Optional[int] = Field(default=None, foreign_key="alertrule.id", index=True)

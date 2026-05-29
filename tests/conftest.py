@@ -19,8 +19,8 @@ os.environ.setdefault("MARVIN_SECRET_KEY", "test-secret-key-for-testing-only-32c
 from app.main import app
 from app.config import settings
 from app.database import get_session
-from app.auth import create_session_cookie, hash_password
-from app.models import User
+from app.auth import create_session_cookie, generate_api_key, hash_api_key, hash_password
+from app.models import ApiKey, User
 
 
 def make_fake_vsix(manifest: dict | None = None) -> bytes:
@@ -121,6 +121,67 @@ async def client(test_db, admin_user):
         transport=transport,
         base_url="http://test",
         cookies={settings.session_cookie_name: cookie},
+    ) as c:
+        yield c
+
+    app.dependency_overrides.clear()
+
+
+@pytest_asyncio.fixture
+async def api_key_client(test_db, admin_user):
+    """Authenticated test client using Bearer token instead of session cookie."""
+    async def override_session():
+        async with AsyncSession(test_db) as s:
+            yield s
+
+    app.dependency_overrides[get_session] = override_session
+
+    mock_http = MagicMock()
+    app.state.http_client = mock_http
+
+    raw_key = generate_api_key()
+    async with AsyncSession(test_db) as s:
+        s.add(ApiKey(user_id=admin_user.id, label="test-key", key_hash=hash_api_key(raw_key)))
+        await s.commit()
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(
+        transport=transport,
+        base_url="http://test",
+        headers={"Authorization": f"Bearer {raw_key}"},
+    ) as c:
+        yield c
+
+    app.dependency_overrides.clear()
+
+
+@pytest_asyncio.fixture
+async def readonly_api_key_client(test_db, admin_user):
+    """Authenticated test client with a read-only Bearer token."""
+    async def override_session():
+        async with AsyncSession(test_db) as s:
+            yield s
+
+    app.dependency_overrides[get_session] = override_session
+
+    mock_http = MagicMock()
+    app.state.http_client = mock_http
+
+    raw_key = generate_api_key()
+    async with AsyncSession(test_db) as s:
+        s.add(ApiKey(
+            user_id=admin_user.id,
+            label="readonly-test-key",
+            key_hash=hash_api_key(raw_key),
+            readonly=True,
+        ))
+        await s.commit()
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(
+        transport=transport,
+        base_url="http://test",
+        headers={"Authorization": f"Bearer {raw_key}"},
     ) as c:
         yield c
 

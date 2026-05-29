@@ -1,7 +1,12 @@
+import hashlib
 import logging
+import secrets
+from datetime import datetime, timezone
+from typing import Annotated
 
 import bcrypt
 from fastapi import Depends, HTTPException, Request
+from fastapi.security.utils import get_authorization_scheme_param
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
@@ -12,6 +17,16 @@ from app.database import engine, get_session
 logger = logging.getLogger(__name__)
 
 _serializer = URLSafeTimedSerializer(settings.secret_key.get_secret_value())
+
+
+def generate_api_key() -> str:
+    """Return a new raw API key. Caller must store only the hash."""
+    return "marvin_" + secrets.token_urlsafe(32)
+
+
+def hash_api_key(raw_key: str) -> str:
+    """SHA-256 hex digest of the raw key. API keys are 256-bit random so SHA-256 is sufficient."""
+    return hashlib.sha256(raw_key.encode()).hexdigest()
 
 
 def hash_password(password: str) -> str:
@@ -67,7 +82,50 @@ async def require_auth(
     return user
 
 
-async def require_admin(current_user=Depends(require_auth)):
+async def require_api_auth(
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+):
+    """FastAPI dependency for /api/* routes.
+
+    Tries Bearer token first, then session cookie. Always returns a User or
+    raises HTTPException(401) — never redirects.
+    """
+    from app.models import ApiKey, User
+
+    scheme, raw_key = get_authorization_scheme_param(
+        request.headers.get("Authorization", "")
+    )
+    if scheme.lower() == "bearer" and raw_key:
+        key_hash = hash_api_key(raw_key)
+        api_key = (await session.exec(
+            select(ApiKey).where(ApiKey.key_hash == key_hash)
+        )).first()
+        if api_key is None:
+            raise HTTPException(status_code=401, detail="Invalid API key")
+        if api_key.readonly and request.method not in ("GET", "HEAD"):
+            raise HTTPException(status_code=403, detail="Read-only API key")
+        user_id = api_key.user_id  # capture before commit expires the object
+        api_key.last_used_at = datetime.now(timezone.utc)
+        session.add(api_key)
+        await session.commit()
+        user = await session.get(User, user_id)
+        if user is None:
+            raise HTTPException(status_code=401, detail="Invalid API key")
+        return user
+
+    # Fall back to session cookie
+    username = get_current_user(request)
+    if username is not None:
+        from app.models import User
+        user = (await session.exec(select(User).where(User.username == username))).first()
+        if user is not None:
+            return user
+
+    raise HTTPException(status_code=401, detail="Authentication required")
+
+
+async def require_admin(current_user=Depends(require_api_auth)):
     """FastAPI dependency — requires the authenticated user to be an admin."""
     if not current_user.is_admin:
         raise HTTPException(status_code=403, detail="Admin access required")

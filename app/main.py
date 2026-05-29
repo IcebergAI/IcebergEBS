@@ -16,6 +16,7 @@ from app.routes import api as api_routes
 from app.routes import ui as ui_routes
 from app.routes import users as users_routes
 from app.routes import alerts as alerts_routes
+from app.routes import keys as keys_routes
 from app.scheduler import create_scheduler
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
@@ -63,6 +64,7 @@ app.include_router(ui_routes.router)
 app.include_router(api_routes.router, prefix="/api")
 app.include_router(users_routes.router, prefix="/api")
 app.include_router(alerts_routes.router, prefix="/api")
+app.include_router(keys_routes.router, prefix="/api")
 
 
 @app.get("/openapi.json", include_in_schema=False)

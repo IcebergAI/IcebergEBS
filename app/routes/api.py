@@ -13,7 +13,7 @@ from pydantic import BaseModel
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from app.auth import require_auth
+from app.auth import require_api_auth
 from app.database import engine, get_session
 from app.fetchers.base import FetchError
 from app.models import AlertLog, AlertRule, Extension, FetchLog, InstallCountHistory, User
@@ -223,7 +223,7 @@ async def _fetch_and_score(
 
 @router.get("/extensions", response_model=list[ExtensionOut])
 async def list_extensions(
-    current_user: Annotated[User, Depends(require_auth)],
+    current_user: Annotated[User, Depends(require_api_auth)],
     session: Annotated[AsyncSession, Depends(get_session)],
 ):
     rows = (await session.exec(
@@ -238,7 +238,7 @@ async def list_extensions(
 async def add_extension(
     body: ExtensionIn,
     request: Request,
-    current_user: Annotated[User, Depends(require_auth)],
+    current_user: Annotated[User, Depends(require_api_auth)],
     session: Annotated[AsyncSession, Depends(get_session)],
 ):
     extension_id = normalise_extension_id(body.store, body.extension_id)
@@ -274,7 +274,7 @@ async def add_extension(
 @router.get("/extensions/{ext_id}", response_model=ExtensionOut)
 async def get_extension(
     ext_id: int,
-    current_user: Annotated[User, Depends(require_auth)],
+    current_user: Annotated[User, Depends(require_api_auth)],
     session: Annotated[AsyncSession, Depends(get_session)],
 ):
     ext = await session.get(Extension, ext_id)
@@ -286,7 +286,7 @@ async def get_extension(
 @router.delete("/extensions/{ext_id}")
 async def delete_extension(
     ext_id: int,
-    current_user: Annotated[User, Depends(require_auth)],
+    current_user: Annotated[User, Depends(require_api_auth)],
     session: Annotated[AsyncSession, Depends(get_session)],
 ):
     ext = await session.get(Extension, ext_id)
@@ -312,7 +312,7 @@ async def delete_extension(
 async def refresh_extension(
     ext_id: int,
     request: Request,
-    current_user: Annotated[User, Depends(require_auth)],
+    current_user: Annotated[User, Depends(require_api_auth)],
     session: Annotated[AsyncSession, Depends(get_session)],
 ):
     ext = await session.get(Extension, ext_id)
@@ -326,7 +326,7 @@ async def refresh_extension(
 async def toggle_watchlist(
     ext_id: int,
     body: WatchlistPatch,
-    current_user: Annotated[User, Depends(require_auth)],
+    current_user: Annotated[User, Depends(require_api_auth)],
     session: Annotated[AsyncSession, Depends(get_session)],
 ):
     ext = await session.get(Extension, ext_id)
@@ -342,7 +342,7 @@ async def toggle_watchlist(
 @router.get("/extensions/{ext_id}/history", response_model=list[HistoryPoint])
 async def get_history(
     ext_id: int,
-    current_user: Annotated[User, Depends(require_auth)],
+    current_user: Annotated[User, Depends(require_api_auth)],
     session: Annotated[AsyncSession, Depends(get_session)],
 ):
     ext = await session.get(Extension, ext_id)

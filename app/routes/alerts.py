@@ -13,7 +13,7 @@ from sqlalchemy import or_, update as sa_update
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from app.auth import require_auth
+from app.auth import require_api_auth
 from app.config import settings
 from app.database import get_session
 from app.models import AlertDestination, AlertLog, AlertRule, Extension, User
@@ -144,7 +144,7 @@ class RulePatch(BaseModel):
 
 @router.get("/alerts/destinations", response_model=list[DestinationOut])
 async def list_destinations(
-    current_user: Annotated[User, Depends(require_auth)],
+    current_user: Annotated[User, Depends(require_api_auth)],
     session: Annotated[AsyncSession, Depends(get_session)],
 ):
     dests = (await session.exec(
@@ -158,7 +158,7 @@ async def list_destinations(
 @router.post("/alerts/destinations", response_model=DestinationOut, status_code=201)
 async def create_destination(
     body: DestinationIn,
-    current_user: Annotated[User, Depends(require_auth)],
+    current_user: Annotated[User, Depends(require_api_auth)],
     session: Annotated[AsyncSession, Depends(get_session)],
 ):
     await _validate_webhook_url(body.target)
@@ -178,7 +178,7 @@ async def create_destination(
 async def update_destination(
     dest_id: int,
     body: DestinationPatch,
-    current_user: Annotated[User, Depends(require_auth)],
+    current_user: Annotated[User, Depends(require_api_auth)],
     session: Annotated[AsyncSession, Depends(get_session)],
 ):
     dest = await session.get(AlertDestination, dest_id)
@@ -200,7 +200,7 @@ async def update_destination(
 @router.delete("/alerts/destinations/{dest_id}")
 async def delete_destination(
     dest_id: int,
-    current_user: Annotated[User, Depends(require_auth)],
+    current_user: Annotated[User, Depends(require_api_auth)],
     session: Annotated[AsyncSession, Depends(get_session)],
 ):
     dest = await session.get(AlertDestination, dest_id)
@@ -224,7 +224,7 @@ async def delete_destination(
 
 @router.get("/alerts/rules", response_model=list[RuleOut])
 async def list_rules(
-    current_user: Annotated[User, Depends(require_auth)],
+    current_user: Annotated[User, Depends(require_api_auth)],
     session: Annotated[AsyncSession, Depends(get_session)],
 ):
     rules = (await session.exec(
@@ -239,7 +239,7 @@ async def list_rules(
 @router.post("/alerts/rules", response_model=RuleOut, status_code=201)
 async def create_rule(
     body: RuleIn,
-    current_user: Annotated[User, Depends(require_auth)],
+    current_user: Annotated[User, Depends(require_api_auth)],
     session: Annotated[AsyncSession, Depends(get_session)],
 ):
     if body.event_type not in VALID_EVENT_TYPES:
@@ -274,7 +274,7 @@ async def create_rule(
 async def update_rule(
     rule_id: int,
     body: RulePatch,
-    current_user: Annotated[User, Depends(require_auth)],
+    current_user: Annotated[User, Depends(require_api_auth)],
     session: Annotated[AsyncSession, Depends(get_session)],
 ):
     rule = await session.get(AlertRule, rule_id)
@@ -297,7 +297,7 @@ async def update_rule(
 @router.delete("/alerts/rules/{rule_id}")
 async def delete_rule(
     rule_id: int,
-    current_user: Annotated[User, Depends(require_auth)],
+    current_user: Annotated[User, Depends(require_api_auth)],
     session: Annotated[AsyncSession, Depends(get_session)],
 ):
     rule = await session.get(AlertRule, rule_id)
@@ -389,7 +389,7 @@ async def get_alert_log(user_id: int, session: AsyncSession, limit: int = 50) ->
 
 @router.get("/alerts/log")
 async def alert_log(
-    current_user: Annotated[User, Depends(require_auth)],
+    current_user: Annotated[User, Depends(require_api_auth)],
     session: Annotated[AsyncSession, Depends(get_session)],
     limit: Annotated[int, Query(ge=1, le=500)] = 50,
 ):
@@ -404,7 +404,7 @@ async def alert_log(
 async def test_destination(
     dest_id: int,
     request: Request,
-    current_user: Annotated[User, Depends(require_auth)],
+    current_user: Annotated[User, Depends(require_api_auth)],
     session: Annotated[AsyncSession, Depends(get_session)],
 ):
     dest = await session.get(AlertDestination, dest_id)

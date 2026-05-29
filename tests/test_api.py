@@ -421,4 +421,4 @@ async def test_get_history_empty(client):
 
 async def test_unauthenticated_api(anon_client):
     r = await anon_client.get("/api/extensions", follow_redirects=False)
-    assert r.status_code == 303
+    assert r.status_code == 401

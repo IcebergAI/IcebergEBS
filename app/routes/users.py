@@ -7,7 +7,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.auth import clear_session, hash_password, verify_password, require_admin, require_auth
 from app.database import get_session
-from app.models import AlertDestination, AlertLog, AlertRule, Extension, FetchLog, InstallCountHistory, User
+from app.models import AlertDestination, AlertLog, AlertRule, ApiKey, Extension, FetchLog, InstallCountHistory, User
 
 router = APIRouter()
 
@@ -112,6 +112,10 @@ async def delete_user(
     )).all()
     for d in dests:
         await session.delete(d)
+
+    api_keys = (await session.exec(select(ApiKey).where(ApiKey.user_id == user_id))).all()
+    for k in api_keys:
+        await session.delete(k)
 
     await session.delete(target)
     await session.commit()
