@@ -4,57 +4,81 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Marvin — Sign in</title>
+  <script>(function(){var t=localStorage.getItem('marvin-theme')||'light';document.documentElement.setAttribute('data-theme',t);})();</script>
+  <link rel="icon" type="image/svg+xml" href="/static/img/favicon.svg">
+  <link rel="icon" type="image/png" sizes="32x32" href="/static/img/favicon-32.png">
+  <link rel="apple-touch-icon" href="/static/img/apple-touch-icon.png">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
   <script src="https://cdn.tailwindcss.com"></script>
+  <script src="/static/js/tailwind-config.js"></script>
   <link rel="stylesheet" href="/static/css/app.css">
 </head>
 <body class="font-sans">
 
-<div class="login-wrap">
-  <div class="login-card">
-    <div class="flex items-center gap-2.5 mb-7 justify-center">
-      <svg width="32" height="32" viewBox="0 0 32 32" fill="none">
-        <rect x="1.5" y="1.5" width="29" height="29" rx="8" fill="white" stroke="currentColor" stroke-opacity="0.18"/>
-        <circle cx="16" cy="16" r="9" fill="oklch(0.55 0.18 265)"/>
-        <circle cx="16" cy="16" r="3.5" fill="white"/>
-        <circle cx="18.5" cy="13.5" r="1.2" fill="oklch(0.55 0.18 265)"/>
-      </svg>
-      <div>
-        <div class="text-[17px] font-semibold" style="color:var(--ink-8)">Marvin</div>
-        <div class="text-[11px]" style="color:var(--ink-5)">Paranoid about extensions</div>
-      </div>
+<div class="login-split">
+
+  {# ── Left: branded panel (hidden < 720px) ── #}
+  <aside class="login-brand">
+    {# Oversized aperture watermark #}
+    <svg class="login-brand__watermark" width="300" height="300" viewBox="0 0 240 240" fill="none" aria-hidden="true">
+      <g stroke="currentColor" stroke-width="13" stroke-linecap="round">
+        <circle cx="120" cy="120" r="60" stroke-dasharray="300 77" transform="rotate(-38 120 120)"/>
+        <circle cx="120" cy="120" r="38" stroke-dasharray="150 89" transform="rotate(132 120 120)"/>
+      </g>
+      <circle cx="120" cy="120" r="13" fill="currentColor"/>
+    </svg>
+
+    {# Lockup #}
+    <div class="login-brand__lockup">
+      <span class="brand-tile brand-tile--ondark">
+        <svg width="24" height="24" viewBox="0 0 240 240" fill="none" aria-hidden="true">
+          <g stroke="currentColor" stroke-width="13" stroke-linecap="round">
+            <circle cx="120" cy="120" r="60" stroke-dasharray="300 77" transform="rotate(-38 120 120)"/>
+            <circle cx="120" cy="120" r="38" stroke-dasharray="150 89" transform="rotate(132 120 120)"/>
+          </g>
+          <circle cx="120" cy="120" r="13" fill="currentColor"/>
+        </svg>
+      </span>
+      <span class="name">Marvin</span>
     </div>
 
-    <div class="surface p-7">
-      <h1 class="text-[16px] font-semibold mb-1" style="color:var(--ink-8)">Sign in</h1>
-      <p class="text-[12.5px] mb-5" style="color:var(--ink-5)">Use the credentials provided by your workspace admin.</p>
+    {# Voice #}
+    <div>
+      <div class="login-brand__headline">Somebody has to watch the extensions.</div>
+      <div class="login-brand__sub">Marvin downloads the package, reads the code, and scores the risk — so you don't have to take the store's word for it.</div>
+    </div>
+  </aside>
+
+  {# ── Right: sign-in form ── #}
+  <main class="login-form-col">
+    <div class="form-inner">
+      <h1 class="text-[18px] font-semibold mb-1" style="color:var(--ink-8)">Sign in</h1>
+      <p class="text-[13px] mb-6" style="color:var(--ink-5)">Use the credentials provided by your workspace admin.</p>
 
       {% if error %}
-      <div class="flash" style="border-left-color: var(--risk-critical); color: var(--risk-critical); margin-bottom: 14px">
+      <div class="flash" style="border-left-color: var(--risk-critical); color: var(--risk-critical); margin-bottom: 16px">
         {{ error }}
       </div>
       {% endif %}
 
-      <form method="post" action="/login" class="flex flex-col gap-3">
+      <form method="post" action="/login" class="flex flex-col gap-3.5">
         <div>
           <label class="label-cap block mb-1.5">Username</label>
           <input class="field" type="text" name="username" autocomplete="username" autofocus>
         </div>
         <div>
-          <div class="flex items-center justify-between mb-1.5">
-            <label class="label-cap">Password</label>
-          </div>
+          <label class="label-cap block mb-1.5">Password</label>
           <input class="field" type="password" name="password" autocomplete="current-password">
         </div>
         <button type="submit" class="btn btn-primary w-full justify-center mt-2">Sign in</button>
       </form>
-    </div>
 
-    <div class="text-center text-meta mt-4">
-      By signing in you agree to stuff
-  </div>
+      <div class="text-meta mt-6">Trust nothing. Score everything.</div>
+    </div>
+  </main>
+
 </div>
 
 </body>

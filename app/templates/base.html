@@ -6,6 +6,10 @@
   <title>{% block title %}Marvin{% endblock %}</title>
   <script>(function(){var t=localStorage.getItem('marvin-theme')||'light';document.documentElement.setAttribute('data-theme',t);})();</script>
 
+  <link rel="icon" type="image/svg+xml" href="/static/img/favicon.svg">
+  <link rel="icon" type="image/png" sizes="32x32" href="/static/img/favicon-32.png">
+  <link rel="apple-touch-icon" href="/static/img/apple-touch-icon.png">
+
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -24,13 +28,16 @@
 
   {# ── SIDEBAR ─────────────────────────────────────────── #}
   <aside class="rail">
-    <a href="/" class="flex items-center gap-2.5 px-1 pt-1" style="text-decoration:none">
-      <svg width="26" height="26" viewBox="0 0 32 32" fill="none">
-        <rect x="1.5" y="1.5" width="29" height="29" rx="8" fill="white" stroke="currentColor" stroke-opacity="0.18"/>
-        <circle cx="16" cy="16" r="9" fill="oklch(0.55 0.18 265)"/>
-        <circle cx="16" cy="16" r="3.5" fill="white"/>
-        <circle cx="18.5" cy="13.5" r="1.2" fill="oklch(0.55 0.18 265)"/>
-      </svg>
+    <a href="/" class="flex flex-col items-center gap-2 px-1 pt-1 text-center" style="text-decoration:none">
+      <span class="brand-tile brand-tile--rail">
+        <svg width="51" height="51" viewBox="0 0 240 240" fill="none" aria-hidden="true">
+          <g stroke="currentColor" stroke-width="13" stroke-linecap="round">
+            <circle cx="120" cy="120" r="60" stroke-dasharray="300 77" transform="rotate(-38 120 120)"/>
+            <circle cx="120" cy="120" r="38" stroke-dasharray="150 89" transform="rotate(132 120 120)"/>
+          </g>
+          <circle cx="120" cy="120" r="13" fill="currentColor"/>
+        </svg>
+      </span>
       <span>
         <span class="block text-[14.5px] font-semibold tracking-tight" style="color:var(--ink-8)">Marvin</span>
         <span class="block text-[10.5px]" style="color:var(--ink-5)">Paranoid about extensions</span>

@@ -559,3 +559,81 @@ tbody tr:hover td { background: var(--ink-1); }
   transition: border-color 0.12s, transform 0.12s, box-shadow 0.12s;
 }
 .screen-link:hover { border-color: var(--accent); transform: translateY(-2px); box-shadow: 0 8px 24px oklch(0.05 0.01 240 / 0.10); text-decoration: none; }
+
+/* ─────────────────────────────────────────────────────────────
+   Marvin · Branding additions  →  append to static/css/app.css
+   Login "Branded split" (Option B) + the aperture watermark.
+   All colors are existing tokens; nothing here overrides base.
+   ───────────────────────────────────────────────────────────── */
+
+/* Two-column split login. Left = branded indigo panel, right = form. */
+.login-split {
+  min-height: 100vh;
+  min-height: 100dvh;
+  display: grid;
+  grid-template-columns: minmax(0, 46%) 1fr;
+}
+
+/* Left brand panel */
+.login-brand {
+  position: relative;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  padding: 44px;
+  color: #fff;
+  background: linear-gradient(165deg, var(--accent-2, oklch(0.42 0.17 266)), oklch(0.145 0.01 264));
+}
+.login-brand__watermark {
+  position: absolute;
+  right: -60px;
+  top: -50px;
+  color: #fff;
+  opacity: 0.07;
+  pointer-events: none;
+}
+.login-brand__headline {
+  position: relative;
+  font-size: 28px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  line-height: 1.2;
+}
+.login-brand__sub {
+  position: relative;
+  font-size: 14px;
+  line-height: 1.55;
+  opacity: 0.72;
+  margin-top: 12px;
+  max-width: 38ch;
+}
+.login-brand__lockup { position: relative; display: flex; align-items: center; gap: 13px; }
+.login-brand__lockup .name { font-size: 18px; font-weight: 600; letter-spacing: -0.015em; }
+
+/* Right form column */
+.login-form-col {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 40px 24px;
+  background: var(--surface);
+}
+.login-form-col .form-inner { width: 100%; max-width: 320px; }
+
+/* Mark tiles used in the lockups (rail + login) */
+.brand-tile {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  border-radius: 26%;
+}
+.brand-tile--rail   { width: 78px; height: 78px; color: var(--accent); background: var(--ink-1); border: 1px solid var(--ink-3); }
+.brand-tile--ondark { width: 40px; height: 40px; color: oklch(0.68 0.18 264); background: oklch(0.205 0.012 264 / 0.6); border: 1px solid oklch(1 0 0 / 0.12); }
+
+/* Collapse to single column on narrow screens — hide the brand panel */
+@media (max-width: 720px) {
+  .login-split { grid-template-columns: 1fr; }
+  .login-brand { display: none; }
+}

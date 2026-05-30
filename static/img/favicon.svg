@@ -1,0 +1,8 @@
+
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 240" width="32" height="32" role="img" aria-label="Marvin">
+  <g fill="none" stroke="#2d5ed4" stroke-width="20" stroke-linecap="round">
+    <circle cx="120" cy="120" r="58" stroke-dasharray="250 70" transform="rotate(-38 120 120)"></circle>
+    <circle cx="120" cy="120" r="34" stroke-dasharray="120 70" transform="rotate(132 120 120)"></circle>
+  </g>
+  <circle cx="120" cy="120" r="20" fill="#2d5ed4"></circle>
+</svg>
