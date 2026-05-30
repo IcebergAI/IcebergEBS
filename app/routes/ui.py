@@ -15,6 +15,7 @@ from app.database import get_session
 from app.models import AlertDestination, AlertRule, ApiKey, Extension, FetchLog, User
 from app.routes.alerts import get_alert_log
 from app.threat_intel import build_threat_intel_indicators
+from app.version import get_version
 
 router = APIRouter()
 templates = Jinja2Templates(directory="app/templates")
@@ -70,6 +71,7 @@ def _render(request: Request, template: str, ctx: dict, user: User | None = None
     ctx["flash"] = flash
     ctx["is_admin"] = user.is_admin if user else False
     ctx["username"] = user.username if user else ""
+    ctx["app_version"] = get_version()
     response = templates.TemplateResponse(request=request, name=template, context=ctx)
     if flash:
         _clear_flash(response)

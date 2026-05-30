@@ -79,7 +79,9 @@
     </nav>
     {% endif %}
 
-    {% block rail_footer %}{% endblock %}
+    {% block rail_footer %}
+      <div class="rail-version" title="Running build">{{ app_version | default('', true) }}</div>
+    {% endblock %}
   </aside>
 
   {# ── MAIN COLUMN ────────────────────────────────────── #}

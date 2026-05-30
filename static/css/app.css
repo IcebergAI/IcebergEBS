@@ -134,6 +134,20 @@ a:hover { text-decoration: underline; text-decoration-thickness: 1px; text-under
 }
 .content    { padding: 28px; max-width: 1280px; }
 
+/* Running build, pinned to the bottom of the flex rail */
+.rail-version {
+  margin-top: auto;
+  padding-top: 12px;
+  border-top: 1px solid var(--ink-3);
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: 10.5px;
+  letter-spacing: 0.02em;
+  color: var(--ink-5);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 /* ── Sidebar nav links ────────────────────────────────────── */
 .rail-link {
   display: flex; align-items: center; gap: 10px;

@@ -1,0 +1,50 @@
+name: build
+
+# On every push to main, compute the build version (build N · sha, matching
+# app/version.py) and bake it into a Docker image via the MARVIN_VERSION build-arg,
+# so container/Helm deploys report the same version the rail shows. The bare-uvicorn
+# droplet does NOT depend on this workflow — it resolves the version from git at
+# runtime. If you don't use GHCR, drop the login + set `push: false` below.
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Full history is required — Actions does a shallow clone by default,
+          # which makes `git rev-list --count` wrong.
+          fetch-depth: 0
+
+      - name: Compute version
+        run: |
+          COUNT=$(git rev-list --count --first-parent HEAD)
+          SHA=$(git rev-parse --short HEAD)
+          echo "MARVIN_VERSION=build ${COUNT} · ${SHA}" >> "$GITHUB_ENV"
+          echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_ENV"
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          build-args: |
+            MARVIN_VERSION=${{ env.MARVIN_VERSION }}
+          tags: |
+            ${{ env.IMAGE }}:${{ github.sha }}
+            ${{ env.IMAGE }}:latest

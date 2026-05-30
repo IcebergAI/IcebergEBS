@@ -18,6 +18,7 @@ from app.routes import users as users_routes
 from app.routes import alerts as alerts_routes
 from app.routes import keys as keys_routes
 from app.scheduler import create_scheduler
+from app.version import get_version
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
 
@@ -46,7 +47,7 @@ async def lifespan(app: FastAPI):
     await client.aclose()
 
 
-app = FastAPI(title="Marvin", lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
+app = FastAPI(title="Marvin", version=get_version(), lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
 
 
 @app.middleware("http")

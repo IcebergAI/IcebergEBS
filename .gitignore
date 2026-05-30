@@ -61,6 +61,9 @@ coverage.xml
 *.db-wal
 *.db-shm
 
+# Stamped build version (deploy-time; runtime git is the default source)
+app/_version
+
 # Skills
 .agents/
 .claude/

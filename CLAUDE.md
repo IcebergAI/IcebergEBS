@@ -30,6 +30,7 @@ API-first design. All data flows through FastAPI endpoints; the UI consumes them
 
 ### Key modules
 - `app/config.py` — pydantic-settings `BaseSettings`, env prefix `MARVIN_`
+- `app/version.py` — `get_version()` (lru_cached): resolves the running build as `build N · sha` (`N` = `git rev-list --count --first-parent HEAD`, +1 per merge to main) in priority order `MARVIN_VERSION` env → stamped `app/_version` file → runtime git → `"dev"`. Shown at the bottom of the rail and set as the FastAPI app `version`. See the Versioning section below
 - `app/database.py` — async SQLAlchemy engine; SQLite gets WAL mode at startup; Postgres gets a tuned connection pool (`pool_size=5`, `max_overflow=10`, `pool_pre_ping`, `pool_recycle=1800`). Incremental migrations run on startup via `init_db()`: `_migrate_sqlite(conn)` (atomic `alertlog` rebuild, shares the create_all transaction) and `_migrate_postgres()` (each DDL statement in its **own** `engine.begin()` transaction). The per-statement isolation on Postgres is mandatory — sharing one transaction means a single failing statement aborts it and silently skips every later statement (e.g. the `ADD COLUMN user_id/destination_id` on `alertlog`), which then breaks every `AlertLog` insert while webhooks still fire. Do not collapse `_migrate_postgres` back into a shared transaction.
 - `app/models.py` — SQLModel table definitions (`User`, `Extension`, `FetchLog`, `InstallCountHistory`, `AlertDestination`, `AlertRule`, `AlertLog`)
 - `app/auth.py` — itsdangerous signed cookies, `require_auth` / `require_admin` FastAPI dependencies; `verify_credentials` always runs bcrypt (via `_DUMMY_HASH`) even for unknown usernames to prevent timing-based user enumeration
@@ -164,6 +165,12 @@ bash nginx/generate-dev-cert.sh
 cp .env.example .env && $EDITOR .env
 docker compose up --build
 ```
+
+## Versioning
+The running build is shown at the bottom of the left rail as `build N · sha` (e.g. `build 142 · 8ebe5f8`), where `N` = `git rev-list --count --first-parent HEAD` (one per merge to main) and `sha` is the short commit. Resolved by `app/version.py:get_version()` (cached once per process) in priority order: `MARVIN_VERSION` env → stamped `app/_version` file (git-ignored) → runtime git → `"dev"`. Injected into every page via `_render()` in `app/routes/ui.py` and rendered in the `rail_footer` block (`.rail-version` in `app.css`).
+- **Auto-increment:** on the bare-uvicorn droplet (a git checkout) the number advances on each `git pull` of main — no manual bump.
+- **No `.git` (Docker/Helm):** `.dockerignore` strips `.git`, so the image relies on the `MARVIN_VERSION` env (Dockerfile `ARG`/`ENV`). The `.github/workflows/build.yml` workflow computes the same `build N · sha` string and passes it as `--build-arg MARVIN_VERSION`. It checks out with `fetch-depth: 0` — required, or `rev-list --count` is wrong on Actions' shallow clone.
+- Keep the format string in sync between `app/version.py:_format()` and the workflow's "Compute version" step.
 
 ## Maintenance
 - Keep this file up to date with decisions around structure, architecture, and function.
