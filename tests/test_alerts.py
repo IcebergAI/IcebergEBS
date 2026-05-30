@@ -8,9 +8,12 @@ import respx
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
+from app.fetchers.base import ExtensionMetadata
 from app.main import app as fastapi_app
 from app.models import AlertDestination, AlertLog, AlertRule, Extension
 from app.notifications import ChangeEvent, detect_changes, fire_alerts
+from app.routes.alerts import get_alert_log
+from app.services import fetch_and_store, fire_pending_alerts
 from app.webhooks import WebhookValidationError, send_webhook
 
 # A fixed public IP the webhook resolver is patched to return, so the SSRF-pinning
@@ -552,6 +555,90 @@ async def test_delete_destination_preserves_history(client, test_db, admin_user)
             select(AlertLog).where(AlertLog.destination_id == dest_id)
         )).all()
         assert orphaned == []  # FK was severed, not left dangling
+
+
+# ---------------------------------------------------------------------------
+# Alerts fire AFTER commit, never during fetch_and_store's open transaction
+# ---------------------------------------------------------------------------
+
+async def test_fire_pending_alerts_noop_on_empty_events(test_db):
+    with patch("app.services.fire_alerts", new=AsyncMock()) as spy:
+        await fire_pending_alerts([], Extension(id=1, user_id=1, store="chrome",
+            extension_id="x", name="x", publisher="p", version="1", store_url="u"),
+            test_db, MagicMock())
+    spy.assert_not_called()
+
+
+async def test_fire_pending_alerts_swallows_errors(test_db):
+    """A delivery/logging failure must never propagate out of fire_pending_alerts."""
+    ext = Extension(id=1, user_id=1, store="chrome", extension_id="x", name="x",
+                    publisher="p", version="1", store_url="u")
+    with patch("app.services.fire_alerts", new=AsyncMock(side_effect=RuntimeError("boom"))):
+        await fire_pending_alerts([ChangeEvent("new_version", "1", "2")], ext, test_db, MagicMock())
+    # No exception raised → swallowed as designed.
+
+
+@respx.mock
+async def test_alerts_deferred_until_after_commit(test_db, admin_user):
+    """fetch_and_store must NOT fire alerts (it holds the write transaction);
+    fire_pending_alerts fires afterwards and the AlertLog is recorded.
+
+    Regression for the SQLite 'database is locked' deadlock — firing opened a
+    second writer while the caller's write lock was still held.
+    """
+    respx.post(f"https://{_PINNED_IP}/deferred").mock(return_value=httpx.Response(200))
+
+    async with AsyncSession(test_db) as session:
+        dest = AlertDestination(user_id=admin_user.id, label="Deferred Hook",
+                                target="https://hooks.example.com/deferred", enabled=True)
+        session.add(dest)
+        await session.commit()
+        await session.refresh(dest)
+        dest_id = dest.id
+
+        ext = Extension(
+            user_id=admin_user.id, store="vscode", extension_id="defer.ext",
+            name="Defer Ext", publisher="Pub", version="1.0.0", store_url="https://example.com",
+            risk_score=20, permissions='["storage"]',
+            last_fetched_at=datetime(2024, 1, 1, tzinfo=timezone.utc),
+        )
+        session.add(ext)
+        await session.commit()
+        await session.refresh(ext)
+        ext_id = ext.id
+
+        session.add(AlertRule(user_id=admin_user.id, destination_id=dest_id,
+                              event_type="new_version", enabled=True))
+        await session.commit()
+
+    # Fetcher returns a new version → triggers a new_version change event.
+    meta = ExtensionMetadata(
+        name="Defer Ext", publisher="Pub", description=None, version="2.0.0",
+        install_count=None, last_updated=None, store_url="https://example.com",
+        publisher_verified=True,
+    )
+
+    async with httpx.AsyncClient() as http:
+        with patch("app.fetchers.VSCodeFetcher") as MockFetcher:
+            MockFetcher.return_value.fetch = AsyncMock(return_value=(meta, None))
+            with patch("app.services.fire_alerts", new=AsyncMock()) as spy_fire:
+                async with AsyncSession(test_db) as session:
+                    ext = await session.get(Extension, ext_id)
+                    ext, events = await fetch_and_store(ext, session, http)
+                    # Alerts must NOT be fired while the write transaction is open.
+                    spy_fire.assert_not_called()
+                    assert any(e.event_type == "new_version" for e in events)
+                    await session.commit()
+
+        # After the commit releases the lock, fire for real and confirm it lands.
+        with _patch_resolver():
+            async with AsyncSession(test_db) as session:
+                ext = await session.get(Extension, ext_id)
+                await fire_pending_alerts(events, ext, test_db, http)
+
+    async with AsyncSession(test_db) as session:
+        logs = await get_alert_log(admin_user.id, session)
+    assert any(row["event_type"] == "new_version" and row["success"] for row in logs)
 
 
 # ---------------------------------------------------------------------------

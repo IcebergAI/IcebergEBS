@@ -19,7 +19,7 @@ from app.database import engine, get_session
 from app.fetchers.base import FetchError
 from app.models import AlertLog, AlertRule, Extension, FetchLog, InstallCountHistory, User
 from app.scoring import risk_level
-from app.services import fetch_and_store
+from app.services import fetch_and_store, fire_pending_alerts
 from app.threat_intel import build_threat_intel_indicators
 
 router = APIRouter()
@@ -193,7 +193,7 @@ async def _fetch_and_score(
 ) -> Extension:
     score_before = ext.risk_score
     try:
-        ext = await fetch_and_store(ext, session, client, engine)
+        ext, events = await fetch_and_store(ext, session, client)
     except FetchError as exc:
         logger.warning("Fetch failed for extension %d: %s", ext.id, exc)
         session.add(FetchLog(
@@ -206,6 +206,9 @@ async def _fetch_and_score(
         raise HTTPException(status_code=502, detail="Failed to fetch extension from store")
     await session.commit()
     await session.refresh(ext)
+    # Fire alerts only after the commit above releases the write lock, so
+    # fire_alerts' own session can write the AlertLog without deadlocking SQLite.
+    await fire_pending_alerts(events, ext, engine, client)
     return ext
 
 

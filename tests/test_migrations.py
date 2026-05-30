@@ -1,9 +1,11 @@
-"""Tests for the incremental database migration logic in app.database._migrate."""
+"""Tests for the incremental database migration logic in app.database."""
+from unittest.mock import AsyncMock, MagicMock, patch
+
 import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
 
-from app.database import _migrate
+from app.database import _migrate_sqlite
 
 
 _OLD_SCHEMA = """
@@ -83,7 +85,7 @@ async def test_migrate_adds_new_columns_to_old_alertlog():
         assert "user_id" not in cols_before
         assert "destination_id" not in cols_before
 
-        await _migrate(conn)
+        await _migrate_sqlite(conn)
 
         cols_after = await _column_names(conn, "alertlog")
         assert "user_id" in cols_after
@@ -108,7 +110,7 @@ async def test_migrate_preserves_existing_rows():
                    (2, 42, 99, 'new_version', '{"old":"1.0","new":"2.0"}', '2024-01-02', 0)
         """))
 
-        await _migrate(conn)
+        await _migrate_sqlite(conn)
 
         result = await conn.execute(text(
             "SELECT id, rule_id, extension_id, event_type, success FROM alertlog ORDER BY id"
@@ -132,7 +134,7 @@ async def test_migrate_creates_expected_indexes():
             if stmt:
                 await conn.execute(text(stmt))
 
-        await _migrate(conn)
+        await _migrate_sqlite(conn)
 
         indexes = await _index_names(conn)
 
@@ -153,11 +155,56 @@ async def test_migrate_is_idempotent_on_current_schema():
     async with engine.begin() as conn:
         await conn.run_sync(SQLModel.metadata.create_all)
         # Should not raise even though columns already exist and indexes are present
-        await _migrate(conn)
-        await _migrate(conn)
+        await _migrate_sqlite(conn)
+        await _migrate_sqlite(conn)
 
         cols = await _column_names(conn, "alertlog")
         assert "user_id" in cols
         assert "destination_id" in cols
 
     await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_migrate_postgres_isolates_failing_statements():
+    """An early failing DDL statement must not skip the ADD COLUMN statements.
+
+    Regression guard: on Postgres all statements previously shared one
+    transaction, so a single failure aborted it and every later statement was
+    silently skipped — leaving alertlog without user_id/destination_id and
+    causing every AlertLog insert to fail (while webhooks still fired). Each
+    statement now runs in its own transaction, so a failure is isolated.
+    """
+    from app import database
+
+    executed: list[str] = []
+
+    class _FakeConn:
+        async def execute(self, stmt):
+            sql = str(stmt)
+            executed.append(sql)
+            # Simulate the very first statement blowing up.
+            if "DROP NOT NULL" in sql:
+                raise RuntimeError("simulated DDL failure")
+
+    class _FakeBegin:
+        async def __aenter__(self):
+            return _FakeConn()
+
+        async def __aexit__(self, *exc):
+            return False  # propagate so per-statement try/except handles it
+
+    fake_engine = MagicMock()
+    fake_engine.begin = lambda: _FakeBegin()
+
+    with patch.object(database, "engine", fake_engine):
+        # Must not raise even though the first statement fails.
+        await database._migrate_postgres()
+
+    joined = " ".join(executed)
+    # The failure did not stop the migration: the critical columns were still added.
+    assert "ADD COLUMN IF NOT EXISTS user_id" in joined
+    assert "ADD COLUMN IF NOT EXISTS destination_id" in joined
+    # Every statement was attempted in its own transaction.
+    assert any("DROP NOT NULL" in s for s in executed)
+    assert len(executed) == 9

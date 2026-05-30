@@ -12,7 +12,7 @@ from app.fetchers import get_fetcher
 from app.fetchers.base import FetchError
 from app.inspector import InspectorError, PackageAnalysis, inspect_package
 from app.models import Extension, FetchLog, InstallCountHistory
-from app.notifications import detect_changes, fire_alerts
+from app.notifications import ChangeEvent, detect_changes, fire_alerts
 from app.scoring import compute_risk_score
 
 logger = logging.getLogger(__name__)
@@ -22,13 +22,17 @@ async def fetch_and_store(
     ext: Extension,
     session: AsyncSession,
     client: httpx.AsyncClient,
-    engine: AsyncEngine | None = None,
-) -> Extension:
+) -> tuple[Extension, list[ChangeEvent]]:
     """Fetch metadata + package, run inspection and scoring, update the extension record.
 
     Adds a success FetchLog and stages all changes but does NOT commit — the caller
     decides when to commit (immediately for API routes, batched for the scheduler).
-    AlertLog entries from fire_alerts are committed immediately in their own session.
+
+    Returns the updated extension and the list of detected change events. Alerts are
+    deliberately NOT fired here: firing opens a second DB session, and on SQLite that
+    second writer deadlocks against this caller's still-open write transaction
+    ("database is locked"). The caller must commit first (releasing the write lock)
+    and then pass the returned events to ``fire_pending_alerts``.
 
     Raises FetchError if the remote fetch fails; the caller is responsible for adding
     a failure FetchLog and handling the error appropriately.
@@ -137,11 +141,37 @@ async def fetch_and_store(
         risk_score_after=risk.total,
     ))
 
+    # Detect changes now (pre-fetch snapshot vs updated record), but let the caller
+    # fire the alerts AFTER it commits — see the docstring and fire_pending_alerts.
     try:
         events = detect_changes(old_snap, ext)
-        if engine is not None:
-            await fire_alerts(events, ext, engine, client)
-    except Exception as exc:
-        logger.exception("Alert processing failed for %s", ext.extension_id)
+    except Exception:
+        logger.exception("Change detection failed for %s", ext.extension_id)
+        events = []
 
-    return ext
+    return ext, events
+
+
+async def fire_pending_alerts(
+    events: list[ChangeEvent],
+    ext: Extension,
+    engine: AsyncEngine,
+    client: httpx.AsyncClient,
+) -> None:
+    """Fire alerts for events detected by ``fetch_and_store``.
+
+    MUST be called only after the caller has committed, so the SQLite write lock is
+    released; otherwise fire_alerts' own session deadlocks ("database is locked").
+    Never raises — a delivery or logging failure must not break the fetch pipeline.
+    The extension's attributes must be loaded (refresh after commit) before calling,
+    since fire_alerts reads them to build the webhook payload.
+    """
+    if not events:
+        return
+    try:
+        await fire_alerts(events, ext, engine, client)
+    except Exception:
+        logger.exception(
+            "Alert processing failed for %s — any delivered webhooks may not have "
+            "been recorded in the alert log", ext.extension_id,
+        )

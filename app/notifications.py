@@ -155,4 +155,17 @@ async def fire_alerts(
                 error=error,
             ))
 
-        await session.commit()
+        try:
+            await session.commit()
+        except Exception:
+            # The webhooks above were already delivered; if persisting the
+            # AlertLog rows fails (e.g. a missing column from a half-applied
+            # migration) the history would silently diverge from what was sent.
+            # Surface it explicitly rather than letting the caller log a generic
+            # trace, then re-raise so the failure is not mistaken for success.
+            logger.exception(
+                "Failed to record %d AlertLog row(s) for ext=%s after delivering "
+                "webhooks — alert history will be incomplete",
+                len(rules), extension.id,
+            )
+            raise

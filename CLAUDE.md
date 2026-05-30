@@ -30,14 +30,14 @@ API-first design. All data flows through FastAPI endpoints; the UI consumes them
 
 ### Key modules
 - `app/config.py` — pydantic-settings `BaseSettings`, env prefix `MARVIN_`
-- `app/database.py` — async SQLAlchemy engine; SQLite gets WAL mode at startup; Postgres gets a tuned connection pool (`pool_size=5`, `max_overflow=10`, `pool_pre_ping`, `pool_recycle=1800`)
+- `app/database.py` — async SQLAlchemy engine; SQLite gets WAL mode at startup; Postgres gets a tuned connection pool (`pool_size=5`, `max_overflow=10`, `pool_pre_ping`, `pool_recycle=1800`). Incremental migrations run on startup via `init_db()`: `_migrate_sqlite(conn)` (atomic `alertlog` rebuild, shares the create_all transaction) and `_migrate_postgres()` (each DDL statement in its **own** `engine.begin()` transaction). The per-statement isolation on Postgres is mandatory — sharing one transaction means a single failing statement aborts it and silently skips every later statement (e.g. the `ADD COLUMN user_id/destination_id` on `alertlog`), which then breaks every `AlertLog` insert while webhooks still fire. Do not collapse `_migrate_postgres` back into a shared transaction.
 - `app/models.py` — SQLModel table definitions (`User`, `Extension`, `FetchLog`, `InstallCountHistory`, `AlertDestination`, `AlertRule`, `AlertLog`)
 - `app/auth.py` — itsdangerous signed cookies, `require_auth` / `require_admin` FastAPI dependencies; `verify_credentials` always runs bcrypt (via `_DUMMY_HASH`) even for unknown usernames to prevent timing-based user enumeration
 - `app/fetchers/` — one fetcher class per store; `get_fetcher(store, client)` factory in `__init__.py`
 - `app/inspector.py` — static analysis of downloaded zip packages (CRX/VSIX)
 - `app/scoring.py` — pure scoring functions, `compute_risk_score()` → `RiskDetail` NamedTuple; `risk_level(score)` is the single source of truth for the score→band thresholds (75/50/25), reused by `routes/api.py` and `notifications.py` — do not re-inline those thresholds elsewhere
-- `app/services.py` — `fetch_and_store(ext, session, client, engine=None)`: shared pipeline used by both API routes and the scheduler; stages changes but does **not** commit — the caller commits; pass `engine` to enable alert processing
-- `app/notifications.py` — `detect_changes()` + `fire_alerts()`: compares old/new extension state and POSTs to matching webhook destinations (via `app.webhooks.send_webhook`); `fire_alerts()` takes an `AsyncEngine` and commits `AlertLog` rows in its own dedicated session, independent of the caller's transaction
+- `app/services.py` — `fetch_and_store(ext, session, client)`: shared pipeline used by both API routes and the scheduler; stages changes but does **not** commit and does **not** fire alerts — it returns `(ext, events)`. `fire_pending_alerts(events, ext, engine, client)`: the caller invokes this **only after committing**. Firing is deferred on purpose: `fire_alerts` opens its own second DB session, and on SQLite a second writer deadlocks against the caller's still-open write transaction → `sqlite3.OperationalError: database is locked` (the webhook still goes out, but the `AlertLog` insert fails). Never call `fire_alerts`/`fire_pending_alerts` while the caller's write transaction is open. After commit, callers `session.refresh(ext)` (reloading expired attrs) before firing, since `fire_alerts` reads `ext` to build the payload.
+- `app/notifications.py` — `detect_changes()` + `fire_alerts()`: compares old/new extension state and POSTs to matching webhook destinations (via `app.webhooks.send_webhook`); `fire_alerts()` takes an `AsyncEngine` and commits `AlertLog` rows in its own dedicated session, independent of the caller's transaction. It must run **after** the caller has committed (see `fire_pending_alerts`) so its session does not contend with the caller's SQLite write lock
 - `app/webhooks.py` — `validate_webhook_url()` (SSRF validation: scheme/blocklist/IP-range checks, returns the resolved public IPs) and `send_webhook()` (validates + resolves + connects to the pinned IP, preserving the original `Host` header and TLS SNI). DNS resolution is isolated in `_resolve_host()` so tests can stub it. Both `alerts.py` and `notifications.py` send through this module
 - `app/scheduler.py` — APScheduler `AsyncIOScheduler` background watchlist refresh; each extension is processed in its own `AsyncSession` + commit so a single failure cannot corrupt or roll back changes for the entire batch
 - `app/routes/api.py` — JSON API routes for extensions (`/api/extensions/...`)
@@ -46,12 +46,12 @@ API-first design. All data flows through FastAPI endpoints; the UI consumes them
 - `app/routes/ui.py` — HTML routes, Jinja2 templates, flash messages
 
 ### Data flow
-1. Caller (API route or scheduler) calls `fetch_and_store(ext, session, client, engine)`
+1. Caller (API route or scheduler) calls `fetch_and_store(ext, session, client)`
 2. `fetch_and_store` calls `fetcher.fetch(extension_id)` → `(ExtensionMetadata, bytes | None)`
 3. If package bytes are present, `inspect_package()` runs static analysis
 4. `compute_risk_score()` calculates the risk breakdown
-5. Extension record, FetchLog, and InstallCountHistory are staged; caller commits
-6. `detect_changes()` compares the pre-fetch snapshot against the updated record; if events are found, `fire_alerts()` POSTs webhooks and commits `AlertLog` rows in its own session — decoupled from the caller's transaction so logs survive any subsequent rollback
+5. Extension record, FetchLog, and InstallCountHistory are staged; `detect_changes()` compares the pre-fetch snapshot against the updated record; `fetch_and_store` returns `(ext, events)`
+6. The caller **commits** (releasing the SQLite write lock), `session.refresh(ext)`, then calls `fire_pending_alerts(events, ext, engine, client)` → `fire_alerts()` POSTs webhooks and commits `AlertLog` rows in its own session, decoupled from the caller's transaction. This ordering is mandatory: firing during the caller's open write transaction deadlocks SQLite ("database is locked")
 
 ## Store-specific fetcher notes
 

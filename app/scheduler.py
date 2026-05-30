@@ -9,7 +9,7 @@ from app.config import settings
 from app.database import engine
 from app.fetchers.base import FetchError
 from app.models import Extension, FetchLog
-from app.services import fetch_and_store
+from app.services import fetch_and_store, fire_pending_alerts
 
 logger = logging.getLogger(__name__)
 
@@ -22,7 +22,7 @@ async def _refresh_one(ext_id: int, client: httpx.AsyncClient) -> None:
             return
         score_before = ext.risk_score
         try:
-            await fetch_and_store(ext, session, client, engine)
+            ext, events = await fetch_and_store(ext, session, client)
             await session.commit()
         except FetchError as exc:
             logger.warning("Fetch failed for %s/%s: %s", ext.store, ext.extension_id, exc)
@@ -33,9 +33,15 @@ async def _refresh_one(ext_id: int, client: httpx.AsyncClient) -> None:
                 risk_score_before=score_before,
             ))
             await session.commit()
+            return
         except Exception:
             logger.exception("Unexpected error refreshing ext_id=%d", ext_id)
             await session.rollback()
+            return
+        # The commit above released this session's SQLite write lock, so it is now
+        # safe to fire alerts (fire_alerts opens its own session to write AlertLog).
+        await session.refresh(ext)
+        await fire_pending_alerts(events, ext, engine, client)
 
 
 async def refresh_watchlist(client: httpx.AsyncClient) -> None:
