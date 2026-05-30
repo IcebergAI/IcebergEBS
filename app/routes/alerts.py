@@ -143,7 +143,15 @@ async def delete_destination(
     dest = await session.get(AlertDestination, dest_id)
     if not dest or dest.user_id != current_user.id:
         raise HTTPException(status_code=404, detail="Not found")
-    # Orphan logs for rules being removed, then delete those rules.
+    # Preserve historical alert logs but sever their foreign keys to the rows
+    # being deleted: null the destination snapshot on every log pointing at this
+    # destination, and the rule_id on logs pointing at the rules we remove. Logs
+    # keep their user_id, so they stay visible in the alert history (rendered with
+    # a "—" destination). Leaving these FKs dangling raises an IntegrityError on
+    # Postgres, where foreign keys are enforced (SQLite dev/test does not enforce).
+    await session.execute(
+        sa_update(AlertLog).where(AlertLog.destination_id == dest_id).values(destination_id=None)
+    )
     rules = (await session.exec(
         select(AlertRule).where(AlertRule.destination_id == dest_id)
     )).all()

@@ -454,6 +454,106 @@ async def test_alert_log_endpoint(client, test_db, admin_user):
     assert row["success"] is True
 
 
+@respx.mock
+async def test_fired_alert_appears_in_history(client, test_db, admin_user):
+    """End-to-end: a webhook fired by fire_alerts is visible in the alert history.
+
+    Regression guard for the alert pipeline — fire_alerts writes its AlertLog in a
+    separate session keyed on user_id, and get_alert_log must surface it.
+    """
+    respx.post(f"https://{_PINNED_IP}/history").mock(return_value=httpx.Response(200))
+
+    async with AsyncSession(test_db) as session:
+        dest = AlertDestination(user_id=admin_user.id, label="History Hook",
+                                target="https://hooks.example.com/history", enabled=True)
+        session.add(dest)
+        await session.commit()
+        await session.refresh(dest)
+        dest_id = dest.id
+
+        ext = Extension(
+            user_id=admin_user.id, store="vscode", extension_id="hist.ext",
+            name="History Ext", publisher="Pub", version="1.0", store_url="https://example.com",
+            risk_score=80, permissions='[]',
+            last_fetched_at=datetime(2024, 1, 1, tzinfo=timezone.utc),
+        )
+        session.add(ext)
+        await session.commit()
+        await session.refresh(ext)
+
+        rule = AlertRule(user_id=admin_user.id, destination_id=dest_id,
+                         event_type="risk_level_change", enabled=True)
+        session.add(rule)
+        await session.commit()
+        await session.refresh(ext)
+
+        events = [ChangeEvent("risk_level_change", "medium", "critical")]
+        with _patch_resolver():
+            async with httpx.AsyncClient() as http:
+                await fire_alerts(events, ext, test_db, http)
+
+    r = await client.get("/api/alerts/log")
+    assert r.status_code == 200
+    rows = r.json()
+    row = next(x for x in rows if x["event_type"] == "risk_level_change")
+    assert row["ext_name"] == "History Ext"
+    assert row["dest_label"] == "History Hook"
+    assert row["success"] is True
+
+
+async def test_delete_destination_preserves_history(client, test_db, admin_user):
+    """Deleting a destination must not orphan its AlertLog FK (Postgres enforces it)
+    and must keep the historical log rows visible in the alert history."""
+    async with AsyncSession(test_db) as session:
+        dest = AlertDestination(user_id=admin_user.id, label="Gone Hook",
+                                target="https://hooks.example.com/gone", enabled=True)
+        session.add(dest)
+        await session.commit()
+        await session.refresh(dest)
+        dest_id = dest.id
+
+        ext = Extension(
+            user_id=admin_user.id, store="chrome", extension_id="gone.ext",
+            name="Gone Ext", publisher="Pub", version="1.0", store_url="https://example.com",
+            risk_score=30, permissions='[]',
+            last_fetched_at=datetime(2024, 1, 1, tzinfo=timezone.utc),
+        )
+        session.add(ext)
+        await session.commit()
+        await session.refresh(ext)
+        ext_id = ext.id
+
+        rule = AlertRule(user_id=admin_user.id, destination_id=dest_id,
+                         event_type="new_version", enabled=True)
+        session.add(rule)
+        await session.commit()
+        await session.refresh(rule)
+
+        # A historical log carrying the destination snapshot FK.
+        session.add(AlertLog(
+            rule_id=rule.id, destination_id=dest_id, extension_id=ext_id,
+            user_id=admin_user.id, event_type="new_version",
+            detail=json.dumps({"old": "1.0", "new": "2.0"}), success=True,
+        ))
+        await session.commit()
+
+    r_del = await client.delete(f"/api/alerts/destinations/{dest_id}")
+    assert r_del.status_code == 200
+
+    # The log survives (now with the destination FK severed) and stays in history.
+    r = await client.get("/api/alerts/log")
+    assert r.status_code == 200
+    row = next(x for x in r.json() if x["event_type"] == "new_version")
+    assert row["ext_name"] == "Gone Ext"
+    assert row["dest_label"] == "—"  # snapshot destination gone → placeholder
+
+    async with AsyncSession(test_db) as session:
+        orphaned = (await session.exec(
+            select(AlertLog).where(AlertLog.destination_id == dest_id)
+        )).all()
+        assert orphaned == []  # FK was severed, not left dangling
+
+
 # ---------------------------------------------------------------------------
 # Test webhook destination endpoint
 # ---------------------------------------------------------------------------
