@@ -67,7 +67,7 @@ async def test_revoke_nonexistent_key(client):
 
 async def test_cannot_revoke_other_users_key(client, test_db, admin_user):
     async with AsyncSession(test_db) as s:
-        other = User(username="other", password_hash=hash_password("password1"), is_admin=False)
+        other = User(username="other", password_hash=await hash_password("password1"), is_admin=False)
         s.add(other)
         await s.commit()
         await s.refresh(other)
@@ -132,6 +132,51 @@ async def test_bearer_updates_last_used_at(api_key_client, test_db, admin_user):
     async with AsyncSession(test_db) as s:
         keys = (await s.exec(select(ApiKey).where(ApiKey.user_id == admin_user.id))).all()
     assert any(k.last_used_at is not None for k in keys)
+
+
+async def _only_key(test_db, admin_user) -> ApiKey:
+    async with AsyncSession(test_db) as s:
+        return (await s.exec(select(ApiKey).where(ApiKey.user_id == admin_user.id))).one()
+
+
+async def test_last_used_at_write_is_throttled(api_key_client, test_db, admin_user):
+    """A second request inside the throttle window must NOT re-write last_used_at.
+
+    The per-request write takes the SQLite write lock; throttling it keeps read-only
+    GETs from committing on every call (issue #5).
+    """
+    await api_key_client.get("/api/extensions")
+    first = (await _only_key(test_db, admin_user)).last_used_at
+    assert first is not None
+
+    await api_key_client.get("/api/extensions")
+    second = (await _only_key(test_db, admin_user)).last_used_at
+    assert second == first  # unchanged — write was throttled
+
+
+async def test_last_used_at_rewritten_once_stale(api_key_client, test_db, admin_user):
+    """Once last_used_at is older than the throttle window, the next request rewrites it."""
+    from datetime import datetime, timedelta, timezone
+
+    from app.config import settings
+
+    await api_key_client.get("/api/extensions")
+    stale = datetime.now(timezone.utc) - timedelta(
+        seconds=settings.api_key_last_used_throttle_seconds + 5
+    )
+    async with AsyncSession(test_db) as s:
+        key = (await s.exec(select(ApiKey).where(ApiKey.user_id == admin_user.id))).one()
+        key.last_used_at = stale
+        s.add(key)
+        await s.commit()
+
+    await api_key_client.get("/api/extensions")
+    refreshed = (await _only_key(test_db, admin_user)).last_used_at
+    assert refreshed is not None
+    # Compare tz-aware; SQLite may return naive datetimes.
+    if refreshed.tzinfo is None:
+        refreshed = refreshed.replace(tzinfo=timezone.utc)
+    assert refreshed > stale
 
 
 # ---------------------------------------------------------------------------

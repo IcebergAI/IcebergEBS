@@ -3,6 +3,7 @@ import logging
 from dataclasses import asdict
 from datetime import datetime, timezone
 
+import anyio.to_thread
 import httpx
 from sqlalchemy.ext.asyncio import AsyncEngine
 from sqlmodel import select
@@ -61,7 +62,10 @@ async def fetch_and_store(
     analysis: PackageAnalysis | None = None
     if pkg_bytes:
         try:
-            analysis = inspect_package(pkg_bytes)
+            # inspect_package runs ~20 regexes over up to 500 JS files of pure CPU.
+            # Offload it so it doesn't stall the single-worker event loop (and the
+            # scheduler) for the duration of analysis (issue #4).
+            analysis = await anyio.to_thread.run_sync(inspect_package, pkg_bytes)
         except InspectorError as exc:
             logger.debug("Inspector failed for %s: %s", ext.extension_id, exc)
 
