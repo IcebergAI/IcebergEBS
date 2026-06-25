@@ -4,6 +4,7 @@ import secrets
 from datetime import datetime, timezone
 from typing import Annotated
 
+import anyio.to_thread
 import bcrypt
 from fastapi import Depends, HTTPException, Request
 from fastapi.security.utils import get_authorization_scheme_param
@@ -29,12 +30,26 @@ def hash_api_key(raw_key: str) -> str:
     return hashlib.sha256(raw_key.encode()).hexdigest()
 
 
-def hash_password(password: str) -> str:
+def _hash_password_sync(password: str) -> str:
     return bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
 
 
-def verify_password(password: str, hashed: str) -> bool:
+def _verify_password_sync(password: str, hashed: str) -> bool:
     return bcrypt.checkpw(password.encode(), hashed.encode())
+
+
+async def hash_password(password: str) -> str:
+    """Hash a password with bcrypt, offloaded to a worker thread.
+
+    bcrypt is ~100ms of pure CPU per call; running it inline on the single-worker
+    event loop stalls every concurrent request and the scheduler (issue #4).
+    """
+    return await anyio.to_thread.run_sync(_hash_password_sync, password)
+
+
+async def verify_password(password: str, hashed: str) -> bool:
+    """Verify a password against a bcrypt hash, offloaded to a worker thread."""
+    return await anyio.to_thread.run_sync(_verify_password_sync, password, hashed)
 
 
 def create_session_cookie(username: str) -> str:
@@ -63,7 +78,7 @@ async def verify_credentials(username: str, password: str, session: AsyncSession
     from app.models import User
     user = (await session.exec(select(User).where(User.username == username))).first()
     hash_to_check = user.password_hash if user else _DUMMY_HASH
-    valid = verify_password(password, hash_to_check)
+    valid = await verify_password(password, hash_to_check)
     return user if (user and valid) else None
 
 
@@ -106,9 +121,22 @@ async def require_api_auth(
         if api_key.readonly and request.method not in ("GET", "HEAD"):
             raise HTTPException(status_code=403, detail="Read-only API key")
         user_id = api_key.user_id  # capture before commit expires the object
-        api_key.last_used_at = datetime.now(timezone.utc)
-        session.add(api_key)
-        await session.commit()
+        # Throttle the last_used_at write: on SQLite the commit takes the single
+        # write lock, contending with the scheduler, and would otherwise fire on
+        # every request (including read-only GETs). Only write when the recorded
+        # value is missing or older than the configured window.
+        now = datetime.now(timezone.utc)
+        last_used = api_key.last_used_at
+        if last_used is not None and last_used.tzinfo is None:
+            last_used = last_used.replace(tzinfo=timezone.utc)
+        if (
+            last_used is None
+            or (now - last_used).total_seconds()
+            >= settings.api_key_last_used_throttle_seconds
+        ):
+            api_key.last_used_at = now
+            session.add(api_key)
+            await session.commit()
         user = await session.get(User, user_id)
         if user is None:
             raise HTTPException(status_code=401, detail="Invalid API key")
@@ -157,7 +185,7 @@ async def seed_admin() -> None:
         logger.info("No users found — seeding admin user '%s'", settings.admin_username)
         user = User(
             username=settings.admin_username,
-            password_hash=hash_password(settings.admin_password.get_secret_value()),
+            password_hash=await hash_password(settings.admin_password.get_secret_value()),
             is_admin=True,
         )
         session.add(user)

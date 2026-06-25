@@ -12,6 +12,10 @@ class Settings(BaseSettings):
     secure_cookies: bool = True
     fetch_interval_minutes: int = 60
     httpx_timeout: float = 15.0
+    # Minimum seconds between ApiKey.last_used_at writes. Throttles the per-request
+    # write (and its SQLite write-lock contention) so read-only bearer GETs don't
+    # commit on every call — see require_api_auth.
+    api_key_last_used_throttle_seconds: int = 60
     app_base_url: str = ""  # e.g. "https://marvin.example.com" — used in webhook payloads
 
     model_config = SettingsConfigDict(env_file=".env", env_prefix="MARVIN_")

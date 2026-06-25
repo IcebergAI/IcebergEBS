@@ -93,7 +93,7 @@ async def admin_user(test_db) -> User:
     async with AsyncSession(test_db) as s:
         user = User(
             username="testadmin",
-            password_hash=hash_password("testpass"),
+            password_hash=await hash_password("testpass"),
             is_admin=True,
         )
         s.add(user)

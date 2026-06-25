@@ -53,7 +53,7 @@ async def create_user(
 
     user = User(
         username=body.username,
-        password_hash=hash_password(body.password),
+        password_hash=await hash_password(body.password),
         email=body.email,
         is_admin=body.is_admin,
     )
@@ -117,9 +117,9 @@ async def change_password(
     current_user: Annotated[User, Depends(require_api_auth)],
     session: Annotated[AsyncSession, Depends(get_session)],
 ):
-    if not verify_password(body.current_password, current_user.password_hash):
+    if not await verify_password(body.current_password, current_user.password_hash):
         raise HTTPException(status_code=400, detail="Current password is incorrect")
-    current_user.password_hash = hash_password(body.new_password)
+    current_user.password_hash = await hash_password(body.new_password)
     session.add(current_user)
     await session.commit()
     clear_session(response)
