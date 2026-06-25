@@ -12,6 +12,7 @@ python-multipart
 beautifulsoup4
 apscheduler
 bcrypt
+alembic
 # test dependencies
 respx
 pytest

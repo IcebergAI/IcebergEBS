@@ -1,214 +1,120 @@
-"""Tests for the incremental database migration logic in app.database."""
-from unittest.mock import AsyncMock, MagicMock, patch
+"""Tests for Alembic-driven schema management in app.database (D1 / #11).
+
+The hand-rolled `_migrate_sqlite`/`_migrate_postgres` functions were replaced by
+Alembic. `_run_migrations` either upgrades a fresh/empty database to head or, for
+a database created the old way (tables present, no alembic_version), stamps it to
+head without recreating anything.
+"""
+import sqlite3
 
 import pytest
-from sqlalchemy import text
+from alembic.autogenerate import compare_metadata
+from alembic.runtime.migration import MigrationContext
+from sqlalchemy import create_engine
 from sqlalchemy.ext.asyncio import create_async_engine
+from sqlmodel import SQLModel
 
-from app.database import _migrate_sqlite
-
-
-_OLD_SCHEMA = """
-    CREATE TABLE IF NOT EXISTS "user" (
-        id INTEGER PRIMARY KEY,
-        username TEXT NOT NULL,
-        password_hash TEXT NOT NULL,
-        email TEXT,
-        is_admin INTEGER NOT NULL DEFAULT 0,
-        created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
-    );
-    CREATE TABLE IF NOT EXISTS extension (
-        id INTEGER PRIMARY KEY,
-        user_id INTEGER REFERENCES "user"(id),
-        store TEXT NOT NULL,
-        extension_id TEXT NOT NULL,
-        name TEXT NOT NULL,
-        publisher TEXT NOT NULL,
-        version TEXT NOT NULL,
-        store_url TEXT NOT NULL,
-        permissions TEXT NOT NULL DEFAULT '[]',
-        added_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        watchlist INTEGER NOT NULL DEFAULT 1,
-        risk_score INTEGER
-    );
-    CREATE TABLE IF NOT EXISTS alertdestination (
-        id INTEGER PRIMARY KEY,
-        user_id INTEGER NOT NULL REFERENCES "user"(id),
-        label TEXT NOT NULL,
-        target TEXT NOT NULL,
-        enabled INTEGER NOT NULL DEFAULT 1,
-        created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
-    );
-    CREATE TABLE IF NOT EXISTS alertrule (
-        id INTEGER PRIMARY KEY,
-        user_id INTEGER NOT NULL REFERENCES "user"(id),
-        destination_id INTEGER NOT NULL REFERENCES alertdestination(id),
-        extension_id INTEGER REFERENCES extension(id),
-        event_type TEXT NOT NULL,
-        enabled INTEGER NOT NULL DEFAULT 1,
-        created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
-    );
-    CREATE TABLE IF NOT EXISTS alertlog (
-        id INTEGER PRIMARY KEY NOT NULL,
-        rule_id INTEGER NOT NULL REFERENCES alertrule(id),
-        extension_id INTEGER NOT NULL REFERENCES extension(id),
-        event_type TEXT NOT NULL,
-        detail TEXT NOT NULL,
-        sent_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        success INTEGER NOT NULL,
-        error TEXT
-    );
-"""
+import app.models  # noqa: F401 — register tables on SQLModel.metadata
+from app.database import _run_migrations
 
 
-async def _column_names(conn, table: str) -> set[str]:
-    result = await conn.execute(text(f"PRAGMA table_info({table})"))
-    return {row[1] for row in result.fetchall()}
-
-
-async def _index_names(conn) -> set[str]:
-    result = await conn.execute(text("SELECT name FROM sqlite_master WHERE type='index'"))
-    return {row[0] for row in result.fetchall()}
-
-
-@pytest.mark.asyncio
-async def test_migrate_adds_new_columns_to_old_alertlog():
-    engine = create_async_engine("sqlite+aiosqlite:///:memory:", echo=False)
-
-    async with engine.begin() as conn:
-        for stmt in _OLD_SCHEMA.strip().split(";"):
-            stmt = stmt.strip()
-            if stmt:
-                await conn.execute(text(stmt))
-
-        cols_before = await _column_names(conn, "alertlog")
-        assert "user_id" not in cols_before
-        assert "destination_id" not in cols_before
-        assert "password_changed_at" not in await _column_names(conn, "user")
-
-        await _migrate_sqlite(conn)
-
-        cols_after = await _column_names(conn, "alertlog")
-        assert "user_id" in cols_after
-        assert "destination_id" in cols_after
-        # M1: user gains the password-change marker column
-        assert "password_changed_at" in await _column_names(conn, "user")
-
+async def _migrate(db_path) -> None:
+    engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}")
+    async with engine.connect() as conn:
+        await conn.run_sync(_run_migrations)
+        await conn.commit()
     await engine.dispose()
 
 
-@pytest.mark.asyncio
-async def test_migrate_preserves_existing_rows():
-    engine = create_async_engine("sqlite+aiosqlite:///:memory:", echo=False)
-
-    async with engine.begin() as conn:
-        for stmt in _OLD_SCHEMA.strip().split(";"):
-            stmt = stmt.strip()
-            if stmt:
-                await conn.execute(text(stmt))
-
-        await conn.execute(text("""
-            INSERT INTO alertlog (id, rule_id, extension_id, event_type, detail, sent_at, success)
-            VALUES (1, 42, 99, 'risk_level_change', '{"old":"low","new":"high"}', '2024-01-01', 1),
-                   (2, 42, 99, 'new_version', '{"old":"1.0","new":"2.0"}', '2024-01-02', 0)
-        """))
-
-        await _migrate_sqlite(conn)
-
-        result = await conn.execute(text(
-            "SELECT id, rule_id, extension_id, event_type, success FROM alertlog ORDER BY id"
-        ))
-        rows = result.fetchall()
-
-    assert len(rows) == 2
-    assert rows[0] == (1, 42, 99, "risk_level_change", 1)
-    assert rows[1] == (2, 42, 99, "new_version", 0)
-
-    await engine.dispose()
+def _tables(db_path) -> set[str]:
+    c = sqlite3.connect(db_path)
+    try:
+        return {r[0] for r in c.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    finally:
+        c.close()
 
 
-@pytest.mark.asyncio
-async def test_migrate_creates_expected_indexes():
-    engine = create_async_engine("sqlite+aiosqlite:///:memory:", echo=False)
-
-    async with engine.begin() as conn:
-        for stmt in _OLD_SCHEMA.strip().split(";"):
-            stmt = stmt.strip()
-            if stmt:
-                await conn.execute(text(stmt))
-
-        await _migrate_sqlite(conn)
-
-        indexes = await _index_names(conn)
-
-    assert "ix_alertlog_rule_id" in indexes
-    assert "ix_alertlog_extension_id" in indexes
-    assert "ix_alertlog_user_id" in indexes
-    assert "ix_alertrule_destination_id" in indexes
-
-    await engine.dispose()
+def _version(db_path):
+    c = sqlite3.connect(db_path)
+    try:
+        return c.execute("SELECT version_num FROM alembic_version").fetchone()
+    finally:
+        c.close()
 
 
-@pytest.mark.asyncio
-async def test_migrate_is_idempotent_on_current_schema():
-    """Running _migrate on an already-migrated schema should not raise."""
-    from sqlmodel import SQLModel
-    engine = create_async_engine("sqlite+aiosqlite:///:memory:", echo=False)
+async def test_fresh_db_upgrades_to_head(tmp_path):
+    db = tmp_path / "fresh.db"
+    await _migrate(db)
+    tables = _tables(db)
+    assert {"user", "extension", "alertlog", "apikey", "alembic_version"} <= tables
+    assert _version(db) is not None  # stamped at head
 
+
+async def test_fresh_db_has_all_current_columns(tmp_path):
+    """Baseline must include the columns added by the hand-rolled migrations."""
+    db = tmp_path / "cols.db"
+    await _migrate(db)
+    c = sqlite3.connect(db)
+    try:
+        user_cols = {r[1] for r in c.execute('PRAGMA table_info("user")')}
+        alertlog_cols = {r[1] for r in c.execute("PRAGMA table_info(alertlog)")}
+        apikey_cols = {r[1] for r in c.execute("PRAGMA table_info(apikey)")}
+    finally:
+        c.close()
+    assert "password_changed_at" in user_cols          # M1
+    assert {"user_id", "destination_id"} <= alertlog_cols
+    assert {"key_prefix", "key_suffix"} <= apikey_cols
+
+
+async def test_migration_is_idempotent(tmp_path):
+    db = tmp_path / "idem.db"
+    await _migrate(db)
+    first = _version(db)
+    await _migrate(db)  # second run must not error or change the revision
+    assert _version(db) == first
+
+
+async def test_existing_pre_alembic_db_is_stamped_not_recreated(tmp_path):
+    """A database built the old way (create_all, no alembic_version) is adopted."""
+    db = tmp_path / "old.db"
+    engine = create_async_engine(f"sqlite+aiosqlite:///{db}")
     async with engine.begin() as conn:
         await conn.run_sync(SQLModel.metadata.create_all)
-        # Should not raise even though columns already exist and indexes are present
-        await _migrate_sqlite(conn)
-        await _migrate_sqlite(conn)
-
-        cols = await _column_names(conn, "alertlog")
-        assert "user_id" in cols
-        assert "destination_id" in cols
-
     await engine.dispose()
 
+    # Seed a row so we can prove the tables were not dropped/recreated.
+    c = sqlite3.connect(db)
+    c.execute(
+        'INSERT INTO "user"(username, password_hash, is_admin, created_at) '
+        "VALUES (?, ?, ?, ?)", ("bob", "h", 0, "2024-01-01"),
+    )
+    c.commit()
+    c.close()
 
-@pytest.mark.asyncio
-async def test_migrate_postgres_isolates_failing_statements():
-    """An early failing DDL statement must not skip the ADD COLUMN statements.
+    await _migrate(db)
 
-    Regression guard: on Postgres all statements previously shared one
-    transaction, so a single failure aborted it and every later statement was
-    silently skipped — leaving alertlog without user_id/destination_id and
-    causing every AlertLog insert to fail (while webhooks still fired). Each
-    statement now runs in its own transaction, so a failure is isolated.
+    assert _version(db) is not None
+    c = sqlite3.connect(db)
+    try:
+        assert c.execute('SELECT username FROM "user"').fetchone() == ("bob",)
+    finally:
+        c.close()
+
+
+def test_head_matches_models(tmp_path):
+    """Autogenerate finds no diff between the migrations head and the models.
+
+    Guards against the baseline drifting out of sync with app/models.py — the
+    exact failure mode (two sources of truth) that motivated adopting Alembic.
     """
-    from app import database
-
-    executed: list[str] = []
-
-    class _FakeConn:
-        async def execute(self, stmt):
-            sql = str(stmt)
-            executed.append(sql)
-            # Simulate the very first statement blowing up.
-            if "DROP NOT NULL" in sql:
-                raise RuntimeError("simulated DDL failure")
-
-    class _FakeBegin:
-        async def __aenter__(self):
-            return _FakeConn()
-
-        async def __aexit__(self, *exc):
-            return False  # propagate so per-statement try/except handles it
-
-    fake_engine = MagicMock()
-    fake_engine.begin = lambda: _FakeBegin()
-
-    with patch.object(database, "engine", fake_engine):
-        # Must not raise even though the first statement fails.
-        await database._migrate_postgres()
-
-    joined = " ".join(executed)
-    # The failure did not stop the migration: the critical columns were still added.
-    assert "ADD COLUMN IF NOT EXISTS user_id" in joined
-    assert "ADD COLUMN IF NOT EXISTS destination_id" in joined
-    # Every statement was attempted in its own transaction.
-    assert any("DROP NOT NULL" in s for s in executed)
-    assert any("ADD COLUMN IF NOT EXISTS password_changed_at" in s for s in executed)
-    assert len(executed) == 10
+    db = tmp_path / "cmp.db"
+    engine = create_engine(f"sqlite:///{db}")
+    with engine.connect() as conn:
+        _run_migrations(conn)
+        conn.commit()
+        ctx = MigrationContext.configure(
+            conn, opts={"compare_type": True, "render_as_batch": True}
+        )
+        diffs = compare_metadata(ctx, SQLModel.metadata)
+    engine.dispose()
+    assert diffs == [], f"Models drifted from migrations head: {diffs}"
