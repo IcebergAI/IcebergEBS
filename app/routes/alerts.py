@@ -4,7 +4,7 @@ from typing import Annotated
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from sqlalchemy import or_, update as sa_update
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
@@ -35,6 +35,7 @@ async def _validate_webhook_url(url: str) -> None:
 # ---------------------------------------------------------------------------
 
 class DestinationOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
     id: int
     label: str
     target: str
@@ -55,6 +56,7 @@ class DestinationPatch(BaseModel):
 
 
 class RuleOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
     id: int
     destination_id: int
     extension_id: int | None
@@ -89,7 +91,7 @@ async def list_destinations(
         .where(AlertDestination.user_id == current_user.id)
         .order_by(AlertDestination.created_at)
     )).all()
-    return [DestinationOut(id=d.id, label=d.label, target=d.target, enabled=d.enabled, created_at=d.created_at) for d in dests]
+    return [DestinationOut.model_validate(d) for d in dests]
 
 
 @router.post("/alerts/destinations", response_model=DestinationOut, status_code=201)
@@ -108,7 +110,7 @@ async def create_destination(
     session.add(dest)
     await session.commit()
     await session.refresh(dest)
-    return DestinationOut(id=dest.id, label=dest.label, target=dest.target, enabled=dest.enabled, created_at=dest.created_at)
+    return DestinationOut.model_validate(dest)
 
 
 @router.patch("/alerts/destinations/{dest_id}", response_model=DestinationOut)
@@ -131,7 +133,7 @@ async def update_destination(
     session.add(dest)
     await session.commit()
     await session.refresh(dest)
-    return DestinationOut(id=dest.id, label=dest.label, target=dest.target, enabled=dest.enabled, created_at=dest.created_at)
+    return DestinationOut.model_validate(dest)
 
 
 @router.delete("/alerts/destinations/{dest_id}")
@@ -177,8 +179,7 @@ async def list_rules(
         .where(AlertRule.user_id == current_user.id)
         .order_by(AlertRule.created_at)
     )).all()
-    return [RuleOut(id=r.id, destination_id=r.destination_id, extension_id=r.extension_id,
-                    event_type=r.event_type, enabled=r.enabled, created_at=r.created_at) for r in rules]
+    return [RuleOut.model_validate(r) for r in rules]
 
 
 @router.post("/alerts/rules", response_model=RuleOut, status_code=201)
@@ -211,8 +212,7 @@ async def create_rule(
     session.add(rule)
     await session.commit()
     await session.refresh(rule)
-    return RuleOut(id=rule.id, destination_id=rule.destination_id, extension_id=rule.extension_id,
-                   event_type=rule.event_type, enabled=rule.enabled, created_at=rule.created_at)
+    return RuleOut.model_validate(rule)
 
 
 @router.patch("/alerts/rules/{rule_id}", response_model=RuleOut)
@@ -235,8 +235,7 @@ async def update_rule(
     session.add(rule)
     await session.commit()
     await session.refresh(rule)
-    return RuleOut(id=rule.id, destination_id=rule.destination_id, extension_id=rule.extension_id,
-                   event_type=rule.event_type, enabled=rule.enabled, created_at=rule.created_at)
+    return RuleOut.model_validate(rule)
 
 
 @router.delete("/alerts/rules/{rule_id}")

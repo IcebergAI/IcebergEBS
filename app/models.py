@@ -3,7 +3,8 @@ from typing import Optional
 
 from sqlmodel import Field, SQLModel, UniqueConstraint
 
-_utcnow = lambda: datetime.now(timezone.utc)
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc)
 
 
 class User(SQLModel, table=True):

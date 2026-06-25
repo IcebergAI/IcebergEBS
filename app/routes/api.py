@@ -5,8 +5,6 @@ from datetime import datetime
 from typing import Annotated, Literal
 from urllib.parse import urlparse, parse_qs
 
-logger = logging.getLogger(__name__)
-
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
@@ -21,6 +19,8 @@ from app.models import AlertLog, AlertRule, Extension, FetchLog, InstallCountHis
 from app.scoring import risk_level
 from app.services import fetch_and_store, fire_pending_alerts
 from app.threat_intel import build_threat_intel_indicators
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -62,6 +62,16 @@ class ThreatIntelIndicatorOut(BaseModel):
     lookups: list[ThreatIntelLookupOut]
 
 
+def _safe_json(raw: str | None, default: str, field: str, ext_id: int | None):
+    """json.loads with a fallback: malformed stored JSON logs a warning instead of
+    raising and 500-ing the endpoint (#17)."""
+    try:
+        return json.loads(raw or default)
+    except (json.JSONDecodeError, TypeError):
+        logger.warning("Malformed %s JSON for extension %s — using fallback", field, ext_id)
+        return json.loads(default)
+
+
 class ExtensionOut(BaseModel):
     id: int
     store: str
@@ -92,14 +102,16 @@ class ExtensionOut(BaseModel):
         an O(domains × URLs) cost the list view never renders. The list endpoint
         opts out; single-extension views keep the default (D2 / #12).
         """
-        perms = json.loads(ext.permissions or "[]")
-        analysis_raw = json.loads(ext.package_analysis or "null")
+        # Parse defensively: a partial write or manual DB edit could leave invalid
+        # JSON, which must not 500 the endpoint — fall back and log instead (#17).
+        perms = _safe_json(ext.permissions, "[]", "permissions", ext.id)
+        analysis_raw = _safe_json(ext.package_analysis, "null", "package_analysis", ext.id)
         host_perms = analysis_raw.get("host_permissions", []) if analysis_raw else []
         findings = analysis_raw.get("findings", []) if analysis_raw else []
         threat_intel_indicators = (
             build_threat_intel_indicators(analysis_raw) if include_threat_intel else []
         )
-        detail = json.loads(ext.risk_detail or "null")
+        detail = _safe_json(ext.risk_detail, "null", "risk_detail", ext.id)
         return cls(
             id=ext.id,
             store=ext.store,

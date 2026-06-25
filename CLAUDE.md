@@ -62,7 +62,7 @@ API-first design. All data flows through FastAPI endpoints; the UI consumes them
 - Publisher extracted via `_find_detail_value(soup, "offered by")` — finds text node then reads next sibling element
 - Last updated extracted via `_find_detail_value(soup, "updated")` then `_parse_date()`
 - Downloads CRX from `clients2.google.com/service/update2/crx`
-- CRX3 format: binary header precedes the zip payload; `_strip_crx_header()` finds the `PK\x03\x04` magic offset
+- CRX3 format: a binary header precedes the zip payload. The fetchers download the raw CRX as-is; the header is stripped downstream by `inspector._zip_payload()`, which seeks the `PK\x03\x04` zip magic before reading the archive (the fetchers do **not** pre-strip it)
 
 ### VS Code Marketplace (`app/fetchers/vscode.py`)
 - Uses the public gallery REST API: `POST https://marketplace.visualstudio.com/_apis/public/gallery/extensionquery` with flags `914`
