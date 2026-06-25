@@ -1,390 +1,158 @@
-# Marvin — Full App Implementation Plan
+# Marvin — Roadmap to "SOC-consumable" (product, not infra)
+
+> This document supersedes the original from-scratch build plan. The app is built; this is the
+> forward-looking roadmap to make Marvin consumable by a mid-size SOC.
 
 ## Context
 
-Marvin is a greenfield web app to track browser/editor extensions (Chrome, Edge, VS Code) and score them for risk. The project directory currently contains only `CLAUDE.md`. This plan covers building the entire application from scratch.
+Marvin today is a solid **single-team extension risk scanner**: multi-store fetchers (Chrome/Edge/
+VS Code), a genuinely capable static inspector ([app/inspector.py](app/inspector.py) — permissions,
+eval/remote-code, CSP, network callouts, obfuscation, MV2, severity-tagged findings with file:line),
+heuristic 0–100 scoring ([app/scoring.py](app/scoring.py)), webhook alerting with SSRF protection +
+change detection ([app/notifications.py](app/notifications.py)), API keys + session auth, a background
+scheduler, and 206 tests.
 
-**User decisions captured:**
-- Stores: Chrome Web Store + VS Code Marketplace + Edge Add-ons (all three)
-- Data entry: manual add (immediate fetch) + watchlist with scheduled background refresh
-- Auth: single admin user from env vars (no user DB)
-- Risk signals: permissions, popularity/install count, publisher, staleness
+To be **consumed by a mid-size SOC**, it needs to become an *extension attack-surface management*
+product: tied to the org's real install footprint, integrated with SOC tooling, governed by enterprise
+identity, and tuned to catch the attacks that actually matter (malicious **updates** to trusted
+extensions, and **known-bad** extensions). This is a phased roadmap, not a single feature.
 
----
+**Scope decisions:**
+- **Consumption:** both an analyst UI *and* a first-class API/integration surface.
+- **Fleet inventory:** ingested **from the SOAR via a Marvin API** (bulk upsert) — Marvin does **not**
+  build direct Chrome Enterprise/Intune/EDR connectors. SOAR owns collection; Marvin owns scoring +
+  exposure.
+- **Identity:** SSO (SAML/OIDC) + roles is a **hard rollout gate**.
+- **Detection priorities:** (1) **update diffing**, (2) **malicious-extension feeds**. Automated
+  VT/OTX enrichment and tunable scoring are explicitly *later*.
 
-## File Structure
-
-```
-marvin/
-├── CLAUDE.md
-├── PLAN.md
-├── README.md
-├── .env.example
-├── pytest.ini
-├── requirements.txt
-│
-├── app/
-│   ├── __init__.py
-│   ├── main.py                  # FastAPI app factory + lifespan
-│   ├── config.py                # pydantic-settings BaseSettings
-│   ├── database.py              # SQLModel engine + async session factory
-│   ├── models.py                # SQLModel table definitions
-│   ├── auth.py                  # itsdangerous session, login dependency
-│   ├── scoring.py               # Risk scoring engine (pure functions)
-│   ├── scheduler.py             # APScheduler background refresh
-│   │
-│   ├── fetchers/
-│   │   ├── __init__.py
-│   │   ├── base.py              # Abstract base + ExtensionMetadata schema
-│   │   ├── chrome.py            # Chrome Web Store scraper + .crx download
-│   │   ├── vscode.py            # VS Code Marketplace REST API + .vsix download
-│   │   └── edge.py              # Edge Add-ons scraper + .crx download
-│   │
-│   ├── inspector.py             # Package inspector (zip extraction + static analysis)
-│   │
-│   ├── routes/
-│   │   ├── __init__.py
-│   │   ├── ui.py                # HTML routes → Jinja2 responses
-│   │   └── api.py               # JSON API routes
-│   │
-│   └── templates/
-│       ├── base.html
-│       ├── login.html
-│       ├── dashboard.html
-│       ├── extension_detail.html
-│       ├── add_extension.html
-│       └── help.html
-│
-├── static/
-│   └── css/
-│       └── app.css              # Gruvbox custom properties + base styles
-│
-└── tests/
-    ├── __init__.py
-    ├── conftest.py
-    ├── test_auth.py
-    ├── test_api.py
-    ├── test_fetchers.py
-    ├── test_inspector.py
-    └── test_scoring.py
-```
+Reusable seams that most epics build on: `fetch_and_store`/`fire_pending_alerts`
+([app/services.py](app/services.py)), `detect_changes`/`fire_alerts` ([app/notifications.py](app/notifications.py)),
+`get_fetcher` ([app/fetchers/__init__.py](app/fetchers/__init__.py)), `compute_risk_score`/`risk_level`
+([app/scoring.py](app/scoring.py)), `require_api_auth`/`require_admin` ([app/auth.py](app/auth.py)),
+`build_threat_intel_indicators` ([app/threat_intel.py](app/threat_intel.py)), the `AlertDestination`/
+`AlertRule`/`AlertLog` model + `_migrate_*` migration pattern ([app/database.py](app/database.py)).
 
 ---
 
-## Database Models (`app/models.py`)
+## Phase 0 — Operability & quick wins (small, unblocks scale)
 
-### `Extension` — one row per tracked extension
+Make it survive a real watchlist and a real team. Mostly backend, low risk.
 
-| Column | Type | Notes |
-|---|---|---|
-| `id` | int PK | auto |
-| `store` | str | `"chrome"` / `"vscode"` / `"edge"` |
-| `extension_id` | str | Store-native ID |
-| `name` | str | |
-| `publisher` | str | |
-| `description` | str | nullable |
-| `version` | str | |
-| `install_count` | int | nullable |
-| `last_updated` | datetime | nullable |
-| `permissions` | str | JSON-encoded list |
-| `store_url` | str | |
-| `added_at` | datetime | |
-| `last_fetched_at` | datetime | nullable |
-| `watchlist` | bool | default True |
-| `risk_score` | int | nullable, 0–100 |
-| `risk_detail` | str | nullable, JSON breakdown per signal |
-| `package_analysis` | str | nullable, JSON output from inspector |
+- **Data retention / pruning** — `FetchLog`, `InstallCountHistory`, `AlertLog` grow unbounded. Add a
+  scheduled prune job (reuse [app/scheduler.py](app/scheduler.py)) with `MARVIN_RETENTION_DAYS`.
+- **Pagination + filter + search** on `GET /api/extensions` and the dashboard (store, risk level,
+  publisher, free-text, sort, limit/offset) — extend [app/routes/api.py](app/routes/api.py#L216) and
+  [dashboard.html](app/templates/dashboard.html). (Author TODO.)
+- **Bulk import** — `POST /api/extensions/bulk` (list / CSV) that reuses the add+score path; UI paste
+  box. (Author TODO.)
+- **Export** — `GET /api/extensions/export?format=csv|json` for reporting/ingest. (Author TODO.)
+- **Fetch health** — surface per-extension last fetch status/error and a fleet "stale/failing" count;
+  add `/healthz` + `/readyz`. Fetchers get timeout/backoff/retry already partially via httpx — make
+  failures visible.
+- **Postgres-by-default for SOC scale** — document/encourage Postgres (the SQLite single-writer lock
+  is a real ceiling under scheduler + API + ingestion concurrency). App-side: keep all writers
+  commit-isolated (already done for alerts).
+- **Known-bug cleanup:** `delete_user` should preserve-history like `delete_rule`/`delete_destination`
+  ([app/routes/users.py](app/routes/users.py)); cap `build_threat_intel_indicators` total output
+  ([app/threat_intel.py](app/threat_intel.py)). (Author TODO.)
 
-Unique constraint: `(store, extension_id)`
+## Phase 1 — SOC core value: inventory, update-diffing, malicious feeds
 
-### `FetchLog` — audit trail per fetch attempt
+The headline differentiators. Backend-heavy; leverages the existing fetch/alert pipeline.
 
-| Column | Type | Notes |
-|---|---|---|
-| `id` | int PK | |
-| `extension_id` | int FK | |
-| `fetched_at` | datetime | |
-| `success` | bool | |
-| `error_message` | str | nullable |
-| `risk_score_before` | int | nullable |
-| `risk_score_after` | int | nullable |
+- **SOAR-fed inventory + exposure (blast radius).**
+  - New model `InstallObservation(extension_ref, asset_id, asset_type, department/tag, source,
+    first_seen, last_seen)` + a cached `install_footprint` on `Extension`.
+  - `POST /api/inventory` — bulk upsert from SOAR; **auto-enrolls** unknown extensions (creates the
+    `Extension` + triggers `fetch_and_store`), so pushing inventory expands the watchlist automatically.
+  - New ranking: **exposure = risk_score × footprint**; surface "top exposure" on the dashboard and a
+    per-extension "installed on N assets / which departments" panel. Risk prioritization stops being
+    abstract.
+- **Update diffing (catch compromised/sold extensions).**
+  - New model `PackageSnapshot(extension_ref, version, package_sha256, analysis_json, captured_at)` —
+    today only the *latest* `package_analysis` is kept ([services.py](app/services.py#L113)). Store a
+    snapshot per version.
+  - `diff_analysis(old, new)` → added permissions / new remote-code / new callout domains / new
+    findings. New alert event `capability_change` (a.k.a. "risky update") wired through the **existing**
+    `detect_changes` → `fire_alerts` path; add it to `VALID_EVENT_TYPES`
+    ([alerts.py](app/routes/api.py)) and `risk_level`/event docs. Surface the diff on the detail page.
+- **Malicious-extension feeds.**
+  - New model `ThreatListEntry(store, extension_id, source, reason, added_at)` + a loader (scheduled
+    pull *and* `POST /api/threatlist` so SOAR can push). Matcher in the score path forces **critical** +
+    a `threat_match` finding and fires a `threat_match` alert event. Reuses scoring override hook +
+    notifications.
 
-### `InstallCountHistory` — for trend/drop detection
+## Phase 2 — Identity & governance (rollout gate)
 
-| Column | Type | Notes |
-|---|---|---|
-| `id` | int PK | |
-| `extension_id` | int FK | |
-| `recorded_at` | datetime | |
-| `install_count` | int | |
+Required before a SOC will adopt. Can run in parallel with Phase 1.
 
----
+- **SSO** — OIDC first (Authlib): `/auth/oidc/login` + callback, IdP group→role mapping; SAML second
+  (python3-saml) for IdPs that require it. Keep local accounts as break-glass.
+- **RBAC** — replace the `User.is_admin` bool with a `role` enum (`admin` / `analyst` / `auditor`);
+  generalize `require_admin` → `require_role(...)` ([auth.py](app/auth.py#L128)). Auditor = read-only,
+  analyst = triage but not user/destination admin.
+- **Audit log** — new `AuditLog(actor, action, target_type, target_id, detail, at)` written on every
+  mutating action (extension add/delete, rule/destination CRUD, risk-acceptance, user changes). This is
+  the compliance/forensics trail a SOC needs and is currently absent.
+- **MFA** for local break-glass accounts (TOTP) if SSO is unavailable.
 
-## Configuration (`app/config.py`)
+## Phase 3 — Integrations & analyst workflow
 
-`pydantic-settings` `BaseSettings`, env prefix `MARVIN_`:
+Makes "both UI + API" real.
 
-```python
-class Settings(BaseSettings):
-    admin_username: str
-    admin_password: str
-    secret_key: str                  # itsdangerous signing key
-    database_url: str = "sqlite+aiosqlite:///./marvin.db"
-    session_cookie_name: str = "marvin_session"
-    session_max_age: int = 86400
-    fetch_interval_minutes: int = 60
-    httpx_timeout: float = 15.0
-```
+- **Stable, versioned API + OpenAPI for SOAR** — un-gate a scoped OpenAPI spec for API-key consumers
+  ([main.py](app/main.py)); document the event schema; semantic-version the API.
+- **Outbound integrations** — generalize `AlertDestination` with a `kind` (webhook today) to add
+  **Slack/Teams/email** (SMTP) and **ticketing** (Jira/ServiceNow create-issue) destinations; reuse
+  `send_webhook` for webhook kinds, add senders per kind ([notifications.py](app/notifications.py),
+  [webhooks.py](app/webhooks.py)). (Email is also an author TODO.)
+- **SIEM export** — emit alerts/findings as **OCSF** (or CEF/ECS) events to an HTTP collector
+  (Splunk HEC / Sentinel / Elastic). **STIX 2.1** bundle export reusing
+  `build_threat_intel_indicators`.
+- **Triage workflow** — `triage_status` (new/triaging/accepted-risk/blocked/resolved) + assignee +
+  notes on `Extension`; **allow-list/deny-list** that overrides the heuristic score (approved extensions
+  suppressed; blocked ones forced critical). Ties allow/deny back into Phase 1's scoring override hook.
 
-`.env.example` with `MARVIN_ADMIN_USERNAME`, `MARVIN_ADMIN_PASSWORD`, `MARVIN_SECRET_KEY`.
+## Phase 4 — Reporting & secondary detection (later)
 
----
-
-## Auth Flow (`app/auth.py`)
-
-**Signed cookie via itsdangerous** — no DB sessions.
-
-- GET `/login` → render form (public)
-- POST `/login` → compare with `hmac.compare_digest` (both username AND password, constant-time). On success, sign `{"u": username}` with `URLSafeTimedSerializer`, set `HttpOnly` + `SameSite=Lax` cookie. Redirect to `/`.
-- POST `/logout` → clear cookie, redirect to `/login`
-- `require_auth` FastAPI dependency: reads + validates cookie, redirects to `/login` on missing/expired/bad signature. Injected into every protected route.
-- Generic error on bad login — no distinction between wrong username vs password.
-
----
-
-## API Endpoints
-
-### HTML routes (`/` prefix, `app/routes/ui.py`) — all protected except login
-
-| Method | Path | Page |
-|---|---|---|
-| GET | `/login` | Login form |
-| POST | `/login` | Auth + redirect |
-| POST | `/logout` | Clear cookie |
-| GET | `/` | Dashboard — extension list |
-| GET | `/extensions/add` | Add extension form |
-| GET | `/extensions/{id}` | Extension detail |
-| GET | `/help` | Help page |
-
-### JSON API routes (`/api` prefix, `app/routes/api.py`) — all require auth
-
-| Method | Path | Description |
-|---|---|---|
-| GET | `/api/extensions` | List all |
-| POST | `/api/extensions` | Add + immediate fetch |
-| GET | `/api/extensions/{id}` | Single extension |
-| DELETE | `/api/extensions/{id}` | Remove |
-| POST | `/api/extensions/{id}/refresh` | Force re-fetch now |
-| PATCH | `/api/extensions/{id}/watchlist` | Toggle watchlist |
-| GET | `/api/extensions/{id}/history` | Install count history |
-
-**`ExtensionIn`**: `{ store: "chrome"|"vscode"|"edge", extension_id: str }` — accepts full store URLs, normalised to ID internally.
-
-**URL normalisation** helpers per store:
-- Chrome: last path segment of `chromewebstore.google.com/detail/{name}/{id}`
-- VS Code: `itemName` query param of `marketplace.visualstudio.com/items?itemName=...`
-- Edge: last path segment of `microsoftedge.microsoft.com/addons/detail/{name}/{id}`
+- **Posture reporting** — fleet risk over time, top exposure by blast radius, exposure by department,
+  triage MTTR; **scheduled digest** webhook/email (author TODO); printable per-extension risk report.
+- **Automated TI enrichment** — call VirusTotal/OTX with API keys, cache verdicts, fold into score
+  (today [threat_intel.py](app/threat_intel.py) only deep-links).
+- **Tunable scoring** — move `scoring.py` weights/thresholds into config/policy; per-org policy editor.
+- **Coverage** — Firefox AMO fetcher (public REST API; author TODO); deeper MV3 analysis;
+  CVE/advisory correlation.
 
 ---
 
-## Extension Fetchers (`app/fetchers/`)
+## Cross-cutting concerns (apply every phase)
+- **Migrations:** follow the per-statement `_migrate_postgres` / `_migrate_sqlite` pattern in
+  [app/database.py](app/database.py) for every new table/column; never share one transaction on Postgres.
+- **Alerts after commit:** any new write path that fires alerts must commit first, then
+  `fire_pending_alerts` (SQLite write-lock rule, see CLAUDE.md).
+- **Tests:** each epic ships unit + route tests in the existing style ([tests/](tests/), respx + the
+  `client`/`test_db` fixtures); keep the suite green.
+- **Docs:** update [CLAUDE.md](CLAUDE.md) module/architecture notes and [help.html](app/templates/help.html)
+  per the Maintenance rule.
 
-Each fetcher does two things: fetch store metadata (popularity, publisher, dates) and download the extension package for static inspection. Both steps are attempted; a package download failure is non-fatal — metadata-only is still useful.
-
-### Base (`base.py`)
-
-`ExtensionMetadata` Pydantic model + `BaseFetcher` ABC with two methods:
-- `async def fetch_metadata(extension_id) -> ExtensionMetadata` — store page/API
-- `async def download_package(extension_id, version) -> bytes` — raw zip bytes
-
-Shared `httpx.AsyncClient` created at startup, injected into fetchers.
-
-### Chrome (`chrome.py`) — scraping + .crx download
-
-**Metadata:** Fetch `https://chromewebstore.google.com/detail/{extension_id}`. Parse the embedded `AF_initDataCallback` JSON blob in a `<script>` tag for name, version, install count, last updated. Wrap all parsing in try/except and log failures.
-
-**Package:** Download `.crx` via:
-`https://clients2.google.com/service/update2/crx?response=redirect&prodversion=130.0&acceptformat=crx3&x=id%3D{id}%26uc`
-
-`.crx3` files have a binary header before the zip payload; skip the header by finding the `PK\x03\x04` magic bytes and reading the zip from that offset.
-
-**Permissions:** Read from `manifest.json` inside the package — authoritative source, not scraped from the store page.
-
-### VS Code (`vscode.py`) — REST API + .vsix download
-
-**Metadata:** `POST https://marketplace.visualstudio.com/_apis/public/gallery/extensionquery` with `filterType: 7` and flags `914`. Extract name, publisher, description, version, install count, last updated, publisher verification status (`publisher.isDomainVerified`).
-
-**Package:** Download `.vsix` from the asset URL in the API response (asset type `Microsoft.VisualStudio.Services.VSIXPackage`). `.vsix` is a plain zip — no header stripping needed.
-
-**Permissions:** Read from `extension/package.json` inside the zip (the `contributes` and `extensionDependencies` fields). Drop the store manifest fetch — the downloaded package is the authoritative source.
-
-### Edge (`edge.py`) — scraping + .crx download
-
-**Metadata:** Fetch `https://microsoftedge.microsoft.com/addons/detail/{extension_id}`. Parse HTML with **BeautifulSoup4**. Extract name, publisher, version, install count, last updated.
-
-**Package:** Edge extensions use the same Chromium `.crx` format. Download via:
-`https://edge.microsoft.com/extensionwebstorebase/v1/crx?response=redirect&x=id%3D{id}%26uc`
-
-Same `.crx3` header-stripping approach as Chrome.
-
-**Permissions:** Read from `manifest.json` inside the package.
+## Recommended sequencing
+Phase 0 (≈1 sprint) → **Phase 1 + Phase 2 in parallel** (the value + the rollout gate) → Phase 3 →
+Phase 4. SSO/RBAC/audit (Phase 2) gates go-live, so start it alongside Phase 1 rather than after.
 
 ---
 
-## Package Inspector (`app/inspector.py`)
-
-Takes raw package bytes (zip), extracts and analyses contents. Returns a structured `PackageAnalysis` Pydantic model. All analysis is static — no code is executed.
-
-```python
-class PackageAnalysis(BaseModel):
-    permissions: list[str]           # from manifest.json / package.json
-    host_permissions: list[str]      # manifest v3 host_permissions field
-    external_domains: list[str]      # domains found hardcoded in JS files
-    uses_eval: bool                  # any eval() / new Function() calls
-    uses_remote_code: bool           # fetch/XHR to non-extension origins in background scripts
-    obfuscation_score: int           # 0–10 heuristic (see below)
-    file_count: int
-    total_size_bytes: int
-    has_minified_code: bool          # any .js file >500 lines with avg line length >200
-    manifest_version: int            # 2 or 3
-```
-
-### Obfuscation heuristic (0–10)
-
-Applied to each `.js` file; take the max across all files:
-- Average identifier length < 2 chars in a file with >50 identifiers → +4
-- Ratio of non-ASCII or escaped unicode chars > 5% → +3
-- Single-letter variable density > 60% of all identifiers → +3
-
-### External domain extraction
-
-Regex scan all `.js` and `.json` files for string literals matching `https?://[^/'"]+` that are not:
-- The extension's own store URL
-- Well-known CDNs (`googleapis.com`, `gstatic.com`, `jsdelivr.net`, `cdnjs.cloudflare.com`)
-- `localhost` / `127.0.0.1`
-
-Report all others. A high number of unknown domains is a risk signal.
-
----
-
-## Risk Scoring Engine (`app/scoring.py`)
-
-Score: **0–100** (higher = riskier). Six signals — four from store metadata, two from package inspection.
-
-| Signal | Max pts | Source | Key logic |
-|---|---|---|---|
-| Permissions | 25 | Package `manifest.json` | Tiered danger list: critical (`<all_urls>`, `debugger`, `nativeMessaging`, `webRequest`) = 25; high (`cookies`, `history`, `tabs`) = 15; medium (`storage`, `notifications`) = 7 |
-| Popularity | 20 | Store metadata | <100 installs = 16 pts; <1k = 8; <10k = 4; ≥10k = 0. Sudden drop >30% = +10 |
-| Publisher | 15 | Store metadata | Publisher changed between fetches = +8; unverified = +4; generic name = +3 |
-| Staleness | 15 | Store metadata | 3+ years = 15; 2+ = 11; 1+ = 7; 6+ months = 4; recent = 0 |
-| Code behaviour | 15 | Package inspector | `uses_eval` = +8; `uses_remote_code` = +5; obfuscation_score ≥ 6 = +5; obfuscation_score ≥ 3 = +3 (capped at 15) |
-| External domains | 10 | Package inspector | 0 unknown domains = 0; 1–2 = 3; 3–5 = 6; 6+ = 10 |
-
-Unknown/null values get a moderate suspicion score (not 0, not max). If package analysis is unavailable (download failed), code behaviour and external domain signals score at their midpoint rather than 0.
-
-**Risk level labels:**
-- 0–24: `low` (Gruvbox green `#98971a`)
-- 25–49: `medium` (yellow `#d79921`)
-- 50–74: `high` (orange `#d65d0e`)
-- 75–100: `critical` (red `#cc241d`)
-
-Score stored on `Extension.risk_score`; breakdown stored as JSON in `Extension.risk_detail`. Recomputed on every successful fetch.
-
----
-
-## Background Refresh (`app/scheduler.py`)
-
-**APScheduler 4.x** `AsyncScheduler` with `IntervalTrigger(minutes=settings.fetch_interval_minutes)`.
-
-Integrated into FastAPI `lifespan` context manager. On each tick: fetch all `Extension` where `watchlist=True`, re-fetch metadata, update fields, recompute score, append `InstallCountHistory`, write `FetchLog`. Errors per extension are caught and logged; one failure does not stop the rest.
-
-Enable SQLite WAL mode at startup: `PRAGMA journal_mode=WAL`.
-
----
-
-## UI / Frontend
-
-**Styling:** Gruvbox dark CSS custom properties in `static/css/app.css`. Tailwind CDN for utility classes. JetBrains Mono via Google Fonts. AlpineJS via CDN for interactivity.
-
-**Pages:**
-- **`dashboard.html`**: Extension table with sortable columns (AlpineJS), risk score badges, per-row refresh/delete/watchlist-toggle actions. Stats bar: total tracked / high-or-critical count / last refresh time.
-- **`extension_detail.html`**: Score breakdown table (all 6 signals), permissions list with danger badges, external domains list, code behaviour flags (`eval`, remote code, obfuscation level), install count sparkline (AlpineJS + inline SVG), fetch log table, "Refresh Now" button.
-- **`add_extension.html`**: URL/ID input with AlpineJS auto-detection of store from pasted URL. Store radio buttons auto-select. Submits to `/api/extensions` via `fetch()`, redirects to detail on success.
-- **`login.html`**: Centred card, ASCII-art tagline, generic error on failure.
-- **`help.html`**: Risk score methodology, how to add extensions per store, ID format examples.
-
-Flash messages: short-lived signed cookie (`max_age=5`), consumed on next HTML render.
-
----
-
-## `requirements.txt`
-
-```
-fastapi
-uvicorn[standard]
-sqlmodel
-aiosqlite
-httpx
-pydantic-settings
-itsdangerous
-jinja2
-python-multipart
-beautifulsoup4
-apscheduler>=4.0
-# test dependencies
-respx
-pytest
-pytest-asyncio
-```
-
----
-
-## Testing
-
-### `conftest.py`
-- In-memory SQLite test DB, settings overrides
-- `respx` mock for HTTPX calls (Chrome/Edge HTML responses, VS Code API JSON)
-- Shared fixtures: authenticated test client, unauthenticated client, seeded extension records
-
-### Test files
-- **`test_auth.py`**: Login/logout flow, cookie validation, session expiry, protected route redirect
-- **`test_api.py`**: All CRUD endpoints, duplicate detection (409), refresh trigger, watchlist toggle
-- **`test_fetchers.py`**: Each fetcher with mocked HTTP (success + 404), URL normalisation helpers, mocked package download bytes
-- **`test_inspector.py`**: Inspector with fixture zips — clean manifest, eval usage, obfuscated JS, external domains, `.crx3` header stripping
-- **`test_scoring.py`**: Each signal function at boundary values, full `compute_risk_score` with and without package analysis
-
-### `pytest.ini`
-```ini
-[pytest]
-asyncio_mode = auto
-testpaths = tests
-```
-
----
-
-## Build Order
-
-1. `config.py` → `database.py` → `models.py` (foundation)
-2. `auth.py` (depends on config)
-3. `fetchers/base.py` + `fetchers/vscode.py` (real API + .vsix download, easiest to validate)
-4. `inspector.py` (pure functions on zip bytes — no external deps)
-5. `fetchers/chrome.py` + `fetchers/edge.py` (scraping + .crx download/header stripping)
-6. `scoring.py` (pure functions, depends on inspector output shape)
-7. `routes/api.py` (depends on models + fetchers + inspector + scoring)
-8. `routes/ui.py` + all templates (depends on API)
-9. `scheduler.py` (depends on fetchers + DB)
-10. `main.py` (wires everything; lifespan = DB init + scheduler start)
-11. `tests/` (written alongside each layer)
-
----
-
-## Verification
-
-- `venv/bin/python -m pytest tests/ -v` — full test suite
-- `uvicorn app.main:app --reload` — manual smoke test
-- Add a VS Code extension (`publisher.name`) → verify fetch, score computed, detail page renders
-- Add a Chrome extension by full URL → verify URL normalisation + scrape
-- Toggle watchlist off → verify excluded from next scheduler tick
-- Force refresh → verify `FetchLog` entry created
-- Login with wrong password → verify no cookie set, generic error shown
-- Access `/` without cookie → verify redirect to `/login`
+## Verification (per phase, end-to-end)
+- **Phase 0:** `pytest` green; seed >200 extensions, confirm paginated/filtered list + CSV export;
+  run prune job and assert old `FetchLog`/`AlertLog` rows removed; `/healthz` returns ok.
+- **Phase 1:** `POST /api/inventory` with a SOAR-style batch → unknown extension auto-enrolled + scored,
+  footprint + exposure shown; bump a test extension's version with a new dangerous permission →
+  `capability_change` alert fires and the diff renders; add an ID to the threat list → extension flips
+  to critical + `threat_match` alert + AlertLog row.
+- **Phase 2:** OIDC login maps IdP group → `analyst`; auditor blocked from mutating routes (403);
+  every mutation writes an `AuditLog` row; verify in DB.
+- **Phase 3:** OpenAPI reachable with an API key; a Slack + a Jira destination both deliver on a fired
+  rule (AlertLog records both); OCSF event posted to a mock collector; allow-listed extension drops to
+  suppressed, deny-listed forced critical.
+- **Phase 4:** scheduled digest delivered; VT verdict cached and reflected in score; changing a policy
+  weight changes the recomputed score; a Firefox AMO extension fetches + scores.
