@@ -54,6 +54,11 @@ async def _migrate_sqlite(conn) -> None:
     if existing_apikey_cols and "key_prefix" not in existing_apikey_cols:
         await conn.execute(text("ALTER TABLE apikey ADD COLUMN key_prefix TEXT NOT NULL DEFAULT ''"))
         await conn.execute(text("ALTER TABLE apikey ADD COLUMN key_suffix TEXT NOT NULL DEFAULT ''"))
+    # user: add password-change marker for session/API-key revocation (M1 / #6)
+    result = await conn.execute(text('PRAGMA table_info("user")'))
+    existing_user_cols = {row[1] for row in result.fetchall()}
+    if existing_user_cols and "password_changed_at" not in existing_user_cols:
+        await conn.execute(text('ALTER TABLE "user" ADD COLUMN password_changed_at TIMESTAMP'))
     result = await conn.execute(text("PRAGMA table_info(alertlog)"))
     existing_cols = {row[1] for row in result.fetchall()}
     if "user_id" not in existing_cols:
@@ -111,6 +116,7 @@ async def _migrate_postgres() -> None:
         "CREATE INDEX IF NOT EXISTS ix_alertrule_destination_id ON alertrule(destination_id)",
         "ALTER TABLE apikey ADD COLUMN IF NOT EXISTS key_prefix TEXT NOT NULL DEFAULT ''",
         "ALTER TABLE apikey ADD COLUMN IF NOT EXISTS key_suffix TEXT NOT NULL DEFAULT ''",
+        'ALTER TABLE "user" ADD COLUMN IF NOT EXISTS password_changed_at TIMESTAMP',
     ]:
         try:
             async with engine.begin() as conn:

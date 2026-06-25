@@ -3,6 +3,8 @@ import logging
 import zipfile
 from datetime import datetime, timezone
 
+import httpx
+
 from app.fetchers.base import BaseFetcher, ExtensionMetadata, FetchError
 
 logger = logging.getLogger(__name__)
@@ -85,17 +87,14 @@ class EdgeFetcher(BaseFetcher):
         try:
             pkg_bytes = await self.download_package(extension_id)
             logger.info("Edge CRX downloaded for %s (%d bytes)", extension_id, len(pkg_bytes))
-        except FetchError as exc:
+        except (FetchError, httpx.HTTPError) as exc:
             # edge.microsoft.com/extensionwebstorebase currently returns HTTP 500 for all
             # GET requests regardless of User-Agent or query parameters — server-side fault.
             # Permissions are still available from the manifest embedded in the API response.
+            # Narrowed to network/HTTP errors so a genuine bug propagates instead of
+            # being swallowed behind the manifest-only fallback (M5 / #10).
             logger.warning(
                 "Edge CRX unavailable for %s (%s) — JS analysis skipped, using manifest-only package",
-                extension_id, exc,
-            )
-        except Exception as exc:
-            logger.warning(
-                "Edge CRX download error for %s: %s — JS analysis skipped, using manifest-only package",
                 extension_id, exc,
             )
 

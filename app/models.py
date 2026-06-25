@@ -13,6 +13,9 @@ class User(SQLModel, table=True):
     email: Optional[str] = None
     is_admin: bool = False
     created_at: datetime = Field(default_factory=_utcnow)
+    # Bumped on password change; sessions/cookies signed before this instant are
+    # rejected, invalidating other-device sessions on reset (M1 / #6).
+    password_changed_at: Optional[datetime] = Field(default_factory=_utcnow)
 
 
 class Extension(SQLModel, table=True):
