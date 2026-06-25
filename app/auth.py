@@ -206,6 +206,14 @@ async def require_admin_ui(current_user=Depends(require_auth)):
 
 
 def set_session(response, username: str) -> None:
+    # CSRF stance (#16): protection is SameSite=Lax (+ Secure in prod), not tokens.
+    # This is a deliberate decision, not an oversight — see the CSRF note in
+    # CLAUDE.md. SameSite=Lax stops cross-site cookies on unsafe top-level
+    # navigations and all sub-resource requests; the JSON API additionally rejects
+    # cross-origin form posts because it requires an application/json body and
+    # supports a Bearer token as the primary M2M credential. If a cookie-authed
+    # state-changing browser flow ever needs stronger defense-in-depth, add
+    # per-request CSRF tokens here + a matching hidden field in the templates.
     response.set_cookie(
         key=settings.session_cookie_name,
         value=create_session_cookie(username),
