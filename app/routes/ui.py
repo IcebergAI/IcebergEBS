@@ -9,10 +9,11 @@ from itsdangerous import BadSignature, URLSafeTimedSerializer
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from app.auth import clear_session, get_current_user, require_auth, require_admin, set_session, verify_credentials
+from app.auth import clear_session, get_current_user, require_auth, require_admin_ui, set_session, verify_credentials
 from app.config import settings
 from app.database import get_session
 from app.models import AlertDestination, AlertRule, ApiKey, Extension, FetchLog, User
+from app.ratelimit import login_limiter
 from app.routes.alerts import get_alert_log
 from app.threat_intel import build_threat_intel_indicators
 from app.version import get_version
@@ -96,11 +97,25 @@ async def login_post(
     password: str = Form(...),
     session: AsyncSession = Depends(get_session),
 ):
+    # App-level brute-force throttle, independent of nginx (M3 / #8).
+    key = login_limiter.key(request.client.host if request.client else None, username)
+    retry_after = login_limiter.retry_after(key)
+    if retry_after is not None:
+        response = _render(
+            request, "login.html",
+            {"error": "Too many failed attempts — please try again later."},
+        )
+        response.status_code = 429
+        response.headers["Retry-After"] = str(retry_after)
+        return response
+
     user = await verify_credentials(username, password, session)
     if user:
+        login_limiter.reset(key)
         response = RedirectResponse("/", status_code=303)
         set_session(response, user.username)
         return response
+    login_limiter.record_failure(key)
     return _render(request, "login.html", {"error": "Invalid credentials"})
 
 
@@ -345,7 +360,7 @@ async def extension_detail(
 @router.get("/admin/users", response_class=HTMLResponse)
 async def admin_users_page(
     request: Request,
-    current_user: Annotated[User, Depends(require_admin)],
+    current_user: Annotated[User, Depends(require_admin_ui)],
     session: Annotated[AsyncSession, Depends(get_session)],
 ):
     users = (await session.exec(select(User).order_by(User.created_at))).all()

@@ -1,3 +1,4 @@
+from datetime import datetime, timezone
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Response
@@ -120,7 +121,12 @@ async def change_password(
     if not await verify_password(body.current_password, current_user.password_hash):
         raise HTTPException(status_code=400, detail="Current password is incorrect")
     current_user.password_hash = await hash_password(body.new_password)
+    # Invalidate all existing sessions (incl. other devices) by advancing the
+    # password-change marker, and revoke the user's API keys so a leaked bearer
+    # token can't survive a password reset (M1 / #6).
+    current_user.password_changed_at = datetime.now(timezone.utc)
     session.add(current_user)
+    await session.execute(sa_delete(ApiKey).where(ApiKey.user_id == current_user.id))
     await session.commit()
     clear_session(response)
     return {"ok": True}

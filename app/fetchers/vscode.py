@@ -1,8 +1,11 @@
+import logging
 from datetime import datetime
 
 import httpx
 
 from app.fetchers.base import BaseFetcher, ExtensionMetadata, FetchError
+
+logger = logging.getLogger(__name__)
 
 _GALLERY_URL = "https://marketplace.visualstudio.com/_apis/public/gallery/extensionquery"
 _FLAGS = 914  # includes statistics, versions, publisher, file list
@@ -81,6 +84,12 @@ class VSCodeFetcher(BaseFetcher):
         try:
             vsix_url = self._vsix_url(ext, extension_id)
             package: bytes | None = await self._get_package_bytes(vsix_url)
-        except FetchError:
+        except (FetchError, httpx.HTTPError) as exc:
+            # Non-fatal: metadata already parsed. Narrow to network/HTTP errors so
+            # a programming bug surfaces instead of silently skipping analysis (M5).
+            logger.warning(
+                "VS Code VSIX download failed for %s (%s) — JS analysis skipped",
+                extension_id, exc,
+            )
             package = None
         return metadata, package

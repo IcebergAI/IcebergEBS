@@ -85,12 +85,20 @@ class ExtensionOut(BaseModel):
     threat_intel_indicators: list[ThreatIntelIndicatorOut]
 
     @classmethod
-    def from_db(cls, ext: Extension) -> "ExtensionOut":
+    def from_db(cls, ext: Extension, *, include_threat_intel: bool = True) -> "ExtensionOut":
+        """Serialize an Extension.
+
+        ``include_threat_intel=False`` skips building VirusTotal/OTX indicators —
+        an O(domains × URLs) cost the list view never renders. The list endpoint
+        opts out; single-extension views keep the default (D2 / #12).
+        """
         perms = json.loads(ext.permissions or "[]")
         analysis_raw = json.loads(ext.package_analysis or "null")
         host_perms = analysis_raw.get("host_permissions", []) if analysis_raw else []
         findings = analysis_raw.get("findings", []) if analysis_raw else []
-        threat_intel_indicators = build_threat_intel_indicators(analysis_raw)
+        threat_intel_indicators = (
+            build_threat_intel_indicators(analysis_raw) if include_threat_intel else []
+        )
         detail = json.loads(ext.risk_detail or "null")
         return cls(
             id=ext.id,
@@ -226,7 +234,9 @@ async def list_extensions(
         .where(Extension.user_id == current_user.id)
         .order_by(Extension.added_at.desc())
     )).all()
-    return [ExtensionOut.from_db(r) for r in rows]
+    # Skip per-extension threat-intel indicator construction here — the list view
+    # doesn't render it, and building it for every row is O(extensions × domains).
+    return [ExtensionOut.from_db(r, include_threat_intel=False) for r in rows]
 
 
 @router.post("/extensions", response_model=ExtensionOut, status_code=201)

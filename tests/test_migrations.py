@@ -84,12 +84,15 @@ async def test_migrate_adds_new_columns_to_old_alertlog():
         cols_before = await _column_names(conn, "alertlog")
         assert "user_id" not in cols_before
         assert "destination_id" not in cols_before
+        assert "password_changed_at" not in await _column_names(conn, "user")
 
         await _migrate_sqlite(conn)
 
         cols_after = await _column_names(conn, "alertlog")
         assert "user_id" in cols_after
         assert "destination_id" in cols_after
+        # M1: user gains the password-change marker column
+        assert "password_changed_at" in await _column_names(conn, "user")
 
     await engine.dispose()
 
@@ -207,4 +210,5 @@ async def test_migrate_postgres_isolates_failing_statements():
     assert "ADD COLUMN IF NOT EXISTS destination_id" in joined
     # Every statement was attempted in its own transaction.
     assert any("DROP NOT NULL" in s for s in executed)
-    assert len(executed) == 9
+    assert any("ADD COLUMN IF NOT EXISTS password_changed_at" in s for s in executed)
+    assert len(executed) == 10

@@ -1,7 +1,7 @@
 import hashlib
 import logging
 import secrets
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Annotated
 
 import anyio.to_thread
@@ -56,15 +56,42 @@ def create_session_cookie(username: str) -> str:
     return _serializer.dumps({"u": username})
 
 
-def get_current_user(request: Request) -> str | None:
+def get_session_claims(request: Request) -> tuple[str, datetime] | None:
+    """Return (username, cookie-issued-at) from a valid session cookie, else None.
+
+    The issued-at timestamp is signed into the cookie by URLSafeTimedSerializer; it
+    lets callers reject sessions older than the user's last password change (M1).
+    """
     cookie = request.cookies.get(settings.session_cookie_name)
     if not cookie:
         return None
     try:
-        data = _serializer.loads(cookie, max_age=settings.session_max_age)
-        return data["u"]
+        data, issued_at = _serializer.loads(
+            cookie, max_age=settings.session_max_age, return_timestamp=True
+        )
+        return data["u"], issued_at
     except (SignatureExpired, BadSignature, KeyError):
         return None
+
+
+def get_current_user(request: Request) -> str | None:
+    claims = get_session_claims(request)
+    return claims[0] if claims else None
+
+
+def _session_after_password_change(user, issued_at: datetime) -> bool:
+    """True if a cookie issued at ``issued_at`` is still valid for ``user``.
+
+    Cookies signed before the user's ``password_changed_at`` are stale (the
+    password was reset on another device). A 1s tolerance absorbs the serializer's
+    whole-second timestamp granularity so a fresh post-reset login isn't rejected.
+    """
+    changed = user.password_changed_at
+    if changed is None:
+        return True
+    if changed.tzinfo is None:
+        changed = changed.replace(tzinfo=timezone.utc)
+    return issued_at >= changed - timedelta(seconds=1)
 
 
 # Pre-computed dummy hash used when the username doesn't exist, so the bcrypt
@@ -88,11 +115,12 @@ async def require_auth(
 ):
     """FastAPI dependency — returns the authenticated User or redirects to /login."""
     from app.models import User
-    username = get_current_user(request)
-    if username is None:
+    claims = get_session_claims(request)
+    if claims is None:
         raise HTTPException(status_code=303, headers={"Location": "/login"})
+    username, issued_at = claims
     user = (await session.exec(select(User).where(User.username == username))).first()
-    if user is None:
+    if user is None or not _session_after_password_change(user, issued_at):
         raise HTTPException(status_code=303, headers={"Location": "/login"})
     return user
 
@@ -143,20 +171,33 @@ async def require_api_auth(
         return user
 
     # Fall back to session cookie
-    username = get_current_user(request)
-    if username is not None:
+    claims = get_session_claims(request)
+    if claims is not None:
         from app.models import User
+        username, issued_at = claims
         user = (await session.exec(select(User).where(User.username == username))).first()
-        if user is not None:
+        if user is not None and _session_after_password_change(user, issued_at):
             return user
 
     raise HTTPException(status_code=401, detail="Authentication required")
 
 
 async def require_admin(current_user=Depends(require_api_auth)):
-    """FastAPI dependency — requires the authenticated user to be an admin."""
+    """FastAPI dependency for JSON API routes — requires admin, raises 401/403."""
     if not current_user.is_admin:
         raise HTTPException(status_code=403, detail="Admin access required")
+    return current_user
+
+
+async def require_admin_ui(current_user=Depends(require_auth)):
+    """FastAPI dependency for HTML admin routes — redirect semantics, not JSON errors.
+
+    Built on ``require_auth`` so an expired/absent session redirects to /login (303)
+    like every other UI route, and a non-admin is bounced to the dashboard instead
+    of receiving a raw JSON 403 (M2 / #7).
+    """
+    if not current_user.is_admin:
+        raise HTTPException(status_code=303, headers={"Location": "/"})
     return current_user
 
 

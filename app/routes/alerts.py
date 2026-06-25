@@ -376,4 +376,11 @@ async def test_destination(
         resp.raise_for_status()
         return {"ok": True, "status_code": resp.status_code}
     except Exception as exc:
-        raise HTTPException(status_code=502, detail=str(exc))
+        # Never surface the raw exception text to the caller: it can contain the
+        # resolved IP, internal hostnames, or other SSRF-probing detail. Log the
+        # full error server-side and return a generic message (M4 / #9).
+        logger.warning("Webhook test to destination %d failed: %s", dest_id, exc)
+        raise HTTPException(
+            status_code=502,
+            detail="Failed to deliver test webhook to the destination",
+        )

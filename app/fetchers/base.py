@@ -1,8 +1,11 @@
+import logging
 from abc import ABC, abstractmethod
 from datetime import datetime
 
 import httpx
 from pydantic import BaseModel
+
+logger = logging.getLogger(__name__)
 
 _MAX_PACKAGE_DOWNLOAD_BYTES = 64 * 1024 * 1024  # bytes on the wire
 
@@ -39,7 +42,14 @@ class BaseFetcher(ABC):
         metadata = await self.fetch_metadata(extension_id)
         try:
             package = await self.download_package(extension_id)
-        except Exception:
+        except (FetchError, httpx.HTTPError) as exc:
+            # Best-effort download: a network/HTTP failure is non-fatal (we still
+            # score from metadata). Narrow the catch so genuine programming errors
+            # propagate and surface instead of silently degrading scores (M5 / #10).
+            logger.warning(
+                "Package download failed for %s (%s) — continuing without static analysis",
+                extension_id, exc,
+            )
             package = None
         return metadata, package
 
