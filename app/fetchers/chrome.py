@@ -1,7 +1,6 @@
 import re
 from datetime import datetime
 
-import httpx
 from bs4 import BeautifulSoup
 
 from app.fetchers.base import BaseFetcher, ExtensionMetadata, FetchError
@@ -14,15 +13,6 @@ _DOWNLOAD_URL = (
     "?response=redirect&prodversion=130.0&acceptformat=crx3"
     "&x=id%3D{extension_id}%26uc"
 )
-_CRX_MAGIC = b"PK\x03\x04"
-
-
-def _strip_crx_header(data: bytes) -> bytes:
-    """CRX3 files have a binary header before the zip payload; find the zip magic."""
-    offset = data.find(_CRX_MAGIC)
-    if offset == -1:
-        raise FetchError("Not a valid CRX file: no zip signature found")
-    return data[offset:]
 
 
 class ChromeFetcher(BaseFetcher):

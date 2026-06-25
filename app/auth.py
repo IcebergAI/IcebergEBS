@@ -2,7 +2,6 @@ import hashlib
 import logging
 import secrets
 from datetime import datetime, timedelta, timezone
-from typing import Annotated
 
 import anyio.to_thread
 import bcrypt
@@ -19,6 +18,11 @@ logger = logging.getLogger(__name__)
 
 _serializer = URLSafeTimedSerializer(settings.secret_key.get_secret_value())
 
+# Single source of truth for the bcrypt work factor. Both real password hashing
+# and the dummy-hash timing defense MUST use it, so they can never drift apart
+# (a divergence would silently reintroduce the username-enumeration oracle — D4).
+BCRYPT_ROUNDS = 12
+
 
 def generate_api_key() -> str:
     """Return a new raw API key. Caller must store only the hash."""
@@ -31,7 +35,7 @@ def hash_api_key(raw_key: str) -> str:
 
 
 def _hash_password_sync(password: str) -> str:
-    return bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
+    return bcrypt.hashpw(password.encode(), bcrypt.gensalt(rounds=BCRYPT_ROUNDS)).decode()
 
 
 def _verify_password_sync(password: str, hashed: str) -> bool:
@@ -97,7 +101,7 @@ def _session_after_password_change(user, issued_at: datetime) -> bool:
 # Pre-computed dummy hash used when the username doesn't exist, so the bcrypt
 # work factor is always paid regardless of whether the username is valid.
 # This prevents username enumeration via response-time differences.
-_DUMMY_HASH: str = bcrypt.hashpw(b"dummy", bcrypt.gensalt(rounds=12)).decode()
+_DUMMY_HASH: str = bcrypt.hashpw(b"dummy", bcrypt.gensalt(rounds=BCRYPT_ROUNDS)).decode()
 
 
 async def verify_credentials(username: str, password: str, session: AsyncSession):

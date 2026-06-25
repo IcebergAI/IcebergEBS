@@ -183,18 +183,39 @@ def risk_level(score: int | None) -> str | None:
     return "low"
 
 
+_GENERIC_WORDS = frozenset({
+    "extension", "extensions", "tool", "tools",
+    "addon", "addons", "plugin", "plugins",
+})
+# Corporate suffixes stripped before judging — "Acme Tools Inc" is a real company,
+# not a generic name, so "inc" shouldn't keep it from being recognised as having a
+# distinctive word.
+_CORP_SUFFIXES = frozenset({
+    "inc", "llc", "ltd", "limited", "co", "corp", "corporation", "gmbh", "company",
+})
+
+
 def _looks_generic(publisher: str) -> bool:
+    """True if a publisher name carries no distinctive (non-generic) word.
+
+    Tokenises on whole words (splitting CamelCase, so "ExtensionTools" → extension
+    + tools) rather than matching substrings. Legitimate publishers that merely
+    *contain* a generic word ("Microsoft Extensions", "Acme Tools Inc", "Toolsmith
+    Software") are no longer false-flagged — only names whose every meaningful word
+    is generic ("Extensions", "Tools", "ExtensionTools") are (#18).
+    """
     if not publisher:
         return True
-    lower = publisher.lower()
-    generic_words = ["extension", "extensions", "tools", "addon", "addons", "plugin", "plugins"]
-    # Check whole words (space-separated) and substrings (handles CamelCase like "ExtensionTools")
-    if any(w in lower for w in generic_words):
-        return True
-    # All digits/punctuation
+    # No letters at all (digits/punctuation only).
     if re.sub(r"[^a-zA-Z]", "", publisher) == "":
         return True
-    return False
+    # Split CamelCase/PascalCase boundaries so concatenated generic words count.
+    spaced = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", " ", publisher)
+    words = re.findall(r"[a-z0-9]+", spaced.lower())
+    meaningful = [w for w in words if w not in _CORP_SUFFIXES]
+    if not meaningful:
+        return True
+    return all(w in _GENERIC_WORDS for w in meaningful)
 
 
 def _score_code_findings(analysis: PackageAnalysis) -> int:

@@ -8,7 +8,7 @@ import pytest
 import respx
 
 from app.fetchers.base import FetchError
-from app.fetchers.chrome import ChromeFetcher, _strip_crx_header
+from app.fetchers.chrome import ChromeFetcher
 from app.fetchers.edge import EdgeFetcher
 from app.fetchers.vscode import VSCodeFetcher
 from app.routes.api import normalise_extension_id
@@ -50,25 +50,6 @@ def _make_zip() -> bytes:
     with zipfile.ZipFile(buf, "w") as zf:
         zf.writestr("manifest.json", json.dumps({"manifest_version": 3, "name": "T", "version": "1"}))
     return buf.getvalue()
-
-
-def test_strip_crx_header():
-    zip_bytes = _make_zip()
-    fake_crx = b"Cr24" + b"\x00" * 20 + zip_bytes
-    result = _strip_crx_header(fake_crx)
-    assert result == zip_bytes
-
-
-def test_strip_crx_no_magic_raises():
-    with pytest.raises(FetchError):
-        _strip_crx_header(b"not a crx at all")
-
-
-def test_strip_crx_plain_zip():
-    zip_bytes = _make_zip()
-    # Plain zip passes through (PK magic at offset 0)
-    result = _strip_crx_header(zip_bytes)
-    assert result == zip_bytes
 
 
 # ---------------------------------------------------------------------------

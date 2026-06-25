@@ -18,14 +18,6 @@ _DOWNLOAD_URL = (
     "https://edge.microsoft.com/extensionwebstorebase/v1/crx"
     "?x=id%3D{extension_id}%26installsource%3Dondemand&response=redirect"
 )
-_CRX_MAGIC = b"PK\x03\x04"
-
-
-def _strip_crx_header(data: bytes) -> bytes:
-    offset = data.find(_CRX_MAGIC)
-    if offset == -1:
-        raise FetchError("Not a valid CRX file: no zip signature found")
-    return data[offset:]
 
 
 def _manifest_to_zip(manifest_str: str) -> bytes:
@@ -37,7 +29,12 @@ def _manifest_to_zip(manifest_str: str) -> bytes:
 
 
 class EdgeFetcher(BaseFetcher):
-    async def fetch_metadata(self, extension_id: str) -> ExtensionMetadata:
+    async def _call_api(self, extension_id: str) -> dict:
+        """GET the product-details API and return the parsed JSON body.
+
+        Shared by ``fetch_metadata`` and ``fetch`` so the request + status-check +
+        error handling live in one place (D5 / #15).
+        """
         url = _API_URL.format(extension_id=extension_id)
         logger.debug("Edge API request: %s", url)
         resp = await self.client.get(url, follow_redirects=True)
@@ -46,7 +43,10 @@ class EdgeFetcher(BaseFetcher):
             raise FetchError(f"Extension not found: {extension_id}")
         if resp.status_code != 200:
             raise FetchError(f"Edge Add-ons API returned {resp.status_code}")
-        return _parse_response(resp.json(), extension_id)
+        return resp.json()
+
+    async def fetch_metadata(self, extension_id: str) -> ExtensionMetadata:
+        return _parse_response(await self._call_api(extension_id), extension_id)
 
     async def download_package(self, extension_id: str) -> bytes:
         url = _DOWNLOAD_URL.format(extension_id=extension_id)
@@ -60,16 +60,7 @@ class EdgeFetcher(BaseFetcher):
         are always available. Attempts a full CRX download for JS static analysis —
         falls back to the manifest-only package if the download fails.
         """
-        url = _API_URL.format(extension_id=extension_id)
-        logger.debug("Edge API request: %s", url)
-        resp = await self.client.get(url, follow_redirects=True)
-        logger.debug("Edge API response: %s", resp.status_code)
-        if resp.status_code == 404:
-            raise FetchError(f"Extension not found: {extension_id}")
-        if resp.status_code != 200:
-            raise FetchError(f"Edge Add-ons API returned {resp.status_code}")
-
-        data = resp.json()
+        data = await self._call_api(extension_id)
         metadata = _parse_response(data, extension_id)
         logger.info(
             "Edge metadata fetched: %s v%s by %s, installs=%s",
