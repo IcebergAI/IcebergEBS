@@ -9,6 +9,7 @@ from app.config import settings
 from app.database import engine
 from app.fetchers.base import FetchError
 from app.models import Extension, FetchLog
+from app.retention import run_retention_prune
 from app.services import fetch_and_store, fire_pending_alerts
 
 logger = logging.getLogger(__name__)
@@ -67,4 +68,15 @@ def create_scheduler(client: httpx.AsyncClient) -> AsyncIOScheduler:
         id="watchlist_refresh",
         replace_existing=True,
     )
+    # Daily data-retention prune, only when MARVIN_RETENTION_DAYS is configured.
+    # run_retention_prune is itself a no-op when disabled, but skipping the job
+    # entirely avoids a pointless daily wakeup on the default (disabled) config.
+    if settings.retention_days > 0:
+        scheduler.add_job(
+            run_retention_prune,
+            trigger="interval",
+            hours=24,
+            id="retention_prune",
+            replace_existing=True,
+        )
     return scheduler
