@@ -158,6 +158,8 @@ This is already the pattern used by `account.html` (accountPrefs) and `dashboard
 
 ## Deployment
 
+**Database:** SQLite is dev-only; **Postgres is the default for production / SOC-scale** (#27). SQLite's single database-level write lock is a real ceiling under concurrent writers (scheduler + interactive API/UI + bulk ingestion); Postgres' row-level locking/MVCC removes that contention and scales the history tables. The app supports both with no SQLite-path regressions — all writers are already commit-isolated (scheduler, retention prune, and `fire_pending_alerts` after commit). The Compose/Helm stacks default to Postgres; rationale + the app-side guarantees live in `DEPLOYMENT.md → Database choice`.
+
 Full production deployment instructions are in `DEPLOYMENT.md`. Two options are covered:
 
 **Docker Compose** — three-service stack (postgres, app, nginx). nginx terminates TLS, enforces rate limits, and serves static assets directly. Single uvicorn worker required (APScheduler is per-process; multiple workers produce duplicate watchlist refreshes and `AlertLog` rows).

@@ -42,6 +42,8 @@ docker compose up --build
 
 This starts three containers: PostgreSQL, the Marvin app, and nginx as a TLS-terminating reverse proxy. For production, replace `nginx/certs/` with a real certificate (Let's Encrypt via Certbot or similar) and set `MARVIN_APP_BASE_URL` to your public domain.
 
+> **Database:** SQLite is for local development only. **Run PostgreSQL for production and any SOC-scale deployment** — SQLite's single database-level write lock becomes a ceiling once the scheduler, interactive writes, and bulk ingestion contend for it. The Compose and Helm stacks default to Postgres. See [DEPLOYMENT.md → Database choice](DEPLOYMENT.md#database-choice--use-postgresql-for-any-soc-scale-deployment).
+
 A Kubernetes/Helm chart is also provided under `helm/marvin/` — see DEPLOYMENT.md for details.
 
 ## Configuration
@@ -56,6 +58,7 @@ All settings use the `MARVIN_` prefix and can be set via `.env` or environment v
 | `MARVIN_DATABASE_URL` | `sqlite+aiosqlite:///./marvin.db` | SQLAlchemy async database URL |
 | `MARVIN_SESSION_MAX_AGE` | `86400` | Session lifetime in seconds |
 | `MARVIN_FETCH_INTERVAL_MINUTES` | `60` | Background watchlist refresh cadence |
+| `MARVIN_RETENTION_DAYS` | `0` | Prune `FetchLog`/`InstallCountHistory`/`AlertLog` rows older than N days (`0` = disabled) |
 | `MARVIN_APP_BASE_URL` | — | Public URL of your instance; included as `marvin_url` in webhook payloads |
 | `MARVIN_HTTPX_TIMEOUT` | `15.0` | Outbound HTTP timeout in seconds |
 | `MARVIN_SECURE_COOKIES` | `true` | Set `Secure` flag on session cookies — set to `false` for plain HTTP dev |
