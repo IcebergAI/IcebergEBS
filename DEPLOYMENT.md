@@ -586,13 +586,13 @@ spec:
             {{- toYaml .Values.resources | nindent 12 }}
           readinessProbe:
             httpGet:
-              path: /login
+              path: /readyz
               port: 8000
             initialDelaySeconds: 5
             periodSeconds: 10
           livenessProbe:
             httpGet:
-              path: /login
+              path: /healthz
               port: 8000
             initialDelaySeconds: 15
             periodSeconds: 30
