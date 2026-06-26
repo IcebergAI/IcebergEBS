@@ -423,6 +423,14 @@ async def add_extension_page(
     return _render(request, "add_extension.html", {}, user=current_user)
 
 
+@router.get("/extensions/bulk", response_class=HTMLResponse)
+async def bulk_import_page(
+    request: Request,
+    current_user: Annotated[User, Depends(require_auth)],
+):
+    return _render(request, "bulk_import.html", {}, user=current_user)
+
+
 # ---------------------------------------------------------------------------
 # Extension detail
 # ---------------------------------------------------------------------------

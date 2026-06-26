@@ -4,8 +4,13 @@
 
 {% block content %}
 <div class="max-w-2xl">
-  <h1 class="page-title">Add extension</h1>
-  <p class="page-sub mb-6">Paste a store URL or an extension ID. Marvin fetches metadata, downloads the package, and runs static analysis on add.</p>
+  <div class="flex items-end justify-between mb-6 gap-3 flex-wrap">
+    <div>
+      <h1 class="page-title">Add extension</h1>
+      <p class="page-sub">Paste a store URL or an extension ID. Marvin fetches metadata, downloads the package, and runs static analysis on add.</p>
+    </div>
+    <a href="/extensions/bulk" class="btn btn-ghost btn-sm">Bulk import →</a>
+  </div>
 
   <div class="surface p-6" x-data="{
     store: '',

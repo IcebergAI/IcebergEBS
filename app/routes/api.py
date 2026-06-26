@@ -222,6 +222,35 @@ class PaginatedExtensions(BaseModel):
     offset: int
 
 
+class BulkItem(BaseModel):
+    store: StoreType
+    extension_id: str
+
+
+class BulkIn(BaseModel):
+    # Structured entries and/or a pasted CSV/newline blob ("store,extension_id"
+    # per line, or a bare store URL whose store is auto-detected). At least one
+    # source must be provided.
+    items: list[BulkItem] | None = None
+    text: str | None = None
+
+
+class BulkResultItem(BaseModel):
+    store: str | None
+    extension_id: str | None
+    status: str  # added | duplicate | invalid | error
+    id: int | None = None
+    detail: str | None = None
+
+
+class BulkResult(BaseModel):
+    added: int
+    duplicates: int
+    invalid: int
+    errors: int
+    results: list[BulkResultItem]
+
+
 class WatchlistPatch(BaseModel):
     watchlist: bool
 
@@ -285,6 +314,48 @@ def normalise_extension_id(store: StoreType, raw: str) -> str:
     return raw
 
 
+def _detect_store(value: str) -> StoreType | None:
+    """Best-effort store detection from a store URL (mirrors the add-page JS)."""
+    v = value.lower()
+    if "chromewebstore.google.com" in v or "chrome.google.com/webstore" in v:
+        return "chrome"
+    if "marketplace.visualstudio.com" in v:
+        return "vscode"
+    if "microsoftedge.microsoft.com" in v:
+        return "edge"
+    return None
+
+
+def _parse_bulk_text(text: str) -> list[dict]:
+    """Parse a pasted CSV/newline blob into ``{store, extension_id}`` entries.
+
+    Each non-empty, non-comment line is one of:
+      - ``store,extension_id`` (or ``store extension_id``)
+      - a bare store URL (store auto-detected, id extracted downstream)
+    A line whose store can't be resolved is returned as an ``invalid`` result."""
+    entries: list[dict] = []
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        # Split into a leading token and the remainder on comma or whitespace.
+        if "," in line:
+            head, _, rest = line.partition(",")
+        else:
+            head, _, rest = line.partition(" ")
+        head, rest = head.strip(), rest.strip()
+        if head.lower() in ("chrome", "vscode", "edge") and rest:
+            entries.append({"store": head.lower(), "extension_id": rest})
+        elif (detected := _detect_store(line)) is not None:
+            entries.append({"store": detected, "extension_id": line})
+        else:
+            entries.append({
+                "store": None, "extension_id": line, "status": "invalid",
+                "detail": "Could not determine store — use 'store,id' or a store URL",
+            })
+    return entries
+
+
 # ---------------------------------------------------------------------------
 # Core fetch-and-score helper (used by add + refresh)
 # ---------------------------------------------------------------------------
@@ -313,6 +384,60 @@ async def _fetch_and_score(
     # fire_alerts' own session can write the AlertLog without deadlocking SQLite.
     await fire_pending_alerts(events, ext, engine, client)
     return ext
+
+
+async def _enroll_extension(
+    store: str,
+    raw_id: str,
+    session: AsyncSession,
+    client: httpx.AsyncClient,
+    user_id: int,
+) -> dict:
+    """Validate, dedupe, then create + fetch-and-score one extension.
+
+    The single enrollment primitive behind both the add and bulk endpoints.
+    Returns a result dict with ``status`` in {added, duplicate, invalid, error}.
+    On a failed first fetch it discards the placeholder row (and any failure
+    FetchLog) so the user isn't left with an unanalysed extension."""
+    extension_id = normalise_extension_id(store, raw_id)
+    try:
+        _validate_extension_id(store, extension_id)
+    except HTTPException as exc:
+        return {"store": store, "extension_id": extension_id, "status": "invalid", "detail": exc.detail}
+
+    existing = (await session.exec(
+        select(Extension).where(
+            Extension.user_id == user_id,
+            Extension.store == store,
+            Extension.extension_id == extension_id,
+        )
+    )).first()
+    if existing:
+        return {"store": store, "extension_id": extension_id, "status": "duplicate", "id": existing.id}
+
+    ext = Extension(
+        user_id=user_id, store=store, extension_id=extension_id,
+        name=extension_id, publisher="", version="", store_url="",
+    )
+    session.add(ext)
+    await session.commit()
+    await session.refresh(ext)
+    ext_id = ext.id
+
+    try:
+        scored = await _fetch_and_score(ext, session, client)
+    except HTTPException as exc:
+        for fl in (await session.exec(
+            select(FetchLog).where(FetchLog.extension_id == ext_id)
+        )).all():
+            await session.delete(fl)
+        orphan = await session.get(Extension, ext_id)
+        if orphan is not None:
+            await session.delete(orphan)
+        await session.commit()
+        return {"store": store, "extension_id": extension_id, "status": "error", "detail": exc.detail}
+
+    return {"store": store, "extension_id": extension_id, "status": "added", "id": scored.id}
 
 
 # ---------------------------------------------------------------------------
@@ -421,50 +546,75 @@ async def add_extension(
     current_user: Annotated[User, Depends(require_api_auth)],
     session: Annotated[AsyncSession, Depends(get_session)],
 ):
-    extension_id = normalise_extension_id(body.store, body.extension_id)
-    _validate_extension_id(body.store, extension_id)
-
-    existing = (await session.exec(
-        select(Extension).where(
-            Extension.user_id == current_user.id,
-            Extension.store == body.store,
-            Extension.extension_id == extension_id,
-        )
-    )).first()
-    if existing:
-        raise HTTPException(status_code=409, detail="Extension already tracked")
-
-    ext = Extension(
-        user_id=current_user.id,
-        store=body.store,
-        extension_id=extension_id,
-        name=extension_id,
-        publisher="",
-        version="",
-        store_url="",
-    )
-    session.add(ext)
-    await session.commit()
-    await session.refresh(ext)
-    ext_id = ext.id
-
     client: httpx.AsyncClient = request.app.state.http_client
-    try:
-        scored = await _fetch_and_score(ext, session, client)
-    except HTTPException:
-        # The first fetch failed — discard the placeholder row (and any failure
-        # FetchLog created during the attempt) so the user isn't left with an
-        # unanalysed extension stuck in their list.
-        for fl in (await session.exec(
-            select(FetchLog).where(FetchLog.extension_id == ext_id)
-        )).all():
-            await session.delete(fl)
-        orphan = await session.get(Extension, ext_id)
-        if orphan is not None:
-            await session.delete(orphan)
-        await session.commit()
-        raise
-    return ExtensionOut.from_db(scored)
+    result = await _enroll_extension(
+        body.store, body.extension_id, session, client, current_user.id
+    )
+    if result["status"] == "invalid":
+        raise HTTPException(status_code=422, detail=result["detail"])
+    if result["status"] == "duplicate":
+        raise HTTPException(status_code=409, detail="Extension already tracked")
+    if result["status"] == "error":
+        raise HTTPException(status_code=502, detail="Failed to fetch extension from store")
+    ext = await session.get(Extension, result["id"])
+    return ExtensionOut.from_db(ext)
+
+
+MAX_BULK_ITEMS = 100
+
+
+@router.post("/extensions/bulk", response_model=BulkResult)
+async def bulk_add_extensions(
+    body: BulkIn,
+    request: Request,
+    current_user: Annotated[User, Depends(require_api_auth)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+):
+    """Enroll many extensions in one request, reusing the add+score path.
+
+    Accepts structured ``items`` and/or a pasted ``text`` blob ("store,id" per
+    line or store URLs). Each entry is validated, de-duplicated against the
+    user's existing extensions, then fetched + scored; the response reports a
+    per-entry status (added / duplicate / invalid / error) plus tallies."""
+    entries: list[dict] = []
+    if body.items:
+        entries.extend({"store": i.store, "extension_id": i.extension_id} for i in body.items)
+    if body.text:
+        entries.extend(_parse_bulk_text(body.text))
+
+    if not entries:
+        raise HTTPException(status_code=422, detail="No extensions provided")
+    if len(entries) > MAX_BULK_ITEMS:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Too many extensions in one request (max {MAX_BULK_ITEMS})",
+        )
+
+    # Capture the id up front: each _enroll_extension commits, which expires the
+    # current_user ORM attributes — re-reading current_user.id mid-loop would
+    # trigger a lazy (sync) refresh outside the async context.
+    user_id = current_user.id
+    client: httpx.AsyncClient = request.app.state.http_client
+    results: list[dict] = []
+    for entry in entries:
+        # Lines the parser already flagged as unresolvable pass straight through.
+        if entry.get("status") == "invalid":
+            results.append(entry)
+            continue
+        results.append(await _enroll_extension(
+            entry["store"], entry["extension_id"], session, client, user_id
+        ))
+
+    tally = {"added": 0, "duplicate": 0, "invalid": 0, "error": 0}
+    for r in results:
+        tally[r["status"]] = tally.get(r["status"], 0) + 1
+    return BulkResult(
+        added=tally["added"],
+        duplicates=tally["duplicate"],
+        invalid=tally["invalid"],
+        errors=tally["error"],
+        results=[BulkResultItem(**r) for r in results],
+    )
 
 
 @router.get("/extensions/{ext_id}", response_model=ExtensionOut)
