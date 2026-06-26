@@ -1,6 +1,3 @@
-from unittest.mock import patch
-
-import pytest
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
@@ -23,11 +20,12 @@ async def test_list_users_requires_admin(client, test_db):
         s.add(regular)
         await s.commit()
 
+    from httpx import ASGITransport, AsyncClient
+
     from app.auth import create_session_cookie
     from app.config import settings
-    from app.main import app
     from app.database import get_session
-    from httpx import ASGITransport, AsyncClient
+    from app.main import app
 
     async def override_session():
         async with AsyncSession(test_db) as s:
@@ -48,11 +46,14 @@ async def test_list_users_requires_admin(client, test_db):
 
 
 async def test_create_user(client):
-    r = await client.post("/api/users", json={
-        "username": "newuser",
-        "password": "securepass",
-        "email": "new@example.com",
-    })
+    r = await client.post(
+        "/api/users",
+        json={
+            "username": "newuser",
+            "password": "securepass",
+            "email": "new@example.com",
+        },
+    )
     assert r.status_code == 201
     data = r.json()
     assert data["username"] == "newuser"
@@ -89,19 +90,25 @@ async def test_delete_nonexistent_user(client):
 
 
 async def test_change_password(client):
-    r = await client.patch("/api/users/me/password", json={
-        "current_password": "testpass",
-        "new_password": "newpass123",
-    })
+    r = await client.patch(
+        "/api/users/me/password",
+        json={
+            "current_password": "testpass",
+            "new_password": "newpass123",
+        },
+    )
     assert r.status_code == 200
     assert r.json() == {"ok": True}
 
 
 async def test_change_password_wrong_current(client):
-    r = await client.patch("/api/users/me/password", json={
-        "current_password": "wrongpass",
-        "new_password": "newpass123",
-    })
+    r = await client.patch(
+        "/api/users/me/password",
+        json={
+            "current_password": "wrongpass",
+            "new_password": "newpass123",
+        },
+    )
     assert r.status_code == 400
 
 
@@ -121,8 +128,13 @@ async def test_delete_user_preserves_history(client, test_db, admin_user):
     and the extensions are orphaned (user_id nulled, dropped from the watchlist)
     rather than hard-deleted (#28)."""
     from app.models import (
-        AlertDestination, AlertLog, AlertRule, ApiKey,
-        Extension, FetchLog, InstallCountHistory,
+        AlertDestination,
+        AlertLog,
+        AlertRule,
+        ApiKey,
+        Extension,
+        FetchLog,
+        InstallCountHistory,
     )
 
     async with AsyncSession(test_db) as s:
@@ -133,8 +145,13 @@ async def test_delete_user_preserves_history(client, test_db, admin_user):
         vid = victim.id
 
         ext = Extension(
-            user_id=vid, store="chrome", extension_id="victim.ext", name="V",
-            publisher="p", version="1.0", store_url="https://example.com",
+            user_id=vid,
+            store="chrome",
+            extension_id="victim.ext",
+            name="V",
+            publisher="p",
+            version="1.0",
+            store_url="https://example.com",
         )
         dest = AlertDestination(user_id=vid, label="hook", target="https://hooks.example.com/v")
         s.add(ext)
@@ -153,15 +170,29 @@ async def test_delete_user_preserves_history(client, test_db, admin_user):
         await s.refresh(rule)
         rule_id = rule.id
 
-        s.add(AlertLog(
-            rule_id=rule_id, destination_id=dest_id, extension_id=ext_id, user_id=vid,
-            event_type="new_version", detail="{}", success=True,
-        ))
+        s.add(
+            AlertLog(
+                rule_id=rule_id,
+                destination_id=dest_id,
+                extension_id=ext_id,
+                user_id=vid,
+                event_type="new_version",
+                detail="{}",
+                success=True,
+            )
+        )
         # An orphaned log owned only via user_id (rule_id null) — the old loop missed these.
-        s.add(AlertLog(
-            rule_id=None, destination_id=dest_id, extension_id=ext_id, user_id=vid,
-            event_type="new_version", detail="{}", success=True,
-        ))
+        s.add(
+            AlertLog(
+                rule_id=None,
+                destination_id=dest_id,
+                extension_id=ext_id,
+                user_id=vid,
+                event_type="new_version",
+                detail="{}",
+                success=True,
+            )
+        )
         await s.commit()
 
     r_del = await client.delete(f"/api/users/{vid}")
@@ -182,7 +213,10 @@ async def test_delete_user_preserves_history(client, test_db, admin_user):
 
         # History is preserved; AlertLog rows survive with severed FKs.
         assert len((await s.exec(select(FetchLog).where(FetchLog.extension_id == ext_id))).all()) == 1
-        assert len((await s.exec(select(InstallCountHistory).where(InstallCountHistory.extension_id == ext_id))).all()) == 1
+        assert (
+            len((await s.exec(select(InstallCountHistory).where(InstallCountHistory.extension_id == ext_id))).all())
+            == 1
+        )
         logs = (await s.exec(select(AlertLog).where(AlertLog.extension_id == ext_id))).all()
         assert len(logs) == 2
         for log in logs:
@@ -193,12 +227,8 @@ async def test_delete_user_preserves_history(client, test_db, admin_user):
 
 async def test_user_isolation(client, test_db):
     """User A cannot see User B's extensions through list endpoint."""
+
     from app.models import Extension
-    from app.auth import create_session_cookie
-    from app.config import settings
-    from app.main import app
-    from app.database import get_session
-    from httpx import ASGITransport, AsyncClient
 
     # Create user B
     async with AsyncSession(test_db) as s:

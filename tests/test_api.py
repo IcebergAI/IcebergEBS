@@ -1,10 +1,8 @@
 import io
 import json
 import zipfile
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
-import pytest
-from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.fetchers.base import ExtensionMetadata, FetchError
@@ -13,6 +11,7 @@ from app.models import Extension
 
 def _fake_metadata():
     from datetime import datetime, timezone
+
     return ExtensionMetadata(
         name="Test Extension",
         publisher="testpub",
@@ -28,12 +27,17 @@ def _fake_metadata():
 def _fake_vsix() -> bytes:
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w") as zf:
-        zf.writestr("manifest.json", json.dumps({
-            "manifest_version": 3,
-            "name": "Test Extension",
-            "version": "1.0.0",
-            "permissions": ["storage"],
-        }))
+        zf.writestr(
+            "manifest.json",
+            json.dumps(
+                {
+                    "manifest_version": 3,
+                    "name": "Test Extension",
+                    "version": "1.0.0",
+                    "permissions": ["storage"],
+                }
+            ),
+        )
         zf.writestr("background.js", 'console.log("hello");')
     return buf.getvalue()
 
@@ -41,14 +45,19 @@ def _fake_vsix() -> bytes:
 def _risky_vsix() -> bytes:
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w") as zf:
-        zf.writestr("manifest.json", json.dumps({
-            "manifest_version": 2,
-            "name": "Risky Extension",
-            "version": "1.0.0",
-            "permissions": ["tabs", "debugger"],
-            "host_permissions": ["<all_urls>"],
-            "content_security_policy": "script-src 'self' 'unsafe-eval' http://bad.example *",
-        }))
+        zf.writestr(
+            "manifest.json",
+            json.dumps(
+                {
+                    "manifest_version": 2,
+                    "name": "Risky Extension",
+                    "version": "1.0.0",
+                    "permissions": ["tabs", "debugger"],
+                    "host_permissions": ["<all_urls>"],
+                    "content_security_policy": "script-src 'self' 'unsafe-eval' http://bad.example *",
+                }
+            ),
+        )
         zf.writestr(
             "background.js",
             "eval('alert(1)');\n"
@@ -71,10 +80,13 @@ async def test_add_extension(client):
         instance = MockFetcher.return_value
         instance.fetch = AsyncMock(return_value=(_fake_metadata(), _fake_vsix()))
 
-        r = await client.post("/api/extensions", json={
-            "store": "vscode",
-            "extension_id": "testpub.test-ext",
-        })
+        r = await client.post(
+            "/api/extensions",
+            json={
+                "store": "vscode",
+                "extension_id": "testpub.test-ext",
+            },
+        )
 
     assert r.status_code == 201
     data = r.json()
@@ -90,10 +102,13 @@ async def test_add_extension_returns_and_persists_findings(client):
         instance = MockFetcher.return_value
         instance.fetch = AsyncMock(return_value=(_fake_metadata(), _risky_vsix()))
 
-        r = await client.post("/api/extensions", json={
-            "store": "vscode",
-            "extension_id": "testpub.risky-ext",
-        })
+        r = await client.post(
+            "/api/extensions",
+            json={
+                "store": "vscode",
+                "extension_id": "testpub.risky-ext",
+            },
+        )
 
     assert r.status_code == 201
     data = r.json()
@@ -103,11 +118,7 @@ async def test_add_extension_returns_and_persists_findings(client):
     assert any(i["type"] == "sha256" and len(i["value"]) == 64 for i in indicators)
     assert any(i["type"] == "domain" and i["value"] == "evil.example" for i in indicators)
     assert any(i["type"] == "url" and i["value"] == "https://evil.example/data" for i in indicators)
-    assert any(
-        lookup["label"] == "VirusTotal"
-        for indicator in indicators
-        for lookup in indicator["lookups"]
-    )
+    assert any(lookup["label"] == "VirusTotal" for indicator in indicators for lookup in indicator["lookups"])
     domain_indicator = next(i for i in indicators if i["type"] == "domain" and i["value"] == "evil.example")
     assert domain_indicator["label"] == "Network callout domain"
     assert domain_indicator["section"] == "network"
@@ -155,10 +166,13 @@ async def test_extension_detail_renders_detection_findings(client):
     with patch("app.fetchers.VSCodeFetcher") as MockFetcher:
         instance = MockFetcher.return_value
         instance.fetch = AsyncMock(return_value=(_fake_metadata(), _risky_vsix()))
-        r = await client.post("/api/extensions", json={
-            "store": "vscode",
-            "extension_id": "testpub.ui-risky",
-        })
+        r = await client.post(
+            "/api/extensions",
+            json={
+                "store": "vscode",
+                "extension_id": "testpub.ui-risky",
+            },
+        )
     ext_id = r.json()["id"]
 
     page = await client.get(f"/extensions/{ext_id}")
@@ -171,10 +185,13 @@ async def test_extension_detail_renders_threat_intelligence_panel(client):
     with patch("app.fetchers.VSCodeFetcher") as MockFetcher:
         instance = MockFetcher.return_value
         instance.fetch = AsyncMock(return_value=(_fake_metadata(), _risky_vsix()))
-        r = await client.post("/api/extensions", json={
-            "store": "vscode",
-            "extension_id": "testpub.threat-intel",
-        })
+        r = await client.post(
+            "/api/extensions",
+            json={
+                "store": "vscode",
+                "extension_id": "testpub.threat-intel",
+            },
+        )
     ext_id = r.json()["id"]
 
     page = await client.get(f"/extensions/{ext_id}")
@@ -203,46 +220,48 @@ async def test_extension_detail_groups_duplicate_detection_findings(client, test
             publisher="testpub",
             version="1.0.0",
             store_url="https://example.com",
-            package_analysis=json.dumps({
-                "findings": [
-                    {
-                        "code": "new_function_usage",
-                        "severity": "high",
-                        "title": "new Function usage",
-                        "detail": "new Function() compiles strings as code at runtime.",
-                        "source": "javascript",
-                        "file": "background/background.js",
-                        "line": 2,
-                    },
-                    {
-                        "code": "new_function_usage",
-                        "severity": "high",
-                        "title": "new Function usage",
-                        "detail": "new Function() compiles strings as code at runtime.",
-                        "source": "javascript",
-                        "file": "popup/popup.js",
-                        "line": 2,
-                    },
-                    {
-                        "code": "high_risk_permission",
-                        "severity": "high",
-                        "title": "High-risk permission",
-                        "detail": "Permission 'cookies' can expose sensitive user or browser data.",
-                        "source": "manifest",
-                        "file": None,
-                        "line": None,
-                    },
-                    {
-                        "code": "high_risk_permission",
-                        "severity": "high",
-                        "title": "High-risk permission",
-                        "detail": "Permission 'tabs' can expose sensitive user or browser data.",
-                        "source": "manifest",
-                        "file": None,
-                        "line": None,
-                    },
-                ],
-            }),
+            package_analysis=json.dumps(
+                {
+                    "findings": [
+                        {
+                            "code": "new_function_usage",
+                            "severity": "high",
+                            "title": "new Function usage",
+                            "detail": "new Function() compiles strings as code at runtime.",
+                            "source": "javascript",
+                            "file": "background/background.js",
+                            "line": 2,
+                        },
+                        {
+                            "code": "new_function_usage",
+                            "severity": "high",
+                            "title": "new Function usage",
+                            "detail": "new Function() compiles strings as code at runtime.",
+                            "source": "javascript",
+                            "file": "popup/popup.js",
+                            "line": 2,
+                        },
+                        {
+                            "code": "high_risk_permission",
+                            "severity": "high",
+                            "title": "High-risk permission",
+                            "detail": "Permission 'cookies' can expose sensitive user or browser data.",
+                            "source": "manifest",
+                            "file": None,
+                            "line": None,
+                        },
+                        {
+                            "code": "high_risk_permission",
+                            "severity": "high",
+                            "title": "High-risk permission",
+                            "detail": "Permission 'tabs' can expose sensitive user or browser data.",
+                            "source": "manifest",
+                            "file": None,
+                            "line": None,
+                        },
+                    ],
+                }
+            ),
         )
         session.add(ext)
         await session.commit()
@@ -298,12 +317,14 @@ async def test_extension_detail_explains_archive_content_hash(client, test_db, a
             publisher="testpub",
             version="1.0.0",
             store_url="https://example.com",
-            package_analysis=json.dumps({
-                "permissions": [],
-                "host_permissions": [],
-                "package_sha256": "a" * 64,
-                "archive_sha256": "b" * 64,
-            }),
+            package_analysis=json.dumps(
+                {
+                    "permissions": [],
+                    "host_permissions": [],
+                    "package_sha256": "a" * 64,
+                    "archive_sha256": "b" * 64,
+                }
+            ),
         )
         session.add(ext)
         await session.commit()
@@ -324,10 +345,13 @@ async def test_add_extension_fetch_failure_leaves_no_placeholder(client):
     with patch("app.fetchers.VSCodeFetcher") as MockFetcher:
         instance = MockFetcher.return_value
         instance.fetch = AsyncMock(side_effect=FetchError("store unavailable"))
-        r = await client.post("/api/extensions", json={
-            "store": "vscode",
-            "extension_id": "testpub.ghost-ext",
-        })
+        r = await client.post(
+            "/api/extensions",
+            json={
+                "store": "vscode",
+                "extension_id": "testpub.ghost-ext",
+            },
+        )
 
     assert r.status_code == 502
     # The failed add must not leave an unanalysed extension behind.
@@ -341,14 +365,20 @@ async def test_add_extension_duplicate(client):
         instance = MockFetcher.return_value
         instance.fetch = AsyncMock(return_value=(_fake_metadata(), _fake_vsix()))
 
-        await client.post("/api/extensions", json={
-            "store": "vscode",
-            "extension_id": "testpub.dupe-ext",
-        })
-        r2 = await client.post("/api/extensions", json={
-            "store": "vscode",
-            "extension_id": "testpub.dupe-ext",
-        })
+        await client.post(
+            "/api/extensions",
+            json={
+                "store": "vscode",
+                "extension_id": "testpub.dupe-ext",
+            },
+        )
+        r2 = await client.post(
+            "/api/extensions",
+            json={
+                "store": "vscode",
+                "extension_id": "testpub.dupe-ext",
+            },
+        )
 
     assert r2.status_code == 409
 
@@ -357,10 +387,13 @@ async def test_get_extension(client):
     with patch("app.fetchers.VSCodeFetcher") as MockFetcher:
         instance = MockFetcher.return_value
         instance.fetch = AsyncMock(return_value=(_fake_metadata(), _fake_vsix()))
-        r = await client.post("/api/extensions", json={
-            "store": "vscode",
-            "extension_id": "testpub.get-test",
-        })
+        r = await client.post(
+            "/api/extensions",
+            json={
+                "store": "vscode",
+                "extension_id": "testpub.get-test",
+            },
+        )
     ext_id = r.json()["id"]
 
     r2 = await client.get(f"/api/extensions/{ext_id}")
@@ -372,10 +405,13 @@ async def test_delete_extension(client):
     with patch("app.fetchers.VSCodeFetcher") as MockFetcher:
         instance = MockFetcher.return_value
         instance.fetch = AsyncMock(return_value=(_fake_metadata(), _fake_vsix()))
-        r = await client.post("/api/extensions", json={
-            "store": "vscode",
-            "extension_id": "testpub.del-test",
-        })
+        r = await client.post(
+            "/api/extensions",
+            json={
+                "store": "vscode",
+                "extension_id": "testpub.del-test",
+            },
+        )
     ext_id = r.json()["id"]
 
     r_del = await client.delete(f"/api/extensions/{ext_id}")
@@ -390,10 +426,13 @@ async def test_refresh_extension(client):
     with patch("app.fetchers.VSCodeFetcher") as MockFetcher:
         instance = MockFetcher.return_value
         instance.fetch = AsyncMock(return_value=(_fake_metadata(), _fake_vsix()))
-        r = await client.post("/api/extensions", json={
-            "store": "vscode",
-            "extension_id": "testpub.refresh-test",
-        })
+        r = await client.post(
+            "/api/extensions",
+            json={
+                "store": "vscode",
+                "extension_id": "testpub.refresh-test",
+            },
+        )
     ext_id = r.json()["id"]
 
     with patch("app.fetchers.VSCodeFetcher") as MockFetcher2:
@@ -410,10 +449,13 @@ async def test_toggle_watchlist(client):
     with patch("app.fetchers.VSCodeFetcher") as MockFetcher:
         instance = MockFetcher.return_value
         instance.fetch = AsyncMock(return_value=(_fake_metadata(), _fake_vsix()))
-        r = await client.post("/api/extensions", json={
-            "store": "vscode",
-            "extension_id": "testpub.watch-test",
-        })
+        r = await client.post(
+            "/api/extensions",
+            json={
+                "store": "vscode",
+                "extension_id": "testpub.watch-test",
+            },
+        )
     ext_id = r.json()["id"]
     assert r.json()["watchlist"] is True
 
@@ -426,10 +468,13 @@ async def test_get_history_empty(client):
     with patch("app.fetchers.VSCodeFetcher") as MockFetcher:
         instance = MockFetcher.return_value
         instance.fetch = AsyncMock(return_value=(_fake_metadata(), None))
-        r = await client.post("/api/extensions", json={
-            "store": "vscode",
-            "extension_id": "testpub.hist-test",
-        })
+        r = await client.post(
+            "/api/extensions",
+            json={
+                "store": "vscode",
+                "extension_id": "testpub.hist-test",
+            },
+        )
     ext_id = r.json()["id"]
 
     r2 = await client.get(f"/api/extensions/{ext_id}/history")

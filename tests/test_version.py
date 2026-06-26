@@ -1,4 +1,5 @@
 """Tests for the build-version resolver and its rendering in the rail."""
+
 import subprocess
 from unittest.mock import patch
 
@@ -50,7 +51,8 @@ def test_fallback_to_dev_when_git_unavailable(monkeypatch):
     monkeypatch.delenv("MARVIN_VERSION", raising=False)
     monkeypatch.setattr(version, "_VERSION_FILE", version.Path("/nonexistent/_version"))
     monkeypatch.setattr(
-        version.subprocess, "run",
+        version.subprocess,
+        "run",
         lambda *a, **k: (_ for _ in ()).throw(FileNotFoundError("git not found")),
     )
     assert get_version() == "dev"

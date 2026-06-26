@@ -70,9 +70,7 @@ def get_session_claims(request: Request) -> tuple[str, datetime] | None:
     if not cookie:
         return None
     try:
-        data, issued_at = _serializer.loads(
-            cookie, max_age=settings.session_max_age, return_timestamp=True
-        )
+        data, issued_at = _serializer.loads(cookie, max_age=settings.session_max_age, return_timestamp=True)
         return data["u"], issued_at
     except (SignatureExpired, BadSignature, KeyError):
         return None
@@ -107,6 +105,7 @@ _DUMMY_HASH: str = bcrypt.hashpw(b"dummy", bcrypt.gensalt(rounds=BCRYPT_ROUNDS))
 async def verify_credentials(username: str, password: str, session: AsyncSession):
     """Return the User if credentials are valid, None otherwise."""
     from app.models import User
+
     user = (await session.exec(select(User).where(User.username == username))).first()
     hash_to_check = user.password_hash if user else _DUMMY_HASH
     valid = await verify_password(password, hash_to_check)
@@ -119,6 +118,7 @@ async def require_auth(
 ):
     """FastAPI dependency — returns the authenticated User or redirects to /login."""
     from app.models import User
+
     claims = get_session_claims(request)
     if claims is None:
         raise HTTPException(status_code=303, headers={"Location": "/login"})
@@ -140,14 +140,10 @@ async def require_api_auth(
     """
     from app.models import ApiKey, User
 
-    scheme, raw_key = get_authorization_scheme_param(
-        request.headers.get("Authorization", "")
-    )
+    scheme, raw_key = get_authorization_scheme_param(request.headers.get("Authorization", ""))
     if scheme.lower() == "bearer" and raw_key:
         key_hash = hash_api_key(raw_key)
-        api_key = (await session.exec(
-            select(ApiKey).where(ApiKey.key_hash == key_hash)
-        )).first()
+        api_key = (await session.exec(select(ApiKey).where(ApiKey.key_hash == key_hash))).first()
         if api_key is None:
             raise HTTPException(status_code=401, detail="Invalid API key")
         if api_key.readonly and request.method not in ("GET", "HEAD"):
@@ -161,11 +157,7 @@ async def require_api_auth(
         last_used = api_key.last_used_at
         if last_used is not None and last_used.tzinfo is None:
             last_used = last_used.replace(tzinfo=timezone.utc)
-        if (
-            last_used is None
-            or (now - last_used).total_seconds()
-            >= settings.api_key_last_used_throttle_seconds
-        ):
+        if last_used is None or (now - last_used).total_seconds() >= settings.api_key_last_used_throttle_seconds:
             api_key.last_used_at = now
             session.add(api_key)
             await session.commit()
@@ -178,6 +170,7 @@ async def require_api_auth(
     claims = get_session_claims(request)
     if claims is not None:
         from app.models import User
+
         username, issued_at = claims
         user = (await session.exec(select(User).where(User.username == username))).first()
         if user is not None and _session_after_password_change(user, issued_at):
@@ -231,6 +224,7 @@ def clear_session(response) -> None:
 async def seed_admin() -> None:
     """Create the initial admin user from env vars if no users exist."""
     from app.models import User
+
     async with AsyncSession(engine) as session:
         existing = (await session.exec(select(User))).first()
         if existing:

@@ -46,7 +46,7 @@ class InspectorError(Exception):
 
 
 _MAX_FILE_COUNT = 500
-_MAX_JS_BYTES = 5 * 1024 * 1024   # 5 MB per JS file
+_MAX_JS_BYTES = 5 * 1024 * 1024  # 5 MB per JS file
 _MAX_TOTAL_BYTES = 50 * 1024 * 1024  # 50 MB total declared uncompressed
 _MAX_MANIFEST_BYTES = 1024 * 1024
 _MAX_FINDINGS = 200
@@ -58,32 +58,51 @@ _ZIP_MAGIC = b"PK\x03\x04"
 
 # Domains that are noise — well-known CDNs/services not worth flagging
 _SAFE_DOMAINS = {
-    "googleapis.com", "gstatic.com", "jsdelivr.net", "cdnjs.cloudflare.com",
-    "unpkg.com", "ajax.googleapis.com", "fonts.googleapis.com",
-    "fonts.gstatic.com", "accounts.google.com", "chrome.google.com",
-    "microsoft.com", "visualstudio.com", "vsassets.io",
+    "googleapis.com",
+    "gstatic.com",
+    "jsdelivr.net",
+    "cdnjs.cloudflare.com",
+    "unpkg.com",
+    "ajax.googleapis.com",
+    "fonts.googleapis.com",
+    "fonts.gstatic.com",
+    "accounts.google.com",
+    "chrome.google.com",
+    "microsoft.com",
+    "visualstudio.com",
+    "vsassets.io",
 }
 
 _CRITICAL_PERMISSIONS = {
-    "<all_urls>", "debugger", "nativeMessaging", "proxy",
-    "webRequest", "webRequestBlocking", "declarativeNetRequestWithHostAccess",
+    "<all_urls>",
+    "debugger",
+    "nativeMessaging",
+    "proxy",
+    "webRequest",
+    "webRequestBlocking",
+    "declarativeNetRequestWithHostAccess",
 }
 _HIGH_PERMISSIONS = {
-    "cookies", "history", "tabs", "browsingData", "downloads",
-    "management", "clipboardRead", "contentSettings", "pageCapture",
+    "cookies",
+    "history",
+    "tabs",
+    "browsingData",
+    "downloads",
+    "management",
+    "clipboardRead",
+    "contentSettings",
+    "pageCapture",
 }
 _BROAD_HOST_PATTERNS = {"<all_urls>", "*://*/*", "http://*/*", "https://*/*"}
 
 _URL_LITERAL_TAIL = r'[^\s\'"`<>{}\\]+'
-_URL_RE = re.compile(r'https?://' + _URL_LITERAL_TAIL)
-_EVAL_RE = re.compile(r'\beval\s*\(|new\s+Function\s*\(')
-_REMOTE_FETCH_RE = re.compile(
-    r'(?:fetch|XMLHttpRequest|xhr\.open)\s*\(\s*[\'"]https?://'
-)
-_IDENTIFIER_RE = re.compile(r'\b[a-zA-Z_$][a-zA-Z0-9_$]*\b')
+_URL_RE = re.compile(r"https?://" + _URL_LITERAL_TAIL)
+_EVAL_RE = re.compile(r"\beval\s*\(|new\s+Function\s*\(")
+_REMOTE_FETCH_RE = re.compile(r'(?:fetch|XMLHttpRequest|xhr\.open)\s*\(\s*[\'"]https?://')
+_IDENTIFIER_RE = re.compile(r"\b[a-zA-Z_$][a-zA-Z0-9_$]*\b")
 
-_EVAL_CALL_RE = re.compile(r'\beval\s*\(')
-_NEW_FUNCTION_RE = re.compile(r'\bnew\s+Function\s*\(')
+_EVAL_CALL_RE = re.compile(r"\beval\s*\(")
+_NEW_FUNCTION_RE = re.compile(r"\bnew\s+Function\s*\(")
 _STRING_TIMER_RE = re.compile(r'\bset(?:Timeout|Interval)\s*\(\s*[\'"`]')
 _DYNAMIC_SCRIPT_RE = re.compile(r'\bcreateElement\s*\(\s*[\'"`]script[\'"`]\s*\)')
 _REMOTE_SCRIPT_SRC_RE = re.compile(r'\.src\s*=\s*[\'"`]https?://')
@@ -97,16 +116,18 @@ _WEBSOCKET_REMOTE_RE = re.compile(r'\bnew\s+WebSocket\s*\(\s*[\'"`]wss?://', re.
 _EVENTSOURCE_REMOTE_RE = re.compile(r'\bnew\s+EventSource\s*\(\s*[\'"`]https?://', re.IGNORECASE)
 _SENDBEACON_REMOTE_RE = re.compile(r'\bnavigator\.sendBeacon\s*\(\s*[\'"`]https?://', re.IGNORECASE)
 _NETWORK_CALLOUT_URL_PATTERNS = (
-    re.compile(r'\bfetch\s*\(\s*[\'"`]((?:https?)://' + _URL_LITERAL_TAIL + r')', re.IGNORECASE),
-    re.compile(r'\bimportScripts\s*\(\s*[\'"`]((?:https?)://' + _URL_LITERAL_TAIL + r')', re.IGNORECASE),
-    re.compile(r'\bnew\s+WebSocket\s*\(\s*[\'"`]((?:wss?)://' + _URL_LITERAL_TAIL + r')', re.IGNORECASE),
-    re.compile(r'\bnew\s+EventSource\s*\(\s*[\'"`]((?:https?)://' + _URL_LITERAL_TAIL + r')', re.IGNORECASE),
-    re.compile(r'\bnavigator\.sendBeacon\s*\(\s*[\'"`]((?:https?)://' + _URL_LITERAL_TAIL + r')', re.IGNORECASE),
+    re.compile(r'\bfetch\s*\(\s*[\'"`]((?:https?)://' + _URL_LITERAL_TAIL + r")", re.IGNORECASE),
+    re.compile(r'\bimportScripts\s*\(\s*[\'"`]((?:https?)://' + _URL_LITERAL_TAIL + r")", re.IGNORECASE),
+    re.compile(r'\bnew\s+WebSocket\s*\(\s*[\'"`]((?:wss?)://' + _URL_LITERAL_TAIL + r")", re.IGNORECASE),
+    re.compile(r'\bnew\s+EventSource\s*\(\s*[\'"`]((?:https?)://' + _URL_LITERAL_TAIL + r")", re.IGNORECASE),
+    re.compile(r'\bnavigator\.sendBeacon\s*\(\s*[\'"`]((?:https?)://' + _URL_LITERAL_TAIL + r")", re.IGNORECASE),
     re.compile(
-        r'\.open\s*\(\s*[\'"`](?:GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)[\'"`]\s*,\s*[\'"`]((?:https?)://' + _URL_LITERAL_TAIL + r')',
+        r'\.open\s*\(\s*[\'"`](?:GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)[\'"`]\s*,\s*[\'"`]((?:https?)://'
+        + _URL_LITERAL_TAIL
+        + r")",
         re.IGNORECASE,
     ),
-    re.compile(r'\.src\s*=\s*[\'"`]((?:https?)://' + _URL_LITERAL_TAIL + r')', re.IGNORECASE),
+    re.compile(r'\.src\s*=\s*[\'"`]((?:https?)://' + _URL_LITERAL_TAIL + r")", re.IGNORECASE),
 )
 
 
@@ -116,7 +137,7 @@ def inspect_package(data: bytes) -> PackageAnalysis:
         zip_payload = _zip_payload(data)
         zf = zipfile.ZipFile(io.BytesIO(zip_payload))
     except zipfile.BadZipFile as exc:
-        raise InspectorError(f"Not a valid zip or CRX: {exc}")
+        raise InspectorError(f"Not a valid zip or CRX: {exc}") from exc
 
     infolist = zf.infolist()
     if len(infolist) > _MAX_FILE_COUNT:
@@ -147,7 +168,7 @@ def inspect_package(data: bytes) -> PackageAnalysis:
             if len(raw) > _MAX_JS_BYTES:
                 continue
             source = raw.decode("utf-8", errors="replace")
-        except Exception:
+        except Exception:  # nosec B112 - best-effort scan: skip unreadable/corrupt entries
             continue
         _analyse_js(source, analysis, name)
 
@@ -183,7 +204,7 @@ def _load_manifest(zf: zipfile.ZipFile) -> dict | None:
         if candidate in lower_map:
             try:
                 return _read_manifest_json(zf, lower_map[candidate])
-            except Exception:
+            except Exception:  # nosec B112 - try the next manifest-name candidate on any read error
                 continue
     return None
 
@@ -354,10 +375,30 @@ def _analyse_js(source: str, analysis: PackageAnalysis, filename: str) -> None:
         analysis.uses_remote_code = True
     for pattern, code, title, detail in (
         (_FETCH_REMOTE_RE, "remote_fetch", "Remote fetch call", "JavaScript fetches data from a remote URL."),
-        (_XHR_REMOTE_RE, "remote_xhr", "XMLHttpRequest usage", "JavaScript uses XMLHttpRequest or opens a remote XHR URL."),
-        (_WEBSOCKET_REMOTE_RE, "remote_websocket", "Remote WebSocket connection", "JavaScript opens a WebSocket connection to a remote host."),
-        (_EVENTSOURCE_REMOTE_RE, "remote_eventsource", "Remote EventSource connection", "JavaScript opens an EventSource stream to a remote host."),
-        (_SENDBEACON_REMOTE_RE, "remote_send_beacon", "Remote beacon call", "JavaScript sends beacon telemetry to a remote URL."),
+        (
+            _XHR_REMOTE_RE,
+            "remote_xhr",
+            "XMLHttpRequest usage",
+            "JavaScript uses XMLHttpRequest or opens a remote XHR URL.",
+        ),
+        (
+            _WEBSOCKET_REMOTE_RE,
+            "remote_websocket",
+            "Remote WebSocket connection",
+            "JavaScript opens a WebSocket connection to a remote host.",
+        ),
+        (
+            _EVENTSOURCE_REMOTE_RE,
+            "remote_eventsource",
+            "Remote EventSource connection",
+            "JavaScript opens an EventSource stream to a remote host.",
+        ),
+        (
+            _SENDBEACON_REMOTE_RE,
+            "remote_send_beacon",
+            "Remote beacon call",
+            "JavaScript sends beacon telemetry to a remote URL.",
+        ),
     ):
         if pattern.search(source):
             analysis.uses_remote_code = True
@@ -418,7 +459,7 @@ def _analyse_js(source: str, analysis: PackageAnalysis, filename: str) -> None:
     # Minification detection
     lines = source.splitlines()
     if lines:
-        long_lines = sum(1 for l in lines if len(l) > 500)
+        long_lines = sum(1 for ln in lines if len(ln) > 500)
         if long_lines > 0 and len(lines) < 20:
             analysis.has_minified_code = True
             _add_finding(
@@ -470,7 +511,6 @@ def _clean_url(raw: str) -> str:
     return raw.rstrip(".,;:)]}")
 
 
-
 def _obfuscation_score(source: str) -> int:
     score = 0
     identifiers = _IDENTIFIER_RE.findall(source)
@@ -488,7 +528,7 @@ def _obfuscation_score(source: str) -> int:
             score += 3
 
     # High ratio of escaped unicode or hex sequences
-    unicode_esc = len(re.findall(r'\\u[0-9a-fA-F]{4}|\\x[0-9a-fA-F]{2}', source))
+    unicode_esc = len(re.findall(r"\\u[0-9a-fA-F]{4}|\\x[0-9a-fA-F]{2}", source))
     if len(source) > 0 and unicode_esc / max(len(source), 1) > 0.05:
         score += 3
 
@@ -542,10 +582,7 @@ def _add_finding(
         line=line,
     )
     key = (finding.code, finding.severity, finding.source, finding.file, finding.line, finding.detail)
-    existing = {
-        (f.code, f.severity, f.source, f.file, f.line, f.detail)
-        for f in analysis.findings
-    }
+    existing = {(f.code, f.severity, f.source, f.file, f.line, f.detail) for f in analysis.findings}
     if key not in existing and len(analysis.findings) < _MAX_FINDINGS:
         analysis.findings.append(finding)
 

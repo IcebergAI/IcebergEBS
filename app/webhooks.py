@@ -20,9 +20,7 @@ def _check_ip_allowed(ip_str: str) -> None:
     """Raise WebhookValidationError if the IP is private, loopback, link-local, or reserved."""
     addr = ipaddress.ip_address(ip_str)
     if not addr.is_global or addr.is_loopback or addr.is_link_local or addr.is_reserved:
-        raise WebhookValidationError(
-            "Webhook URL must not point to a private or reserved address"
-        )
+        raise WebhookValidationError("Webhook URL must not point to a private or reserved address")
 
 
 async def _resolve_host(hostname: str, port: int | None) -> list[str]:
@@ -31,11 +29,9 @@ async def _resolve_host(hostname: str, port: int | None) -> list[str]:
     Isolated in its own function so tests can patch DNS resolution deterministically.
     """
     loop = asyncio.get_event_loop()
-    infos = await loop.run_in_executor(
-        None, lambda: socket.getaddrinfo(hostname, port, type=socket.SOCK_STREAM)
-    )
-    # Preserve order while dropping duplicates.
-    return list(dict.fromkeys(info[4][0] for info in infos))
+    infos = await loop.run_in_executor(None, lambda: socket.getaddrinfo(hostname, port, type=socket.SOCK_STREAM))
+    # Preserve order while dropping duplicates. info[4][0] is the resolved address.
+    return list(dict.fromkeys(str(info[4][0]) for info in infos))
 
 
 async def validate_webhook_url(url: str) -> list[str]:
@@ -50,8 +46,8 @@ async def validate_webhook_url(url: str) -> list[str]:
     """
     try:
         parsed = urlparse(url)
-    except Exception:
-        raise WebhookValidationError("Invalid webhook URL")
+    except Exception as exc:
+        raise WebhookValidationError("Invalid webhook URL") from exc
 
     if parsed.scheme not in ("http", "https"):
         raise WebhookValidationError("Webhook URL must use http or https")
@@ -61,9 +57,7 @@ async def validate_webhook_url(url: str) -> list[str]:
         raise WebhookValidationError("Webhook URL has no hostname")
 
     # Block exact matches and subdomains (e.g. foo.localhost, sub.localtest.me).
-    if hostname in _BLOCKED_HOSTNAMES or any(
-        hostname.endswith("." + h) for h in _BLOCKED_HOSTNAMES
-    ):
+    if hostname in _BLOCKED_HOSTNAMES or any(hostname.endswith("." + h) for h in _BLOCKED_HOSTNAMES):
         raise WebhookValidationError("Webhook URL hostname is not allowed")
 
     # Bare IP literal — validate directly, no DNS lookup needed.
@@ -79,8 +73,8 @@ async def validate_webhook_url(url: str) -> list[str]:
 
     try:
         ips = await _resolve_host(hostname, parsed.port)
-    except socket.gaierror:
-        raise WebhookValidationError("Webhook URL hostname could not be resolved")
+    except socket.gaierror as exc:
+        raise WebhookValidationError("Webhook URL hostname could not be resolved") from exc
     if not ips:
         raise WebhookValidationError("Webhook URL hostname could not be resolved")
 
@@ -113,6 +107,10 @@ async def send_webhook(
     validated_ips = await validate_webhook_url(url)
     parsed = urlparse(url)
     host = parsed.hostname  # already lowercased by urlparse
+    if host is None:
+        # validate_webhook_url already guarantees a resolvable host; this guard
+        # makes that contract explicit (and satisfies the type checker).
+        raise WebhookValidationError("Webhook URL has no host")
 
     pinned_ip = validated_ips[0]
     pinned_url = parsed._replace(netloc=_authority(pinned_ip, parsed.port)).geturl()

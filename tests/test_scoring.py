@@ -1,7 +1,5 @@
 from datetime import datetime, timedelta, timezone
 
-import pytest
-
 from app.inspector import PackageAnalysis, PackageFinding
 from app.scoring import (
     compute_risk_score,
@@ -13,10 +11,10 @@ from app.scoring import (
     score_staleness,
 )
 
-
 # ---------------------------------------------------------------------------
 # Permissions
 # ---------------------------------------------------------------------------
+
 
 def test_permissions_critical():
     assert score_permissions(["<all_urls>"], []) == 25
@@ -47,6 +45,7 @@ def test_host_permissions_all_urls_critical():
 # ---------------------------------------------------------------------------
 # Popularity
 # ---------------------------------------------------------------------------
+
 
 def test_popularity_very_low():
     assert score_popularity(10, []) == 16
@@ -83,6 +82,7 @@ def test_popularity_small_drop_not_flagged():
 # Publisher
 # ---------------------------------------------------------------------------
 
+
 def test_publisher_changed():
     assert score_publisher("NewPublisher", publisher_changed=True) >= 8
 
@@ -102,6 +102,7 @@ def test_publisher_clean():
 # ---------------------------------------------------------------------------
 # Staleness
 # ---------------------------------------------------------------------------
+
 
 def test_staleness_recent():
     recent = datetime.now(timezone.utc) - timedelta(days=10)
@@ -136,6 +137,7 @@ def test_staleness_unknown():
 # Code behaviour
 # ---------------------------------------------------------------------------
 
+
 def test_code_eval():
     a = PackageAnalysis(uses_eval=True)
     assert score_code_behaviour(a) >= 8
@@ -161,22 +163,24 @@ def test_code_no_analysis():
 
 
 def test_code_findings_increase_code_behaviour_score():
-    a = PackageAnalysis(findings=[
-        PackageFinding(
-            code="dynamic_script_injection",
-            severity="high",
-            title="Dynamic script injection",
-            detail="test",
-            source="javascript",
-        ),
-        PackageFinding(
-            code="string_timer_execution",
-            severity="medium",
-            title="String timer",
-            detail="test",
-            source="javascript",
-        ),
-    ])
+    a = PackageAnalysis(
+        findings=[
+            PackageFinding(
+                code="dynamic_script_injection",
+                severity="high",
+                title="Dynamic script injection",
+                detail="test",
+                source="javascript",
+            ),
+            PackageFinding(
+                code="string_timer_execution",
+                severity="medium",
+                title="String timer",
+                detail="test",
+                source="javascript",
+            ),
+        ]
+    )
     assert score_code_behaviour(a) == 6
 
 
@@ -200,21 +204,24 @@ def test_code_findings_respect_cap():
 
 
 def test_permission_findings_do_not_double_count_code_behaviour():
-    a = PackageAnalysis(findings=[
-        PackageFinding(
-            code="high_risk_permission",
-            severity="critical",
-            title="Critical permission",
-            detail="test",
-            source="manifest",
-        )
-    ])
+    a = PackageAnalysis(
+        findings=[
+            PackageFinding(
+                code="high_risk_permission",
+                severity="critical",
+                title="Critical permission",
+                detail="test",
+                source="manifest",
+            )
+        ]
+    )
     assert score_code_behaviour(a) == 0
 
 
 # ---------------------------------------------------------------------------
 # External domains
 # ---------------------------------------------------------------------------
+
 
 def test_domains_none():
     a = PackageAnalysis(external_domains=[])
@@ -238,6 +245,7 @@ def test_domains_no_analysis():
 # ---------------------------------------------------------------------------
 # Full compute
 # ---------------------------------------------------------------------------
+
 
 def test_compute_risk_score_high_risk():
     analysis = PackageAnalysis(
@@ -263,7 +271,8 @@ def test_compute_risk_score_high_risk():
 
 
 def test_compute_risk_score_low_risk():
-    from datetime import datetime, timezone, timedelta
+    from datetime import datetime, timedelta, timezone
+
     recent = datetime.now(timezone.utc) - timedelta(days=30)
     analysis = PackageAnalysis(
         permissions=["storage"],

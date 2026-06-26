@@ -1,5 +1,8 @@
 # Marvin
 
+[![CI](https://github.com/TheSlopBucket/marvin/actions/workflows/ci.yml/badge.svg)](https://github.com/TheSlopBucket/marvin/actions/workflows/ci.yml)
+[![build](https://github.com/TheSlopBucket/marvin/actions/workflows/build.yml/badge.svg)](https://github.com/TheSlopBucket/marvin/actions/workflows/build.yml)
+
 Extension-watch tool for Chrome, Edge, and VS Code. Tracks browser and editor extensions, downloads the actual packages, inspects the code, and produces a 0–100 risk score across six signals: permissions, popularity, publisher identity, staleness, code behaviour (eval/obfuscation/remote fetches), and external domains.
 
 Multi-user. Each user maintains an independent list of monitored extensions. A background scheduler re-fetches watchlisted extensions on a configurable interval and fires webhook alerts when something changes.
@@ -97,8 +100,17 @@ Example payload:
 
 `marvin_url` is only included when `MARVIN_APP_BASE_URL` is set.
 
-## Tests
+## Tests & CI
 
 ```bash
 venv/bin/python -m pytest tests/ -v
+```
+
+CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs four blocking gates on every PR and push to `main`: **pytest**, **Ruff** (`ruff check` + `ruff format --check`), **mypy** (type-checks the pure logic/contract modules; ORM-query modules are excluded — see `pyproject.toml`), and **security** (**Bandit** + **pip-audit**). Install the tooling and run the same checks locally with:
+
+```bash
+venv/bin/pip install -r requirements-dev.txt
+venv/bin/ruff check app tests && venv/bin/ruff format --check app tests alembic
+venv/bin/mypy app
+venv/bin/bandit -c pyproject.toml -r app && venv/bin/pip-audit -r requirements.txt
 ```

@@ -1,4 +1,5 @@
 """Export endpoint GET /api/extensions/export?format=csv|json (#25)."""
+
 import csv
 import io
 
@@ -9,20 +10,33 @@ from app.models import Extension
 
 async def _seed(session, admin_user, specs):
     for ext_id, store, publisher, score, name, perms in specs:
-        session.add(Extension(
-            user_id=admin_user.id, store=store, extension_id=ext_id, name=name,
-            publisher=publisher, version="1.0", store_url="https://example.com",
-            risk_score=score, watchlist=True, permissions=perms,
-        ))
+        session.add(
+            Extension(
+                user_id=admin_user.id,
+                store=store,
+                extension_id=ext_id,
+                name=name,
+                publisher=publisher,
+                version="1.0",
+                store_url="https://example.com",
+                risk_score=score,
+                watchlist=True,
+                permissions=perms,
+            )
+        )
     await session.commit()
 
 
 async def test_export_csv(client, test_db, admin_user):
     async with AsyncSession(test_db) as s:
-        await _seed(s, admin_user, [
-            ("a" * 32, "chrome", "Acme", 80, "Alpha", '["tabs", "storage"]'),
-            ("b" * 32, "edge", "Globex", 10, "Bravo", "[]"),
-        ])
+        await _seed(
+            s,
+            admin_user,
+            [
+                ("a" * 32, "chrome", "Acme", 80, "Alpha", '["tabs", "storage"]'),
+                ("b" * 32, "edge", "Globex", 10, "Bravo", "[]"),
+            ],
+        )
 
     r = await client.get("/api/extensions/export")  # default format=csv
     assert r.status_code == 200
@@ -41,9 +55,13 @@ async def test_export_csv(client, test_db, admin_user):
 
 async def test_export_json(client, test_db, admin_user):
     async with AsyncSession(test_db) as s:
-        await _seed(s, admin_user, [
-            ("a" * 32, "chrome", "Acme", 80, "Alpha", '["tabs"]'),
-        ])
+        await _seed(
+            s,
+            admin_user,
+            [
+                ("a" * 32, "chrome", "Acme", 80, "Alpha", '["tabs"]'),
+            ],
+        )
 
     r = await client.get("/api/extensions/export?format=json")
     assert r.status_code == 200
@@ -57,11 +75,15 @@ async def test_export_json(client, test_db, admin_user):
 
 async def test_export_respects_filters(client, test_db, admin_user):
     async with AsyncSession(test_db) as s:
-        await _seed(s, admin_user, [
-            ("a" * 32, "chrome", "Acme", 80, "Alpha", "[]"),
-            ("b" * 32, "edge", "Globex", 10, "Bravo", "[]"),
-            ("c" * 32, "edge", "Globex", 90, "Charlie", "[]"),
-        ])
+        await _seed(
+            s,
+            admin_user,
+            [
+                ("a" * 32, "chrome", "Acme", 80, "Alpha", "[]"),
+                ("b" * 32, "edge", "Globex", 10, "Bravo", "[]"),
+                ("c" * 32, "edge", "Globex", 90, "Charlie", "[]"),
+            ],
+        )
 
     r = await client.get("/api/extensions/export?format=json&store=edge")
     names = {row["name"] for row in r.json()}

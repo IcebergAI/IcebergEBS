@@ -1,7 +1,6 @@
 import io
 import json
 import zipfile
-from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
@@ -13,10 +12,10 @@ from app.fetchers.edge import EdgeFetcher
 from app.fetchers.vscode import VSCodeFetcher
 from app.routes.api import normalise_extension_id
 
-
 # ---------------------------------------------------------------------------
 # URL normalisation
 # ---------------------------------------------------------------------------
+
 
 def test_normalise_chrome_full_url():
     url = "https://chromewebstore.google.com/detail/ublock-origin/cjpalhdlnbpafiamejdnhcphjbkeiagm"
@@ -45,6 +44,7 @@ def test_normalise_edge_url():
 # CRX header stripping
 # ---------------------------------------------------------------------------
 
+
 def _make_zip() -> bytes:
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w") as zf:
@@ -57,27 +57,35 @@ def _make_zip() -> bytes:
 # ---------------------------------------------------------------------------
 
 VSCODE_API_RESPONSE = {
-    "results": [{
-        "extensions": [{
-            "displayName": "Python",
-            "shortDescription": "Python support",
-            "publisher": {
-                "publisherName": "ms-python",
-                "isDomainVerified": True,
-            },
-            "versions": [{
-                "version": "2024.1.0",
-                "lastUpdated": "2024-01-15T00:00:00Z",
-                "files": [{
-                    "assetType": "Microsoft.VisualStudio.Services.VSIXPackage",
-                    "source": "https://example.com/fake.vsix",
-                }],
-            }],
-            "statistics": [
-                {"statisticName": "install", "value": 50_000_000},
-            ],
-        }]
-    }]
+    "results": [
+        {
+            "extensions": [
+                {
+                    "displayName": "Python",
+                    "shortDescription": "Python support",
+                    "publisher": {
+                        "publisherName": "ms-python",
+                        "isDomainVerified": True,
+                    },
+                    "versions": [
+                        {
+                            "version": "2024.1.0",
+                            "lastUpdated": "2024-01-15T00:00:00Z",
+                            "files": [
+                                {
+                                    "assetType": "Microsoft.VisualStudio.Services.VSIXPackage",
+                                    "source": "https://example.com/fake.vsix",
+                                }
+                            ],
+                        }
+                    ],
+                    "statistics": [
+                        {"statisticName": "install", "value": 50_000_000},
+                    ],
+                }
+            ]
+        }
+    ]
 }
 
 
@@ -114,9 +122,7 @@ async def test_vscode_download_package():
     respx.post("https://marketplace.visualstudio.com/_apis/public/gallery/extensionquery").mock(
         return_value=httpx.Response(200, json=VSCODE_API_RESPONSE)
     )
-    respx.get("https://example.com/fake.vsix").mock(
-        return_value=httpx.Response(200, content=vsix_bytes)
-    )
+    respx.get("https://example.com/fake.vsix").mock(return_value=httpx.Response(200, content=vsix_bytes))
     async with httpx.AsyncClient() as client:
         fetcher = VSCodeFetcher(client)
         pkg = await fetcher.download_package("ms-python.python")
@@ -224,9 +230,7 @@ async def test_chrome_fetch_metadata_publisher_fallback():
 
 @respx.mock
 async def test_chrome_fetch_404():
-    respx.get("https://chromewebstore.google.com/detail/doesnotexist").mock(
-        return_value=httpx.Response(404)
-    )
+    respx.get("https://chromewebstore.google.com/detail/doesnotexist").mock(return_value=httpx.Response(404))
     async with httpx.AsyncClient() as client:
         fetcher = ChromeFetcher(client)
         with pytest.raises(FetchError):
@@ -301,9 +305,7 @@ EDGE_API_RESPONSE = {
 
 @respx.mock
 async def test_edge_fetch_metadata():
-    respx.get(f"{_EDGE_API_BASE}/testid?hl=en-US").mock(
-        return_value=httpx.Response(200, json=EDGE_API_RESPONSE)
-    )
+    respx.get(f"{_EDGE_API_BASE}/testid?hl=en-US").mock(return_value=httpx.Response(200, json=EDGE_API_RESPONSE))
     async with httpx.AsyncClient() as client:
         fetcher = EdgeFetcher(client)
         meta = await fetcher.fetch_metadata("testid")
@@ -321,12 +323,8 @@ async def test_edge_fetch_metadata():
 @respx.mock
 async def test_edge_fetch_uses_manifest_when_crx_unavailable():
     """When the CRX download fails, permissions still come from the API manifest."""
-    respx.get(f"{_EDGE_API_BASE}/testid?hl=en-US").mock(
-        return_value=httpx.Response(200, json=EDGE_API_RESPONSE)
-    )
-    respx.get(url__regex=r".*extensionwebstorebase.*").mock(
-        return_value=httpx.Response(405)
-    )
+    respx.get(f"{_EDGE_API_BASE}/testid?hl=en-US").mock(return_value=httpx.Response(200, json=EDGE_API_RESPONSE))
+    respx.get(url__regex=r".*extensionwebstorebase.*").mock(return_value=httpx.Response(405))
     async with httpx.AsyncClient() as client:
         fetcher = EdgeFetcher(client)
         meta, pkg_bytes = await fetcher.fetch("testid")
@@ -343,14 +341,10 @@ async def test_edge_fetch_uses_manifest_when_crx_unavailable():
 @respx.mock
 async def test_edge_fetch_upgrades_to_crx_when_available():
     """When the CRX download succeeds, the full package is returned instead of manifest-only zip."""
-    respx.get(f"{_EDGE_API_BASE}/testid?hl=en-US").mock(
-        return_value=httpx.Response(200, json=EDGE_API_RESPONSE)
-    )
+    respx.get(f"{_EDGE_API_BASE}/testid?hl=en-US").mock(return_value=httpx.Response(200, json=EDGE_API_RESPONSE))
     crx_zip = _make_zip()
     raw_crx = b"Cr24" + b"\x00" * 20 + crx_zip
-    respx.get(url__regex=r".*extensionwebstorebase.*").mock(
-        return_value=httpx.Response(200, content=raw_crx)
-    )
+    respx.get(url__regex=r".*extensionwebstorebase.*").mock(return_value=httpx.Response(200, content=raw_crx))
     async with httpx.AsyncClient() as client:
         fetcher = EdgeFetcher(client)
         meta, pkg_bytes = await fetcher.fetch("testid")
@@ -376,9 +370,7 @@ async def test_edge_fetch_metadata_missing_optional_fields():
 
 @respx.mock
 async def test_edge_fetch_404():
-    respx.get(f"{_EDGE_API_BASE}/doesnotexist?hl=en-US").mock(
-        return_value=httpx.Response(404)
-    )
+    respx.get(f"{_EDGE_API_BASE}/doesnotexist?hl=en-US").mock(return_value=httpx.Response(404))
     async with httpx.AsyncClient() as client:
         fetcher = EdgeFetcher(client)
         with pytest.raises(FetchError):

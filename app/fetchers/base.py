@@ -30,12 +30,10 @@ class BaseFetcher(ABC):
         self.client = client
 
     @abstractmethod
-    async def fetch_metadata(self, extension_id: str) -> ExtensionMetadata:
-        ...
+    async def fetch_metadata(self, extension_id: str) -> ExtensionMetadata: ...
 
     @abstractmethod
-    async def download_package(self, extension_id: str) -> bytes:
-        ...
+    async def download_package(self, extension_id: str) -> bytes: ...
 
     async def fetch(self, extension_id: str) -> tuple[ExtensionMetadata, bytes | None]:
         """Fetch metadata and attempt package download. Package failure is non-fatal."""
@@ -48,7 +46,8 @@ class BaseFetcher(ABC):
             # propagate and surface instead of silently degrading scores (M5 / #10).
             logger.warning(
                 "Package download failed for %s (%s) — continuing without static analysis",
-                extension_id, exc,
+                extension_id,
+                exc,
             )
             package = None
         return metadata, package

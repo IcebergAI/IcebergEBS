@@ -44,6 +44,7 @@ def _stub_webhook_dns():
 # detect_changes unit tests
 # ---------------------------------------------------------------------------
 
+
 def _ext(**kwargs) -> Extension:
     defaults = dict(
         id=1,
@@ -120,11 +121,15 @@ def test_detect_changes_no_version_change():
 # Alert CRUD tests (via HTTP client)
 # ---------------------------------------------------------------------------
 
+
 async def test_create_destination(client):
-    r = await client.post("/api/alerts/destinations", json={
-        "label": "Slack #security",
-        "target": "https://hooks.example.com/webhook",
-    })
+    r = await client.post(
+        "/api/alerts/destinations",
+        json={
+            "label": "Slack #security",
+            "target": "https://hooks.example.com/webhook",
+        },
+    )
     assert r.status_code == 201
     data = r.json()
     assert data["label"] == "Slack #security"
@@ -132,18 +137,16 @@ async def test_create_destination(client):
 
 
 async def test_list_destinations(client):
-    await client.post("/api/alerts/destinations", json={
-        "label": "My Hook", "target": "https://hooks.example.com/1"
-    })
+    await client.post("/api/alerts/destinations", json={"label": "My Hook", "target": "https://hooks.example.com/1"})
     r = await client.get("/api/alerts/destinations")
     assert r.status_code == 200
     assert len(r.json()) >= 1
 
 
 async def test_update_destination(client):
-    r = await client.post("/api/alerts/destinations", json={
-        "label": "Old Label", "target": "https://hooks.example.com/2"
-    })
+    r = await client.post(
+        "/api/alerts/destinations", json={"label": "Old Label", "target": "https://hooks.example.com/2"}
+    )
     dest_id = r.json()["id"]
     r2 = await client.patch(f"/api/alerts/destinations/{dest_id}", json={"label": "New Label", "enabled": False})
     assert r2.status_code == 200
@@ -152,9 +155,9 @@ async def test_update_destination(client):
 
 
 async def test_delete_destination(client):
-    r = await client.post("/api/alerts/destinations", json={
-        "label": "To Delete", "target": "https://hooks.example.com/3"
-    })
+    r = await client.post(
+        "/api/alerts/destinations", json={"label": "To Delete", "target": "https://hooks.example.com/3"}
+    )
     dest_id = r.json()["id"]
     r_del = await client.delete(f"/api/alerts/destinations/{dest_id}")
     assert r_del.status_code == 200
@@ -163,41 +166,50 @@ async def test_delete_destination(client):
 
 
 async def test_create_rule(client):
-    r_dest = await client.post("/api/alerts/destinations", json={
-        "label": "Hook", "target": "https://hooks.example.com/r"
-    })
+    r_dest = await client.post(
+        "/api/alerts/destinations", json={"label": "Hook", "target": "https://hooks.example.com/r"}
+    )
     dest_id = r_dest.json()["id"]
 
-    r = await client.post("/api/alerts/rules", json={
-        "destination_id": dest_id,
-        "event_type": "risk_level_change",
-    })
+    r = await client.post(
+        "/api/alerts/rules",
+        json={
+            "destination_id": dest_id,
+            "event_type": "risk_level_change",
+        },
+    )
     assert r.status_code == 201
     assert r.json()["event_type"] == "risk_level_change"
     assert r.json()["extension_id"] is None
 
 
 async def test_create_rule_invalid_event_type(client):
-    r_dest = await client.post("/api/alerts/destinations", json={
-        "label": "Hook", "target": "https://hooks.example.com/bad"
-    })
+    r_dest = await client.post(
+        "/api/alerts/destinations", json={"label": "Hook", "target": "https://hooks.example.com/bad"}
+    )
     dest_id = r_dest.json()["id"]
-    r = await client.post("/api/alerts/rules", json={
-        "destination_id": dest_id,
-        "event_type": "invalid_type",
-    })
+    r = await client.post(
+        "/api/alerts/rules",
+        json={
+            "destination_id": dest_id,
+            "event_type": "invalid_type",
+        },
+    )
     assert r.status_code == 422
 
 
 async def test_toggle_rule_enabled(client):
-    r_dest = await client.post("/api/alerts/destinations", json={
-        "label": "Hook", "target": "https://hooks.example.com/toggle"
-    })
+    r_dest = await client.post(
+        "/api/alerts/destinations", json={"label": "Hook", "target": "https://hooks.example.com/toggle"}
+    )
     dest_id = r_dest.json()["id"]
-    r_rule = await client.post("/api/alerts/rules", json={
-        "destination_id": dest_id,
-        "event_type": "new_version",
-    })
+    r_rule = await client.post(
+        "/api/alerts/rules",
+        json={
+            "destination_id": dest_id,
+            "event_type": "new_version",
+        },
+    )
     rule_id = r_rule.json()["id"]
 
     r2 = await client.patch(f"/api/alerts/rules/{rule_id}", json={"enabled": False})
@@ -206,14 +218,17 @@ async def test_toggle_rule_enabled(client):
 
 
 async def test_delete_rule(client):
-    r_dest = await client.post("/api/alerts/destinations", json={
-        "label": "Hook", "target": "https://hooks.example.com/del"
-    })
+    r_dest = await client.post(
+        "/api/alerts/destinations", json={"label": "Hook", "target": "https://hooks.example.com/del"}
+    )
     dest_id = r_dest.json()["id"]
-    r_rule = await client.post("/api/alerts/rules", json={
-        "destination_id": dest_id,
-        "event_type": "publisher_change",
-    })
+    r_rule = await client.post(
+        "/api/alerts/rules",
+        json={
+            "destination_id": dest_id,
+            "event_type": "publisher_change",
+        },
+    )
     rule_id = r_rule.json()["id"]
 
     r_del = await client.delete(f"/api/alerts/rules/{rule_id}")
@@ -226,12 +241,13 @@ async def test_delete_rule(client):
 # fire_alerts integration: webhook POST is sent
 # ---------------------------------------------------------------------------
 
+
 @respx.mock
 async def test_fire_alerts_posts_webhook(test_db, admin_user):
     """fire_alerts POSTs to the webhook URL when a matching rule exists."""
     webhook_url = "https://hooks.example.com/fire-test"
     # The send path pins to the resolved IP, so respx matches the IP literal URL.
-    route = respx.post(f"https://{_PINNED_IP}/fire-test").mock(return_value=httpx.Response(200))
+    respx.post(f"https://{_PINNED_IP}/fire-test").mock(return_value=httpx.Response(200))
 
     async with AsyncSession(test_db) as session:
         dest = AlertDestination(user_id=admin_user.id, label="Test", target=webhook_url, enabled=True)
@@ -302,7 +318,7 @@ async def test_fire_alerts_skips_disabled_rule(test_db, admin_user):
             version="1.0.0",
             store_url="https://example.com",
             risk_score=60,
-            permissions='[]',
+            permissions="[]",
             last_fetched_at=datetime(2024, 1, 1, tzinfo=timezone.utc),
         )
         session.add(ext)
@@ -340,15 +356,27 @@ async def test_fire_alerts_extension_scoped_rule(test_db, admin_user):
         dest_id = dest.id
 
         ext1 = Extension(
-            user_id=admin_user.id, store="chrome", extension_id="ext1",
-            name="Ext1", publisher="p", version="1.0", store_url="https://example.com",
-            risk_score=60, permissions='[]',
+            user_id=admin_user.id,
+            store="chrome",
+            extension_id="ext1",
+            name="Ext1",
+            publisher="p",
+            version="1.0",
+            store_url="https://example.com",
+            risk_score=60,
+            permissions="[]",
             last_fetched_at=datetime(2024, 1, 1, tzinfo=timezone.utc),
         )
         ext2 = Extension(
-            user_id=admin_user.id, store="chrome", extension_id="ext2",
-            name="Ext2", publisher="p", version="1.0", store_url="https://example.com",
-            risk_score=60, permissions='[]',
+            user_id=admin_user.id,
+            store="chrome",
+            extension_id="ext2",
+            name="Ext2",
+            publisher="p",
+            version="1.0",
+            store_url="https://example.com",
+            risk_score=60,
+            permissions="[]",
             last_fetched_at=datetime(2024, 1, 1, tzinfo=timezone.utc),
         )
         session.add(ext1)
@@ -382,6 +410,7 @@ async def test_fire_alerts_extension_scoped_rule(test_db, admin_user):
 # send_webhook SSRF protection (IP pinning at send time)
 # ---------------------------------------------------------------------------
 
+
 @respx.mock
 async def test_send_webhook_pins_to_validated_ip():
     """send_webhook connects to the resolved IP while preserving the Host header."""
@@ -409,19 +438,28 @@ async def test_send_webhook_blocks_rebind_to_private_ip():
 # Alert log endpoint
 # ---------------------------------------------------------------------------
 
+
 async def test_alert_log_endpoint(client, test_db, admin_user):
     """GET /api/alerts/log returns AlertLog rows for the current user."""
     async with AsyncSession(test_db) as session:
-        dest = AlertDestination(user_id=admin_user.id, label="Log Hook", target="https://hooks.example.com/log", enabled=True)
+        dest = AlertDestination(
+            user_id=admin_user.id, label="Log Hook", target="https://hooks.example.com/log", enabled=True
+        )
         session.add(dest)
         await session.commit()
         await session.refresh(dest)
         dest_id = dest.id
 
         ext = Extension(
-            user_id=admin_user.id, store="chrome", extension_id="log.ext",
-            name="Log Ext", publisher="Pub", version="1.0", store_url="https://example.com",
-            risk_score=30, permissions='[]',
+            user_id=admin_user.id,
+            store="chrome",
+            extension_id="log.ext",
+            name="Log Ext",
+            publisher="Pub",
+            version="1.0",
+            store_url="https://example.com",
+            risk_score=30,
+            permissions="[]",
             last_fetched_at=datetime(2024, 1, 1, tzinfo=timezone.utc),
         )
         session.add(ext)
@@ -430,8 +468,10 @@ async def test_alert_log_endpoint(client, test_db, admin_user):
         ext_id = ext.id
 
         rule = AlertRule(
-            user_id=admin_user.id, destination_id=dest_id,
-            event_type="new_version", enabled=True,
+            user_id=admin_user.id,
+            destination_id=dest_id,
+            event_type="new_version",
+            enabled=True,
         )
         session.add(rule)
         await session.commit()
@@ -439,7 +479,8 @@ async def test_alert_log_endpoint(client, test_db, admin_user):
         rule_id = rule.id
 
         log = AlertLog(
-            rule_id=rule_id, extension_id=ext_id,
+            rule_id=rule_id,
+            extension_id=ext_id,
             event_type="new_version",
             detail=json.dumps({"old": "1.0", "new": "2.0"}),
             success=True,
@@ -467,25 +508,31 @@ async def test_fired_alert_appears_in_history(client, test_db, admin_user):
     respx.post(f"https://{_PINNED_IP}/history").mock(return_value=httpx.Response(200))
 
     async with AsyncSession(test_db) as session:
-        dest = AlertDestination(user_id=admin_user.id, label="History Hook",
-                                target="https://hooks.example.com/history", enabled=True)
+        dest = AlertDestination(
+            user_id=admin_user.id, label="History Hook", target="https://hooks.example.com/history", enabled=True
+        )
         session.add(dest)
         await session.commit()
         await session.refresh(dest)
         dest_id = dest.id
 
         ext = Extension(
-            user_id=admin_user.id, store="vscode", extension_id="hist.ext",
-            name="History Ext", publisher="Pub", version="1.0", store_url="https://example.com",
-            risk_score=80, permissions='[]',
+            user_id=admin_user.id,
+            store="vscode",
+            extension_id="hist.ext",
+            name="History Ext",
+            publisher="Pub",
+            version="1.0",
+            store_url="https://example.com",
+            risk_score=80,
+            permissions="[]",
             last_fetched_at=datetime(2024, 1, 1, tzinfo=timezone.utc),
         )
         session.add(ext)
         await session.commit()
         await session.refresh(ext)
 
-        rule = AlertRule(user_id=admin_user.id, destination_id=dest_id,
-                         event_type="risk_level_change", enabled=True)
+        rule = AlertRule(user_id=admin_user.id, destination_id=dest_id, event_type="risk_level_change", enabled=True)
         session.add(rule)
         await session.commit()
         await session.refresh(ext)
@@ -508,17 +555,24 @@ async def test_delete_destination_preserves_history(client, test_db, admin_user)
     """Deleting a destination must not orphan its AlertLog FK (Postgres enforces it)
     and must keep the historical log rows visible in the alert history."""
     async with AsyncSession(test_db) as session:
-        dest = AlertDestination(user_id=admin_user.id, label="Gone Hook",
-                                target="https://hooks.example.com/gone", enabled=True)
+        dest = AlertDestination(
+            user_id=admin_user.id, label="Gone Hook", target="https://hooks.example.com/gone", enabled=True
+        )
         session.add(dest)
         await session.commit()
         await session.refresh(dest)
         dest_id = dest.id
 
         ext = Extension(
-            user_id=admin_user.id, store="chrome", extension_id="gone.ext",
-            name="Gone Ext", publisher="Pub", version="1.0", store_url="https://example.com",
-            risk_score=30, permissions='[]',
+            user_id=admin_user.id,
+            store="chrome",
+            extension_id="gone.ext",
+            name="Gone Ext",
+            publisher="Pub",
+            version="1.0",
+            store_url="https://example.com",
+            risk_score=30,
+            permissions="[]",
             last_fetched_at=datetime(2024, 1, 1, tzinfo=timezone.utc),
         )
         session.add(ext)
@@ -526,18 +580,23 @@ async def test_delete_destination_preserves_history(client, test_db, admin_user)
         await session.refresh(ext)
         ext_id = ext.id
 
-        rule = AlertRule(user_id=admin_user.id, destination_id=dest_id,
-                         event_type="new_version", enabled=True)
+        rule = AlertRule(user_id=admin_user.id, destination_id=dest_id, event_type="new_version", enabled=True)
         session.add(rule)
         await session.commit()
         await session.refresh(rule)
 
         # A historical log carrying the destination snapshot FK.
-        session.add(AlertLog(
-            rule_id=rule.id, destination_id=dest_id, extension_id=ext_id,
-            user_id=admin_user.id, event_type="new_version",
-            detail=json.dumps({"old": "1.0", "new": "2.0"}), success=True,
-        ))
+        session.add(
+            AlertLog(
+                rule_id=rule.id,
+                destination_id=dest_id,
+                extension_id=ext_id,
+                user_id=admin_user.id,
+                event_type="new_version",
+                detail=json.dumps({"old": "1.0", "new": "2.0"}),
+                success=True,
+            )
+        )
         await session.commit()
 
     r_del = await client.delete(f"/api/alerts/destinations/{dest_id}")
@@ -551,9 +610,7 @@ async def test_delete_destination_preserves_history(client, test_db, admin_user)
     assert row["dest_label"] == "—"  # snapshot destination gone → placeholder
 
     async with AsyncSession(test_db) as session:
-        orphaned = (await session.exec(
-            select(AlertLog).where(AlertLog.destination_id == dest_id)
-        )).all()
+        orphaned = (await session.exec(select(AlertLog).where(AlertLog.destination_id == dest_id))).all()
         assert orphaned == []  # FK was severed, not left dangling
 
 
@@ -561,18 +618,25 @@ async def test_delete_destination_preserves_history(client, test_db, admin_user)
 # Alerts fire AFTER commit, never during fetch_and_store's open transaction
 # ---------------------------------------------------------------------------
 
+
 async def test_fire_pending_alerts_noop_on_empty_events(test_db):
     with patch("app.services.fire_alerts", new=AsyncMock()) as spy:
-        await fire_pending_alerts([], Extension(id=1, user_id=1, store="chrome",
-            extension_id="x", name="x", publisher="p", version="1", store_url="u"),
-            test_db, MagicMock())
+        await fire_pending_alerts(
+            [],
+            Extension(
+                id=1, user_id=1, store="chrome", extension_id="x", name="x", publisher="p", version="1", store_url="u"
+            ),
+            test_db,
+            MagicMock(),
+        )
     spy.assert_not_called()
 
 
 async def test_fire_pending_alerts_swallows_errors(test_db):
     """A delivery/logging failure must never propagate out of fire_pending_alerts."""
-    ext = Extension(id=1, user_id=1, store="chrome", extension_id="x", name="x",
-                    publisher="p", version="1", store_url="u")
+    ext = Extension(
+        id=1, user_id=1, store="chrome", extension_id="x", name="x", publisher="p", version="1", store_url="u"
+    )
     with patch("app.services.fire_alerts", new=AsyncMock(side_effect=RuntimeError("boom"))):
         await fire_pending_alerts([ChangeEvent("new_version", "1", "2")], ext, test_db, MagicMock())
     # No exception raised → swallowed as designed.
@@ -589,17 +653,24 @@ async def test_alerts_deferred_until_after_commit(test_db, admin_user):
     respx.post(f"https://{_PINNED_IP}/deferred").mock(return_value=httpx.Response(200))
 
     async with AsyncSession(test_db) as session:
-        dest = AlertDestination(user_id=admin_user.id, label="Deferred Hook",
-                                target="https://hooks.example.com/deferred", enabled=True)
+        dest = AlertDestination(
+            user_id=admin_user.id, label="Deferred Hook", target="https://hooks.example.com/deferred", enabled=True
+        )
         session.add(dest)
         await session.commit()
         await session.refresh(dest)
         dest_id = dest.id
 
         ext = Extension(
-            user_id=admin_user.id, store="vscode", extension_id="defer.ext",
-            name="Defer Ext", publisher="Pub", version="1.0.0", store_url="https://example.com",
-            risk_score=20, permissions='["storage"]',
+            user_id=admin_user.id,
+            store="vscode",
+            extension_id="defer.ext",
+            name="Defer Ext",
+            publisher="Pub",
+            version="1.0.0",
+            store_url="https://example.com",
+            risk_score=20,
+            permissions='["storage"]',
             last_fetched_at=datetime(2024, 1, 1, tzinfo=timezone.utc),
         )
         session.add(ext)
@@ -607,14 +678,18 @@ async def test_alerts_deferred_until_after_commit(test_db, admin_user):
         await session.refresh(ext)
         ext_id = ext.id
 
-        session.add(AlertRule(user_id=admin_user.id, destination_id=dest_id,
-                              event_type="new_version", enabled=True))
+        session.add(AlertRule(user_id=admin_user.id, destination_id=dest_id, event_type="new_version", enabled=True))
         await session.commit()
 
     # Fetcher returns a new version → triggers a new_version change event.
     meta = ExtensionMetadata(
-        name="Defer Ext", publisher="Pub", description=None, version="2.0.0",
-        install_count=None, last_updated=None, store_url="https://example.com",
+        name="Defer Ext",
+        publisher="Pub",
+        description=None,
+        version="2.0.0",
+        install_count=None,
+        last_updated=None,
+        store_url="https://example.com",
         publisher_verified=True,
     )
 
@@ -645,11 +720,16 @@ async def test_alerts_deferred_until_after_commit(test_db, admin_user):
 # Test webhook destination endpoint
 # ---------------------------------------------------------------------------
 
+
 async def test_test_destination_success(client, test_db, admin_user):
     """POST /api/alerts/destinations/{id}/test returns ok when webhook responds 200."""
-    r_dest = await client.post("/api/alerts/destinations", json={
-        "label": "Test Dest", "target": "https://hooks.example.com/test-dest",
-    })
+    r_dest = await client.post(
+        "/api/alerts/destinations",
+        json={
+            "label": "Test Dest",
+            "target": "https://hooks.example.com/test-dest",
+        },
+    )
     dest_id = r_dest.json()["id"]
 
     mock_resp = MagicMock()
@@ -676,9 +756,13 @@ async def test_test_destination_success(client, test_db, admin_user):
 
 async def test_test_destination_failure(client, test_db, admin_user):
     """POST /api/alerts/destinations/{id}/test returns 502 when webhook fails."""
-    r_dest = await client.post("/api/alerts/destinations", json={
-        "label": "Fail Dest", "target": "https://hooks.example.com/test-dest-fail",
-    })
+    r_dest = await client.post(
+        "/api/alerts/destinations",
+        json={
+            "label": "Fail Dest",
+            "target": "https://hooks.example.com/test-dest-fail",
+        },
+    )
     dest_id = r_dest.json()["id"]
 
     original = fastapi_app.state.http_client
@@ -696,6 +780,7 @@ async def test_test_destination_failure(client, test_db, admin_user):
 # fire_alerts edge cases
 # ---------------------------------------------------------------------------
 
+
 @respx.mock
 async def test_fire_alerts_logs_webhook_failure(test_db, admin_user):
     """When the webhook returns an error status, an AlertLog row with success=False is committed."""
@@ -710,9 +795,15 @@ async def test_fire_alerts_logs_webhook_failure(test_db, admin_user):
         dest_id = dest.id
 
         ext = Extension(
-            user_id=admin_user.id, store="vscode", extension_id="test.faillog",
-            name="Fail Log", publisher="Pub", version="1.0.0",
-            store_url="https://example.com", risk_score=60, permissions='[]',
+            user_id=admin_user.id,
+            store="vscode",
+            extension_id="test.faillog",
+            name="Fail Log",
+            publisher="Pub",
+            version="1.0.0",
+            store_url="https://example.com",
+            risk_score=60,
+            permissions="[]",
             last_fetched_at=datetime(2024, 1, 1, tzinfo=timezone.utc),
         )
         session.add(ext)
@@ -720,8 +811,10 @@ async def test_fire_alerts_logs_webhook_failure(test_db, admin_user):
         await session.refresh(ext)
 
         rule = AlertRule(
-            user_id=admin_user.id, destination_id=dest_id,
-            event_type="risk_level_change", enabled=True,
+            user_id=admin_user.id,
+            destination_id=dest_id,
+            event_type="risk_level_change",
+            enabled=True,
         )
         session.add(rule)
         await session.commit()
@@ -754,9 +847,15 @@ async def test_fire_alerts_skips_disabled_destination(test_db, admin_user):
         dest_id = dest.id
 
         ext = Extension(
-            user_id=admin_user.id, store="vscode", extension_id="test.disableddest",
-            name="Disabled Dest", publisher="Pub", version="1.0.0",
-            store_url="https://example.com", risk_score=60, permissions='[]',
+            user_id=admin_user.id,
+            store="vscode",
+            extension_id="test.disableddest",
+            name="Disabled Dest",
+            publisher="Pub",
+            version="1.0.0",
+            store_url="https://example.com",
+            risk_score=60,
+            permissions="[]",
             last_fetched_at=datetime(2024, 1, 1, tzinfo=timezone.utc),
         )
         session.add(ext)
@@ -764,8 +863,10 @@ async def test_fire_alerts_skips_disabled_destination(test_db, admin_user):
         await session.refresh(ext)
 
         rule = AlertRule(
-            user_id=admin_user.id, destination_id=dest_id,
-            event_type="risk_level_change", enabled=True,
+            user_id=admin_user.id,
+            destination_id=dest_id,
+            event_type="risk_level_change",
+            enabled=True,
         )
         session.add(rule)
         await session.commit()
@@ -785,33 +886,54 @@ async def test_fire_alerts_skips_disabled_destination(test_db, admin_user):
 # Alert log history preservation
 # ---------------------------------------------------------------------------
 
+
 async def test_delete_rule_preserves_alert_logs(client, test_db, admin_user):
     """Deleting a rule orphans its logs (sets rule_id=None) rather than deleting them."""
-    r_dest = await client.post("/api/alerts/destinations", json={
-        "label": "Hook", "target": "https://hooks.example.com/preserve-rule",
-    })
+    r_dest = await client.post(
+        "/api/alerts/destinations",
+        json={
+            "label": "Hook",
+            "target": "https://hooks.example.com/preserve-rule",
+        },
+    )
     dest_id = r_dest.json()["id"]
-    r_rule = await client.post("/api/alerts/rules", json={
-        "destination_id": dest_id, "event_type": "new_version",
-    })
+    r_rule = await client.post(
+        "/api/alerts/rules",
+        json={
+            "destination_id": dest_id,
+            "event_type": "new_version",
+        },
+    )
     rule_id = r_rule.json()["id"]
 
     async with AsyncSession(test_db) as session:
         ext = Extension(
-            user_id=admin_user.id, store="chrome", extension_id="preserve-rule-ext",
-            name="Preserve", publisher="p", version="1.0", store_url="https://example.com",
-            risk_score=10, permissions='[]',
+            user_id=admin_user.id,
+            store="chrome",
+            extension_id="preserve-rule-ext",
+            name="Preserve",
+            publisher="p",
+            version="1.0",
+            store_url="https://example.com",
+            risk_score=10,
+            permissions="[]",
             last_fetched_at=datetime(2024, 1, 1, tzinfo=timezone.utc),
         )
         session.add(ext)
         await session.commit()
         await session.refresh(ext)
 
-        session.add(AlertLog(
-            rule_id=rule_id, destination_id=dest_id, extension_id=ext.id,
-            user_id=admin_user.id, event_type="new_version",
-            detail=json.dumps({"old": "1.0", "new": "2.0"}), success=True,
-        ))
+        session.add(
+            AlertLog(
+                rule_id=rule_id,
+                destination_id=dest_id,
+                extension_id=ext.id,
+                user_id=admin_user.id,
+                event_type="new_version",
+                detail=json.dumps({"old": "1.0", "new": "2.0"}),
+                success=True,
+            )
+        )
         await session.commit()
 
     r_del = await client.delete(f"/api/alerts/rules/{rule_id}")
@@ -829,31 +951,51 @@ async def test_delete_rule_preserves_alert_logs(client, test_db, admin_user):
 
 async def test_delete_destination_preserves_alert_logs(client, test_db, admin_user):
     """Deleting a destination cascades to rules but orphans logs rather than deleting them."""
-    r_dest = await client.post("/api/alerts/destinations", json={
-        "label": "Hook", "target": "https://hooks.example.com/preserve-dest",
-    })
+    r_dest = await client.post(
+        "/api/alerts/destinations",
+        json={
+            "label": "Hook",
+            "target": "https://hooks.example.com/preserve-dest",
+        },
+    )
     dest_id = r_dest.json()["id"]
-    r_rule = await client.post("/api/alerts/rules", json={
-        "destination_id": dest_id, "event_type": "new_version",
-    })
+    r_rule = await client.post(
+        "/api/alerts/rules",
+        json={
+            "destination_id": dest_id,
+            "event_type": "new_version",
+        },
+    )
     rule_id = r_rule.json()["id"]
 
     async with AsyncSession(test_db) as session:
         ext = Extension(
-            user_id=admin_user.id, store="chrome", extension_id="preserve-dest-ext",
-            name="Preserve", publisher="p", version="1.0", store_url="https://example.com",
-            risk_score=10, permissions='[]',
+            user_id=admin_user.id,
+            store="chrome",
+            extension_id="preserve-dest-ext",
+            name="Preserve",
+            publisher="p",
+            version="1.0",
+            store_url="https://example.com",
+            risk_score=10,
+            permissions="[]",
             last_fetched_at=datetime(2024, 1, 1, tzinfo=timezone.utc),
         )
         session.add(ext)
         await session.commit()
         await session.refresh(ext)
 
-        session.add(AlertLog(
-            rule_id=rule_id, destination_id=dest_id, extension_id=ext.id,
-            user_id=admin_user.id, event_type="new_version",
-            detail=json.dumps({"old": "1.0", "new": "2.0"}), success=True,
-        ))
+        session.add(
+            AlertLog(
+                rule_id=rule_id,
+                destination_id=dest_id,
+                extension_id=ext.id,
+                user_id=admin_user.id,
+                event_type="new_version",
+                detail=json.dumps({"old": "1.0", "new": "2.0"}),
+                success=True,
+            )
+        )
         await session.commit()
 
     r_del = await client.delete(f"/api/alerts/destinations/{dest_id}")

@@ -6,6 +6,7 @@ threshold is reached within a rolling window. State is in-process, which is
 sufficient because the deployment mandates a single uvicorn worker (see
 DEPLOYMENT.md / CLAUDE.md).
 """
+
 import time
 from dataclasses import dataclass, field
 
@@ -71,7 +72,8 @@ class LoginRateLimiter:
         now = self._now()
         # Drop entries whose window and lockout have both expired.
         for k in [
-            k for k, e in self._entries.items()
+            k
+            for k, e in self._entries.items()
             if e.locked_until <= now and (now - e.window_start) > self.window_seconds
         ]:
             del self._entries[k]

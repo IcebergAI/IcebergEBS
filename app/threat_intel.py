@@ -27,66 +27,70 @@ def build_threat_intel_indicators(package_analysis: dict | None) -> list[dict]:
     indicators: list[dict] = []
     package_sha256 = package_analysis.get("package_sha256")
     if package_sha256:
-        indicators.append(_indicator(
-            kind="sha256",
-            section="primary",
-            label="Package hash",
-            value=str(package_sha256),
-            source="package",
-            lookups=[
-                _lookup("VirusTotal", f"https://www.virustotal.com/gui/file/{package_sha256}/detection"),
-                _lookup(OTX_LABEL, _otx_indicator_url("file", str(package_sha256))),
-            ],
-        ))
+        indicators.append(
+            _indicator(
+                kind="sha256",
+                section="primary",
+                label="Package hash",
+                value=str(package_sha256),
+                source="package",
+                lookups=[
+                    _lookup("VirusTotal", f"https://www.virustotal.com/gui/file/{package_sha256}/detection"),
+                    _lookup(OTX_LABEL, _otx_indicator_url("file", str(package_sha256))),
+                ],
+            )
+        )
 
     archive_sha256 = package_analysis.get("archive_sha256")
     if archive_sha256 and archive_sha256 != package_sha256:
-        indicators.append(_indicator(
-            kind="sha256",
-            section="primary",
-            label="Archive content hash",
-            value=str(archive_sha256),
-            source="package",
-            description="SHA-256 of the archive payload inside the downloaded package. This can help when a lookup provider indexed the unpacked archive instead of the signed package.",
-            lookups=[
-                _lookup("VirusTotal", f"https://www.virustotal.com/gui/file/{archive_sha256}/detection"),
-                _lookup(OTX_LABEL, _otx_indicator_url("file", str(archive_sha256))),
-            ],
-        ))
+        indicators.append(
+            _indicator(
+                kind="sha256",
+                section="primary",
+                label="Archive content hash",
+                value=str(archive_sha256),
+                source="package",
+                description="SHA-256 of the archive payload inside the downloaded package. This can help when a lookup provider indexed the unpacked archive instead of the signed package.",
+                lookups=[
+                    _lookup("VirusTotal", f"https://www.virustotal.com/gui/file/{archive_sha256}/detection"),
+                    _lookup(OTX_LABEL, _otx_indicator_url("file", str(archive_sha256))),
+                ],
+            )
+        )
 
     network_callout_urls = _unique_strings(package_analysis.get("network_callout_urls", []))
     network_callout_url_set = set(network_callout_urls)
-    network_callout_domains = sorted({
-        domain
-        for url in network_callout_urls
-        if (domain := _domain_from_url(url))
-    })
+    network_callout_domains = sorted({domain for url in network_callout_urls if (domain := _domain_from_url(url))})
 
     for domain in network_callout_domains:
-        indicators.append(_indicator(
-            kind="domain",
-            section="network",
-            label="Network callout domain",
-            value=domain,
-            source=NETWORK_CALLOUT_SOURCE_LABEL,
-            lookups=[
-                _lookup("VirusTotal", f"https://www.virustotal.com/gui/domain/{quote(domain, safe='')}"),
-                _lookup(OTX_LABEL, _otx_indicator_url("hostname", domain.lower())),
-            ],
-        ))
+        indicators.append(
+            _indicator(
+                kind="domain",
+                section="network",
+                label="Network callout domain",
+                value=domain,
+                source=NETWORK_CALLOUT_SOURCE_LABEL,
+                lookups=[
+                    _lookup("VirusTotal", f"https://www.virustotal.com/gui/domain/{quote(domain, safe='')}"),
+                    _lookup(OTX_LABEL, _otx_indicator_url("hostname", domain.lower())),
+                ],
+            )
+        )
 
     for url in network_callout_urls:
-        indicators.append(_indicator(
-            kind="url",
-            section="network",
-            label="Network callout URL",
-            value=url,
-            source=NETWORK_CALLOUT_SOURCE_LABEL,
-            lookups=[
-                _lookup("VirusTotal", _virustotal_url_report_url(url)),
-                _lookup(OTX_LABEL, _otx_indicator_url("url", url)),
-            ],
-        ))
+        indicators.append(
+            _indicator(
+                kind="url",
+                section="network",
+                label="Network callout URL",
+                value=url,
+                source=NETWORK_CALLOUT_SOURCE_LABEL,
+                lookups=[
+                    _lookup("VirusTotal", _virustotal_url_report_url(url)),
+                    _lookup(OTX_LABEL, _otx_indicator_url("url", url)),
+                ],
+            )
+        )
 
     referenced_urls = [
         url
@@ -94,17 +98,19 @@ def build_threat_intel_indicators(package_analysis: dict | None) -> list[dict]:
         if url not in network_callout_url_set and not _is_reference_noise_url(url)
     ]
     for url in referenced_urls:
-        indicators.append(_indicator(
-            kind="url",
-            section="referenced",
-            label="Referenced URL",
-            value=url,
-            source=CODE_SOURCE_LABEL,
-            lookups=[
-                _lookup("VirusTotal", _virustotal_url_report_url(url)),
-                _lookup(OTX_LABEL, _otx_indicator_url("url", url)),
-            ],
-        ))
+        indicators.append(
+            _indicator(
+                kind="url",
+                section="referenced",
+                label="Referenced URL",
+                value=url,
+                source=CODE_SOURCE_LABEL,
+                lookups=[
+                    _lookup("VirusTotal", _virustotal_url_report_url(url)),
+                    _lookup(OTX_LABEL, _otx_indicator_url("url", url)),
+                ],
+            )
+        )
 
     return indicators[:MAX_THREAT_INTEL_INDICATORS]
 
@@ -154,7 +160,6 @@ def _otx_indicator_url(kind: str, value: str) -> str:
 def _virustotal_url_report_url(url: str) -> str:
     url_id = urlsafe_b64encode(url.encode()).decode().rstrip("=")
     return f"https://www.virustotal.com/gui/url/{url_id}/detection"
-
 
 
 def _is_reference_noise_url(url: str) -> bool:

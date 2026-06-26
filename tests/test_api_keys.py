@@ -1,15 +1,15 @@
 """Tests for M2M API key creation, listing, revocation, and authentication."""
-import pytest
+
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.auth import generate_api_key, hash_api_key, hash_password
 from app.models import ApiKey, User
 
-
 # ---------------------------------------------------------------------------
 # Key management endpoint tests
 # ---------------------------------------------------------------------------
+
 
 async def test_list_keys_empty(client):
     r = await client.get("/api/keys")
@@ -95,6 +95,7 @@ async def test_create_key_rejects_empty_label(client):
 # Bearer token authentication tests
 # ---------------------------------------------------------------------------
 
+
 async def test_bearer_auth_allows_api_access(api_key_client):
     r = await api_key_client.get("/api/extensions")
     assert r.status_code == 200
@@ -161,9 +162,7 @@ async def test_last_used_at_rewritten_once_stale(api_key_client, test_db, admin_
     from app.config import settings
 
     await api_key_client.get("/api/extensions")
-    stale = datetime.now(timezone.utc) - timedelta(
-        seconds=settings.api_key_last_used_throttle_seconds + 5
-    )
+    stale = datetime.now(timezone.utc) - timedelta(seconds=settings.api_key_last_used_throttle_seconds + 5)
     async with AsyncSession(test_db) as s:
         key = (await s.exec(select(ApiKey).where(ApiKey.user_id == admin_user.id))).one()
         key.last_used_at = stale
@@ -182,6 +181,7 @@ async def test_last_used_at_rewritten_once_stale(api_key_client, test_db, admin_
 # ---------------------------------------------------------------------------
 # Read-only key enforcement
 # ---------------------------------------------------------------------------
+
 
 async def test_readonly_key_allows_get(readonly_api_key_client):
     r = await readonly_api_key_client.get("/api/extensions")

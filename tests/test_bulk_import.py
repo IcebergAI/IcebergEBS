@@ -1,4 +1,5 @@
 """Bulk import POST /api/extensions/bulk (#24)."""
+
 from unittest.mock import AsyncMock, patch
 
 from sqlmodel import select
@@ -6,7 +7,6 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.fetchers.base import FetchError
 from app.models import Extension
-
 from tests.test_api import _fake_metadata, _fake_vsix
 
 
@@ -20,19 +20,31 @@ def _mock_vscode():
 async def test_bulk_mixed_batch(client, test_db, admin_user):
     # Pre-existing extension to exercise the dedupe path.
     async with AsyncSession(test_db) as s:
-        s.add(Extension(
-            user_id=admin_user.id, store="vscode", extension_id="dup.ext", name="Dup",
-            publisher="p", version="1.0", store_url="https://example.com",
-        ))
+        s.add(
+            Extension(
+                user_id=admin_user.id,
+                store="vscode",
+                extension_id="dup.ext",
+                name="Dup",
+                publisher="p",
+                version="1.0",
+                store_url="https://example.com",
+            )
+        )
         await s.commit()
 
     p = _mock_vscode()
     try:
-        r = await client.post("/api/extensions/bulk", json={"items": [
-            {"store": "vscode", "extension_id": "newpub.new-ext"},
-            {"store": "vscode", "extension_id": "dup.ext"},
-            {"store": "vscode", "extension_id": "not a valid id"},
-        ]})
+        r = await client.post(
+            "/api/extensions/bulk",
+            json={
+                "items": [
+                    {"store": "vscode", "extension_id": "newpub.new-ext"},
+                    {"store": "vscode", "extension_id": "dup.ext"},
+                    {"store": "vscode", "extension_id": "not a valid id"},
+                ]
+            },
+        )
     finally:
         p.stop()
 
@@ -52,12 +64,10 @@ async def test_bulk_mixed_batch(client, test_db, admin_user):
 async def test_bulk_text_paste(client):
     p = _mock_vscode()
     try:
-        r = await client.post("/api/extensions/bulk", json={"text": (
-            "vscode,textpub.ext\n"
-            "# a comment line, ignored\n"
-            "\n"
-            "garbage-with-no-store\n"
-        )})
+        r = await client.post(
+            "/api/extensions/bulk",
+            json={"text": ("vscode,textpub.ext\n# a comment line, ignored\n\ngarbage-with-no-store\n")},
+        )
     finally:
         p.stop()
 
@@ -74,9 +84,14 @@ async def test_bulk_fetch_error_leaves_no_row(client, test_db):
     MockFetcher = p.start()
     MockFetcher.return_value.fetch = AsyncMock(side_effect=FetchError("boom"))
     try:
-        r = await client.post("/api/extensions/bulk", json={"items": [
-            {"store": "vscode", "extension_id": "ghostpub.ghost"},
-        ]})
+        r = await client.post(
+            "/api/extensions/bulk",
+            json={
+                "items": [
+                    {"store": "vscode", "extension_id": "ghostpub.ghost"},
+                ]
+            },
+        )
     finally:
         p.stop()
 
@@ -100,18 +115,24 @@ async def test_bulk_too_many_rejected(client):
 
 
 async def test_bulk_requires_auth(anon_client):
-    r = await anon_client.post("/api/extensions/bulk", json={"items": [
-        {"store": "vscode", "extension_id": "pub.ext"},
-    ]})
+    r = await anon_client.post(
+        "/api/extensions/bulk",
+        json={
+            "items": [
+                {"store": "vscode", "extension_id": "pub.ext"},
+            ]
+        },
+    )
     assert r.status_code == 401
 
 
 async def test_bulk_url_autodetect(client):
     p = _mock_vscode()
     try:
-        r = await client.post("/api/extensions/bulk", json={"text": (
-            "https://marketplace.visualstudio.com/items?itemName=urlpub.urlext\n"
-        )})
+        r = await client.post(
+            "/api/extensions/bulk",
+            json={"text": ("https://marketplace.visualstudio.com/items?itemName=urlpub.urlext\n")},
+        )
     finally:
         p.stop()
     body = r.json()

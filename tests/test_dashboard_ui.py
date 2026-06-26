@@ -1,4 +1,5 @@
 """Server-side pagination / filtering / search on the dashboard UI (#23)."""
+
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.models import Extension
@@ -6,11 +7,19 @@ from app.models import Extension
 
 async def _seed(session, admin_user, n, store="chrome"):
     for i in range(n):
-        session.add(Extension(
-            user_id=admin_user.id, store=store, extension_id=f"a{i:031d}",
-            name=f"Ext {i:03d}", publisher="Acme", version="1.0",
-            store_url="https://example.com", risk_score=i % 100, watchlist=True,
-        ))
+        session.add(
+            Extension(
+                user_id=admin_user.id,
+                store=store,
+                extension_id=f"a{i:031d}",
+                name=f"Ext {i:03d}",
+                publisher="Acme",
+                version="1.0",
+                store_url="https://example.com",
+                risk_score=i % 100,
+                watchlist=True,
+            )
+        )
     await session.commit()
 
 

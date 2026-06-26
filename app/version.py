@@ -10,9 +10,10 @@ resolved once per process (cached) in this priority order:
    of ``main`` advances the count and sha with no other action.
 4. ``"dev"`` — when none of the above are available.
 """
+
 import logging
 import os
-import subprocess
+import subprocess  # nosec B404 - only used to run a fixed `git` argv below (no shell, no user input)
 from functools import lru_cache
 from pathlib import Path
 
@@ -30,13 +31,21 @@ def _format(count: str, sha: str) -> str:
 
 def _from_git() -> str | None:
     try:
-        count = subprocess.run(
+        count = subprocess.run(  # nosec - fixed `git` argv, no shell, no untrusted input
             ["git", "rev-list", "--count", "--first-parent", "HEAD"],
-            cwd=_REPO_ROOT, capture_output=True, text=True, timeout=2, check=True,
+            cwd=_REPO_ROOT,
+            capture_output=True,
+            text=True,
+            timeout=2,
+            check=True,
         ).stdout.strip()
-        sha = subprocess.run(
+        sha = subprocess.run(  # nosec - fixed `git` argv, no shell, no untrusted input
             ["git", "rev-parse", "--short", "HEAD"],
-            cwd=_REPO_ROOT, capture_output=True, text=True, timeout=2, check=True,
+            cwd=_REPO_ROOT,
+            capture_output=True,
+            text=True,
+            timeout=2,
+            check=True,
         ).stdout.strip()
     except (FileNotFoundError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
         logger.debug("Could not resolve version from git: %s", exc)

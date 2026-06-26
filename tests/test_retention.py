@@ -9,8 +9,12 @@ from app.retention import prune_expired
 
 async def _make_extension(session: AsyncSession) -> int:
     ext = Extension(
-        store="chrome", extension_id="a" * 32, name="E",
-        publisher="p", version="1.0", store_url="https://example.com",
+        store="chrome",
+        extension_id="a" * 32,
+        name="E",
+        publisher="p",
+        version="1.0",
+        store_url="https://example.com",
     )
     session.add(ext)
     await session.commit()

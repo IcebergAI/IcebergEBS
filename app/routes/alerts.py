@@ -5,7 +5,8 @@ from typing import Annotated
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict
-from sqlalchemy import or_, update as sa_update
+from sqlalchemy import or_
+from sqlalchemy import update as sa_update
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
@@ -27,12 +28,13 @@ async def _validate_webhook_url(url: str) -> None:
     try:
         await validate_webhook_url(url)
     except WebhookValidationError as exc:
-        raise HTTPException(status_code=422, detail=str(exc))
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 # ---------------------------------------------------------------------------
 # Schemas
 # ---------------------------------------------------------------------------
+
 
 class DestinationOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -81,16 +83,19 @@ class RulePatch(BaseModel):
 # Destinations
 # ---------------------------------------------------------------------------
 
+
 @router.get("/alerts/destinations", response_model=list[DestinationOut])
 async def list_destinations(
     current_user: Annotated[User, Depends(require_api_auth)],
     session: Annotated[AsyncSession, Depends(get_session)],
 ):
-    dests = (await session.exec(
-        select(AlertDestination)
-        .where(AlertDestination.user_id == current_user.id)
-        .order_by(AlertDestination.created_at)
-    )).all()
+    dests = (
+        await session.exec(
+            select(AlertDestination)
+            .where(AlertDestination.user_id == current_user.id)
+            .order_by(AlertDestination.created_at)
+        )
+    ).all()
     return [DestinationOut.model_validate(d) for d in dests]
 
 
@@ -151,12 +156,8 @@ async def delete_destination(
     # keep their user_id, so they stay visible in the alert history (rendered with
     # a "—" destination). Leaving these FKs dangling raises an IntegrityError on
     # Postgres, where foreign keys are enforced (SQLite dev/test does not enforce).
-    await session.execute(
-        sa_update(AlertLog).where(AlertLog.destination_id == dest_id).values(destination_id=None)
-    )
-    rules = (await session.exec(
-        select(AlertRule).where(AlertRule.destination_id == dest_id)
-    )).all()
+    await session.execute(sa_update(AlertLog).where(AlertLog.destination_id == dest_id).values(destination_id=None))
+    rules = (await session.exec(select(AlertRule).where(AlertRule.destination_id == dest_id))).all()
     for r in rules:
         await session.execute(sa_update(AlertLog).where(AlertLog.rule_id == r.id).values(rule_id=None))
         await session.delete(r)
@@ -169,16 +170,15 @@ async def delete_destination(
 # Rules
 # ---------------------------------------------------------------------------
 
+
 @router.get("/alerts/rules", response_model=list[RuleOut])
 async def list_rules(
     current_user: Annotated[User, Depends(require_api_auth)],
     session: Annotated[AsyncSession, Depends(get_session)],
 ):
-    rules = (await session.exec(
-        select(AlertRule)
-        .where(AlertRule.user_id == current_user.id)
-        .order_by(AlertRule.created_at)
-    )).all()
+    rules = (
+        await session.exec(select(AlertRule).where(AlertRule.user_id == current_user.id).order_by(AlertRule.created_at))
+    ).all()
     return [RuleOut.model_validate(r) for r in rules]
 
 
@@ -257,12 +257,11 @@ async def delete_rule(
 # Alert log
 # ---------------------------------------------------------------------------
 
+
 async def get_alert_log(user_id: int, session: AsyncSession, limit: int = 50) -> list[dict]:
     """Shared helper used by both the JSON API and the server-side page render."""
     # Load current rules so legacy logs (pre-migration, no user_id) are still found.
-    rules = (await session.exec(
-        select(AlertRule).where(AlertRule.user_id == user_id)
-    )).all()
+    rules = (await session.exec(select(AlertRule).where(AlertRule.user_id == user_id))).all()
     rule_map = {r.id: r for r in rules}
     rule_ids = list(rule_map.keys())
 
@@ -270,14 +269,9 @@ async def get_alert_log(user_id: int, session: AsyncSession, limit: int = 50) ->
     if rule_ids:
         log_filter = or_(AlertLog.user_id == user_id, AlertLog.rule_id.in_(rule_ids))
     else:
-        log_filter = (AlertLog.user_id == user_id)
+        log_filter = AlertLog.user_id == user_id
 
-    logs = (await session.exec(
-        select(AlertLog)
-        .where(log_filter)
-        .order_by(AlertLog.sent_at.desc())
-        .limit(limit)
-    )).all()
+    logs = (await session.exec(select(AlertLog).where(log_filter).order_by(AlertLog.sent_at.desc()).limit(limit))).all()
     if not logs:
         return []
 
@@ -285,24 +279,18 @@ async def get_alert_log(user_id: int, session: AsyncSession, limit: int = 50) ->
     snap_dest_ids = list({log.destination_id for log in logs if log.destination_id is not None})
     snap_dest_map: dict[int, AlertDestination] = {}
     if snap_dest_ids:
-        snap_dests = (await session.exec(
-            select(AlertDestination).where(AlertDestination.id.in_(snap_dest_ids))
-        )).all()
+        snap_dests = (await session.exec(select(AlertDestination).where(AlertDestination.id.in_(snap_dest_ids)))).all()
         snap_dest_map = {d.id: d for d in snap_dests}
 
     # Batch load current rule destinations as a fallback for legacy logs.
     rule_dest_ids = list({r.destination_id for r in rules})
     rule_dest_map: dict[int, AlertDestination] = {}
     if rule_dest_ids:
-        rule_dests = (await session.exec(
-            select(AlertDestination).where(AlertDestination.id.in_(rule_dest_ids))
-        )).all()
+        rule_dests = (await session.exec(select(AlertDestination).where(AlertDestination.id.in_(rule_dest_ids)))).all()
         rule_dest_map = {d.id: d for d in rule_dests}
 
     ext_ids = list({log.extension_id for log in logs})
-    exts = (await session.exec(
-        select(Extension).where(Extension.id.in_(ext_ids))
-    )).all()
+    exts = (await session.exec(select(Extension).where(Extension.id.in_(ext_ids)))).all()
     ext_map = {e.id: e for e in exts}
 
     result = []
@@ -318,16 +306,18 @@ async def get_alert_log(user_id: int, session: AsyncSession, limit: int = 50) ->
             dest = None
 
         ext = ext_map.get(log.extension_id)
-        result.append({
-            "id": log.id,
-            "sent_at": log.sent_at.isoformat(),
-            "event_type": log.event_type,
-            "extension_id": log.extension_id,
-            "ext_name": (ext.name or ext.extension_id) if ext else f"Extension {log.extension_id}",
-            "dest_label": dest.label if dest else "—",
-            "success": log.success,
-            "error": log.error,
-        })
+        result.append(
+            {
+                "id": log.id,
+                "sent_at": log.sent_at.isoformat(),
+                "event_type": log.event_type,
+                "extension_id": log.extension_id,
+                "ext_name": (ext.name or ext.extension_id) if ext else f"Extension {log.extension_id}",
+                "dest_label": dest.label if dest else "—",
+                "success": log.success,
+                "error": log.error,
+            }
+        )
     return result
 
 
@@ -343,6 +333,7 @@ async def alert_log(
 # ---------------------------------------------------------------------------
 # Test a webhook destination
 # ---------------------------------------------------------------------------
+
 
 @router.post("/alerts/destinations/{dest_id}/test")
 async def test_destination(
@@ -363,7 +354,7 @@ async def test_destination(
     if settings.app_base_url:
         ext_payload["marvin_url"] = f"{settings.app_base_url.rstrip('/')}/extensions/0"
     payload = {
-        "text": f"Marvin test alert from destination \"{dest.label}\"",
+        "text": f'Marvin test alert from destination "{dest.label}"',
         "event": "test",
         "extension": ext_payload,
         "change": {"old": "low", "new": "high"},
@@ -382,4 +373,4 @@ async def test_destination(
         raise HTTPException(
             status_code=502,
             detail="Failed to deliver test webhook to the destination",
-        )
+        ) from exc

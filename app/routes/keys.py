@@ -37,11 +37,9 @@ async def list_keys(
     current_user: Annotated[User, Depends(require_api_auth)],
     session: Annotated[AsyncSession, Depends(get_session)],
 ):
-    keys = (await session.exec(
-        select(ApiKey)
-        .where(ApiKey.user_id == current_user.id)
-        .order_by(ApiKey.created_at)
-    )).all()
+    keys = (
+        await session.exec(select(ApiKey).where(ApiKey.user_id == current_user.id).order_by(ApiKey.created_at))
+    ).all()
     return [
         ApiKeyOut(
             id=k.id,

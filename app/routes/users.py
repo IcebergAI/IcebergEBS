@@ -3,11 +3,12 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel, Field
-from sqlalchemy import delete as sa_delete, update as sa_update
+from sqlalchemy import delete as sa_delete
+from sqlalchemy import update as sa_update
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from app.auth import clear_session, hash_password, verify_password, require_admin, require_api_auth
+from app.auth import clear_session, hash_password, require_admin, require_api_auth, verify_password
 from app.database import get_session
 from app.models import AlertDestination, AlertLog, AlertRule, ApiKey, Extension, User
 
@@ -81,24 +82,16 @@ async def delete_user(
     # delete_rule / delete_destination keep AlertLog rows and only sever the FKs
     # to the rows being removed (#28). The forensic trail (alert log + each
     # extension's fetch/install history) survives an account deletion.
-    rule_ids = (await session.exec(
-        select(AlertRule.id).where(AlertRule.user_id == user_id)
-    )).all()
-    dest_ids = (await session.exec(
-        select(AlertDestination.id).where(AlertDestination.user_id == user_id)
-    )).all()
+    rule_ids = (await session.exec(select(AlertRule.id).where(AlertRule.user_id == user_id))).all()
+    dest_ids = (await session.exec(select(AlertDestination.id).where(AlertDestination.user_id == user_id))).all()
 
     # Null the AlertLog FKs that point at the user/rules/destinations we delete,
     # leaving the log rows (and their still-valid extension_id) intact. The
     # extension FK stays valid because we orphan extensions below rather than
     # deleting them — a dangling FK would raise IntegrityError on Postgres.
-    await session.execute(
-        sa_update(AlertLog).where(AlertLog.user_id == user_id).values(user_id=None)
-    )
+    await session.execute(sa_update(AlertLog).where(AlertLog.user_id == user_id).values(user_id=None))
     if rule_ids:
-        await session.execute(
-            sa_update(AlertLog).where(AlertLog.rule_id.in_(rule_ids)).values(rule_id=None)
-        )
+        await session.execute(sa_update(AlertLog).where(AlertLog.rule_id.in_(rule_ids)).values(rule_id=None))
     if dest_ids:
         await session.execute(
             sa_update(AlertLog).where(AlertLog.destination_id.in_(dest_ids)).values(destination_id=None)

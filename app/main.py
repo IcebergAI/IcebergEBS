@@ -12,11 +12,11 @@ from app.auth import require_auth
 from app.config import settings
 from app.database import init_db
 from app.models import User
+from app.routes import alerts as alerts_routes
 from app.routes import api as api_routes
+from app.routes import keys as keys_routes
 from app.routes import ui as ui_routes
 from app.routes import users as users_routes
-from app.routes import alerts as alerts_routes
-from app.routes import keys as keys_routes
 from app.scheduler import create_scheduler
 from app.version import get_version
 
@@ -28,6 +28,7 @@ async def lifespan(app: FastAPI):
     await init_db()
 
     from app.auth import seed_admin
+
     await seed_admin()
 
     client = httpx.AsyncClient(

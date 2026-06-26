@@ -1,0 +1,57 @@
+# Static-analysis config for the CI gates (ruff, mypy, bandit). See
+# .github/workflows/ci.yml. Dev tooling is pinned loosely in requirements-dev.txt.
+
+[tool.ruff]
+target-version = "py313"  # ruff has no py314 target yet; 3.13 rules are a safe superset
+line-length = 120
+
+[tool.ruff.lint]
+# Real-bug + import-hygiene rules. Deliberately no "UP" (pyupgrade): it would
+# rewrite the documented `timezone.utc` / `Optional[...]` conventions repo-wide
+# (see CLAUDE.md) — out of scope for CI setup.
+select = ["E", "F", "W", "I", "B"]
+# E501 (line length) is handled by the formatter; the codebase has intentionally
+# long where-clauses / comments that we don't want to hard-wrap.
+# B008 fires on FastAPI's `= Depends(...)` / `= Query(...)` defaults, which is the
+# required framework idiom — not a bug.
+ignore = ["E501", "B008"]
+
+[tool.ruff.lint.per-file-ignores]
+# Test modules legitimately do mid-file imports (section grouping, and conftest
+# sets env vars before importing the app).
+"tests/*" = ["E402"]
+
+[tool.mypy]
+# Contract checking at module boundaries: mypy enforces types on the pure
+# logic / interface modules (scoring, threat_intel, validation, config, …)
+# where annotations are meaningful. The ORM-query modules are excluded below —
+# mypy can't see through SQLModel's declarative attributes (it reads
+# `Extension.last_updated` as a plain `datetime`, not a column), so query-building
+# code produces overwhelming false positives there. pydantic.mypy teaches mypy
+# about BaseModel/Settings construction.
+python_version = "3.14"
+files = ["app"]
+plugins = ["pydantic.mypy"]
+ignore_missing_imports = true
+check_untyped_defs = true
+disallow_untyped_defs = false
+warn_return_any = false
+warn_unused_ignores = false
+
+# ORM-query / DB-session modules: excluded from type errors because SQLModel's
+# column expressions (`.where`, `.order_by`, `Model.col.desc()`, column `select()`)
+# are not understood by mypy without a SQLModel-aware plugin (none is maintained).
+[[tool.mypy.overrides]]
+module = [
+    "app.routes.*",
+    "app.services",
+    "app.scheduler",
+    "app.notifications",
+    "app.retention",
+    "app.database",
+    "app.fetchers.*",
+]
+ignore_errors = true
+
+[tool.bandit]
+exclude_dirs = ["tests"]

@@ -1,10 +1,8 @@
 from unittest.mock import MagicMock
 
-import pytest
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.auth import create_session_cookie, get_current_user, verify_credentials
-from app.models import User
 
 
 async def test_verify_credentials_correct(test_db, admin_user):
@@ -34,6 +32,7 @@ async def test_verify_credentials_both_wrong(test_db, admin_user):
 
 def test_get_current_user_valid_cookie():
     from app.config import settings
+
     token = create_session_cookie("testadmin")
     request = MagicMock()
     request.cookies.get = lambda k, default=None: token if k == settings.session_cookie_name else default
@@ -67,6 +66,7 @@ async def test_login_correct_credentials(anon_client, admin_user):
     assert r.status_code == 303
     assert r.headers["location"] == "/"
     from app.config import settings
+
     assert settings.session_cookie_name in r.cookies
 
 
@@ -79,6 +79,7 @@ async def test_login_wrong_credentials(anon_client, admin_user):
     assert r.status_code == 200  # re-render, not redirect
     assert b"Invalid credentials" in r.content
     from app.config import settings
+
     assert settings.session_cookie_name not in r.cookies
 
 
@@ -97,4 +98,5 @@ async def test_logout(client):
     r = await client.post("/logout", follow_redirects=False)
     assert r.status_code == 303
     from app.config import settings
+
     assert settings.session_cookie_name not in r.cookies or r.cookies[settings.session_cookie_name] == ""
