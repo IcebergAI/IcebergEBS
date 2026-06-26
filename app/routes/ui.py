@@ -378,8 +378,16 @@ async def dashboard(
             clean.pop("order", None)
         return "/?" + urlencode(clean) if clean else "/"
 
+    def export_url(fmt: str) -> str:
+        # Export honours the active filters/sort (but not pagination).
+        params = {"format": fmt, "store": store, "risk": risk, "q": q, "sort": sort, "order": order}
+        clean = {k: v for k, v in params.items() if v not in (None, "")}
+        return "/api/extensions/export?" + urlencode(clean)
+
     return _render(request, "dashboard.html", {
         "qs": qs,
+        "export_csv_url": export_url("csv"),
+        "export_json_url": export_url("json"),
         "extensions": ext_dicts,
         "extensions_count": extensions_count,
         "high_risk_count": high_risk,

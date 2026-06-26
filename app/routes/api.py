@@ -1,3 +1,5 @@
+import csv
+import io
 import json
 import logging
 import re
@@ -7,6 +9,7 @@ from urllib.parse import urlparse, parse_qs
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel
 from sqlalchemy import delete as sa_delete, func, or_
 from sqlmodel import select
@@ -341,6 +344,73 @@ async def list_extensions(
         total=total,
         limit=limit,
         offset=offset,
+    )
+
+
+# Flat "key fields" projection for export — score + identity + the headline risk
+# signals, but not the heavy nested findings / threat-intel (those belong to the
+# single-extension view). Order defines the CSV column order.
+EXPORT_FIELDS = [
+    "id", "store", "extension_id", "name", "publisher", "version",
+    "install_count", "last_updated", "risk_score", "risk_level",
+    "permissions", "watchlist", "added_at", "last_fetched_at",
+]
+
+
+def _export_row(ext: Extension) -> dict:
+    perms = _safe_json(ext.permissions, "[]", "permissions", ext.id)
+    return {
+        "id": ext.id,
+        "store": ext.store,
+        "extension_id": ext.extension_id,
+        "name": ext.name,
+        "publisher": ext.publisher,
+        "version": ext.version,
+        "install_count": ext.install_count,
+        "last_updated": ext.last_updated.isoformat() if ext.last_updated else None,
+        "risk_score": ext.risk_score,
+        "risk_level": risk_level(ext.risk_score),
+        "permissions": ";".join(perms) if isinstance(perms, list) else "",
+        "watchlist": ext.watchlist,
+        "added_at": ext.added_at.isoformat() if ext.added_at else None,
+        "last_fetched_at": ext.last_fetched_at.isoformat() if ext.last_fetched_at else None,
+    }
+
+
+@router.get("/extensions/export")
+async def export_extensions(
+    current_user: Annotated[User, Depends(require_api_auth)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+    format: Literal["csv", "json"] = "csv",
+    store: StoreType | None = None,
+    risk: RiskLevel | None = None,
+    publisher: str | None = None,
+    q: str | None = Query(None, description="Free-text search over name, publisher and id"),
+    sort: SortField = "risk_score",
+    order: SortOrder = "desc",
+):
+    """Export the full (filtered) extension set with score + key fields, for
+    reporting / downstream ingest. Shares the list endpoint's filter/sort params
+    (`build_extension_query`) but is **not** paginated — it returns every match."""
+    stmt = build_extension_query(
+        current_user.id, store=store, risk=risk, publisher=publisher, q=q, sort=sort, order=order,
+    )
+    rows = [_export_row(e) for e in (await session.exec(stmt)).all()]
+
+    if format == "json":
+        return JSONResponse(
+            rows,
+            headers={"Content-Disposition": 'attachment; filename="marvin-extensions.json"'},
+        )
+
+    buf = io.StringIO()
+    writer = csv.DictWriter(buf, fieldnames=EXPORT_FIELDS, extrasaction="ignore")
+    writer.writeheader()
+    writer.writerows(rows)
+    return Response(
+        content=buf.getvalue(),
+        media_type="text/csv",
+        headers={"Content-Disposition": 'attachment; filename="marvin-extensions.csv"'},
     )
 
 
