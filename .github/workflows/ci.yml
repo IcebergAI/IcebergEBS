@@ -1,0 +1,65 @@
+name: CI
+
+# Correctness + static-analysis gates. Runs on every PR and on pushes to main.
+# All four jobs are required to pass (configure as required checks in branch
+# protection). Tooling config lives in pyproject.toml; dev deps in
+# requirements-dev.txt.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+          cache: pip
+      - run: pip install -r requirements-dev.txt
+      - run: python -m pytest -q
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+          cache: pip
+      - run: pip install ruff
+      - run: ruff check app tests
+      - run: ruff format --check app tests alembic
+
+  types:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+          cache: pip
+      # mypy needs the app's deps importable (and the pydantic plugin).
+      - run: pip install -r requirements-dev.txt
+      - run: mypy app
+
+  security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+          cache: pip
+      - run: pip install "bandit[toml]" pip-audit
+      - run: bandit -c pyproject.toml -r app
+      # Audit the production dependency set (unpinned → latest patched). If an
+      # unfixable upstream advisory ever blocks CI, add `--ignore-vuln <ID>` here
+      # with a comment explaining why.
+      - run: pip-audit -r requirements.txt

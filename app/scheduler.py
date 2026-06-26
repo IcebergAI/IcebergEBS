@@ -27,12 +27,14 @@ async def _refresh_one(ext_id: int, client: httpx.AsyncClient) -> None:
             await session.commit()
         except FetchError as exc:
             logger.warning("Fetch failed for %s/%s: %s", ext.store, ext.extension_id, exc)
-            session.add(FetchLog(
-                extension_id=ext.id,
-                success=False,
-                error_message=str(exc),
-                risk_score_before=score_before,
-            ))
+            session.add(
+                FetchLog(
+                    extension_id=ext.id,
+                    success=False,
+                    error_message=str(exc),
+                    risk_score_before=score_before,
+                )
+            )
             await session.commit()
             return
         except Exception:
@@ -48,9 +50,11 @@ async def _refresh_one(ext_id: int, client: httpx.AsyncClient) -> None:
 async def refresh_watchlist(client: httpx.AsyncClient) -> None:
     logger.info("Starting watchlist refresh")
     async with AsyncSession(engine) as session:
-        ext_ids = (await session.exec(
-            select(Extension.id).where(Extension.watchlist == True)  # noqa: E712
-        )).all()
+        ext_ids = (
+            await session.exec(
+                select(Extension.id).where(Extension.watchlist == True)  # noqa: E712
+            )
+        ).all()
 
     for ext_id in ext_ids:
         await _refresh_one(ext_id, client)

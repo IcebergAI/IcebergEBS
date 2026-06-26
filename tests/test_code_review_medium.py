@@ -3,6 +3,7 @@
 Each test maps to a GitHub issue in the "Marvin — Code Review Remediation" project:
 M1 #6, M2 #7, M3 #8, M4 #9, M5 #10, D2 #12.
 """
+
 from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -12,12 +13,12 @@ from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.auth import _session_after_password_change, create_session_cookie
-from app.fetchers.base import BaseFetcher, FetchError
+from app.fetchers.base import BaseFetcher
 from app.models import ApiKey, User
 from app.ratelimit import LoginRateLimiter
 
-
 # ───────────────────────── M1 (#6) — revocation ─────────────────────────
+
 
 def test_session_after_password_change_tolerance():
     user = MagicMock()
@@ -41,9 +42,7 @@ def test_session_after_password_change_handles_naive_datetime():
     user = MagicMock()
     user.password_changed_at = datetime.now()  # naive (e.g. from SQLite)
     # Must not raise comparing aware vs naive.
-    assert isinstance(
-        _session_after_password_change(user, datetime.now(timezone.utc)), bool
-    )
+    assert isinstance(_session_after_password_change(user, datetime.now(timezone.utc)), bool)
 
 
 async def test_password_change_revokes_api_keys_and_bumps_marker(client, test_db, admin_user):
@@ -52,9 +51,7 @@ async def test_password_change_revokes_api_keys_and_bumps_marker(client, test_db
     assert r.status_code == 201
     raw_key = r.json()["raw_key"]
 
-    before = await client.get(
-        "/api/extensions", headers={"Authorization": f"Bearer {raw_key}"}
-    )
+    before = await client.get("/api/extensions", headers={"Authorization": f"Bearer {raw_key}"})
     assert before.status_code == 200
 
     # Change the password.
@@ -65,9 +62,7 @@ async def test_password_change_revokes_api_keys_and_bumps_marker(client, test_db
     assert r.status_code == 200
 
     # The bearer token is now revoked.
-    after = await client.get(
-        "/api/extensions", headers={"Authorization": f"Bearer {raw_key}"}
-    )
+    after = await client.get("/api/extensions", headers={"Authorization": f"Bearer {raw_key}"})
     assert after.status_code == 401
 
     async with AsyncSession(test_db) as s:
@@ -79,6 +74,7 @@ async def test_password_change_revokes_api_keys_and_bumps_marker(client, test_db
 
 # ───────────────────────── M2 (#7) — admin UI redirect ─────────────────────────
 
+
 async def test_admin_ui_redirects_non_admin(test_db):
     """A non-admin hitting an HTML admin route gets a 303 redirect, not a JSON 403."""
     from httpx import ASGITransport, AsyncClient
@@ -89,6 +85,7 @@ async def test_admin_ui_redirects_non_admin(test_db):
 
     async with AsyncSession(test_db) as s:
         from app.auth import hash_password
+
         regular = User(username="reg", password_hash=await hash_password("pw"), is_admin=False)
         s.add(regular)
         await s.commit()
@@ -100,8 +97,9 @@ async def test_admin_ui_redirects_non_admin(test_db):
     app.dependency_overrides[get_session] = override_session
     cookie = create_session_cookie("reg")
     transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test",
-                           cookies={settings.session_cookie_name: cookie}) as c:
+    async with AsyncClient(
+        transport=transport, base_url="http://test", cookies={settings.session_cookie_name: cookie}
+    ) as c:
         r = await c.get("/admin/users", follow_redirects=False)
     app.dependency_overrides.clear()
 
@@ -117,6 +115,7 @@ async def test_admin_ui_redirects_anonymous(anon_client):
 
 # ───────────────────────── M3 (#8) — login rate limiting ─────────────────────────
 
+
 def test_rate_limiter_locks_after_threshold():
     t = [1000.0]
     rl = LoginRateLimiter(max_attempts=3, window_seconds=300, lockout_seconds=60, now=lambda: t[0])
@@ -125,7 +124,7 @@ def test_rate_limiter_locks_after_threshold():
     rl.record_failure(k)
     rl.record_failure(k)
     assert rl.retry_after(k) is None  # under threshold
-    rl.record_failure(k)             # threshold reached → locked
+    rl.record_failure(k)  # threshold reached → locked
     assert rl.retry_after(k) is not None
     # Lockout expires after the cooldown.
     t[0] += 61
@@ -156,13 +155,15 @@ async def test_login_locks_out_after_repeated_failures(anon_client, admin_user, 
     monkeypatch.setattr("app.routes.ui.login_limiter", fresh)
     for _ in range(3):
         r = await anon_client.post(
-            "/login", data={"username": "testadmin", "password": "wrong"},
+            "/login",
+            data={"username": "testadmin", "password": "wrong"},
             follow_redirects=False,
         )
         assert r.status_code == 200  # invalid creds re-render
     # Next attempt is locked out — even the correct password is refused.
     r = await anon_client.post(
-        "/login", data={"username": "testadmin", "password": "testpass"},
+        "/login",
+        data={"username": "testadmin", "password": "testpass"},
         follow_redirects=False,
     )
     assert r.status_code == 429
@@ -171,19 +172,19 @@ async def test_login_locks_out_after_repeated_failures(anon_client, admin_user, 
 
 # ───────────────────────── M4 (#9) — error sanitisation ─────────────────────────
 
+
 async def test_webhook_test_hides_internal_error(client, test_db, admin_user):
     async with AsyncSession(test_db) as s:
         from app.models import AlertDestination
-        dest = AlertDestination(user_id=admin_user.id, label="d",
-                                target="https://hooks.example.com/x", enabled=True)
+
+        dest = AlertDestination(user_id=admin_user.id, label="d", target="https://hooks.example.com/x", enabled=True)
         s.add(dest)
         await s.commit()
         await s.refresh(dest)
         dest_id = dest.id
 
     secret = "connect to 10.1.2.3:443 failed"
-    with patch("app.routes.alerts.send_webhook",
-               new=AsyncMock(side_effect=Exception(secret))):
+    with patch("app.routes.alerts.send_webhook", new=AsyncMock(side_effect=Exception(secret))):
         r = await client.post(f"/api/alerts/destinations/{dest_id}/test")
     assert r.status_code == 502
     body = r.json()
@@ -192,6 +193,7 @@ async def test_webhook_test_hides_internal_error(client, test_db, admin_user):
 
 
 # ───────────────────────── M5 (#10) — narrow fetcher except ─────────────────────────
+
 
 class _NetFailFetcher(BaseFetcher):
     async def fetch_metadata(self, extension_id):
@@ -222,21 +224,32 @@ async def test_programming_error_propagates():
 
 # ───────────────────────── D2 (#12) — list vs detail serializer ─────────────────────────
 
+
 async def test_list_omits_threat_intel_but_detail_includes_it(api_key_client, test_db, admin_user):
     import json
 
     analysis = {
-        "host_permissions": [], "findings": [],
+        "host_permissions": [],
+        "findings": [],
         "external_domains": ["evil.example.com"],
         "external_urls": ["https://evil.example.com/x"],
         "network_callout_urls": ["https://evil.example.com/x"],
     }
     async with AsyncSession(test_db) as s:
         from app.models import Extension
-        ext = Extension(user_id=admin_user.id, store="chrome",
-                        extension_id="a" * 32, name="E", publisher="P", version="1",
-                        store_url="https://x", permissions='["storage"]',
-                        package_analysis=json.dumps(analysis), risk_score=10)
+
+        ext = Extension(
+            user_id=admin_user.id,
+            store="chrome",
+            extension_id="a" * 32,
+            name="E",
+            publisher="P",
+            version="1",
+            store_url="https://x",
+            permissions='["storage"]',
+            package_analysis=json.dumps(analysis),
+            risk_score=10,
+        )
         s.add(ext)
         await s.commit()
         await s.refresh(ext)

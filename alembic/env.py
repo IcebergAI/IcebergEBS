@@ -7,6 +7,7 @@ Postgres share one config. Supports three callers:
 * application startup, which hands in an existing (sync) connection via
   ``config.attributes["connection"]`` — see ``app.database.init_db``.
 """
+
 from logging.config import fileConfig
 
 from alembic import context
@@ -31,7 +32,7 @@ def _sync_url() -> str:
 def _configure(**kwargs) -> None:
     context.configure(
         target_metadata=target_metadata,
-        render_as_batch=True,   # batch mode so future SQLite ALTERs work
+        render_as_batch=True,  # batch mode so future SQLite ALTERs work
         compare_type=True,
         **kwargs,
     )

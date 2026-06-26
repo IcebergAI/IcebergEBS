@@ -1,25 +1,26 @@
 import io
 import json
+
+# Override settings before importing app modules
+import os
 import zipfile
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
-from sqlmodel import SQLModel
 from sqlalchemy.ext.asyncio import create_async_engine
+from sqlmodel import SQLModel
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-# Override settings before importing app modules
-import os
 os.environ.setdefault("MARVIN_ADMIN_USERNAME", "testadmin")
 os.environ.setdefault("MARVIN_ADMIN_PASSWORD", "testpass")
 os.environ.setdefault("MARVIN_SECRET_KEY", "test-secret-key-for-testing-only-32chars")
 
-from app.main import app
+from app.auth import create_session_cookie, generate_api_key, hash_api_key, hash_password
 from app.config import settings
 from app.database import get_session
-from app.auth import create_session_cookie, generate_api_key, hash_api_key, hash_password
+from app.main import app
 from app.models import ApiKey, User
 
 
@@ -40,12 +41,17 @@ def make_fake_vsix(manifest: dict | None = None) -> bytes:
             "contributes": {},
         }
         zf.writestr("extension/package.json", json.dumps(pkg))
-        zf.writestr("extension/manifest.json", json.dumps({
-            "manifest_version": 3,
-            "name": "Test Extension",
-            "version": "1.2.3",
-            "permissions": ["storage"],
-        }))
+        zf.writestr(
+            "extension/manifest.json",
+            json.dumps(
+                {
+                    "manifest_version": 3,
+                    "name": "Test Extension",
+                    "version": "1.2.3",
+                    "permissions": ["storage"],
+                }
+            ),
+        )
         zf.writestr("extension/background.js", 'console.log("hello");')
     return buf.getvalue()
 
@@ -105,6 +111,7 @@ async def admin_user(test_db) -> User:
 @pytest_asyncio.fixture
 async def client(test_db, admin_user):
     """Authenticated test client with in-memory DB."""
+
     async def override_session():
         async with AsyncSession(test_db) as s:
             yield s
@@ -130,6 +137,7 @@ async def client(test_db, admin_user):
 @pytest_asyncio.fixture
 async def api_key_client(test_db, admin_user):
     """Authenticated test client using Bearer token instead of session cookie."""
+
     async def override_session():
         async with AsyncSession(test_db) as s:
             yield s
@@ -158,6 +166,7 @@ async def api_key_client(test_db, admin_user):
 @pytest_asyncio.fixture
 async def readonly_api_key_client(test_db, admin_user):
     """Authenticated test client with a read-only Bearer token."""
+
     async def override_session():
         async with AsyncSession(test_db) as s:
             yield s
@@ -169,12 +178,14 @@ async def readonly_api_key_client(test_db, admin_user):
 
     raw_key = generate_api_key()
     async with AsyncSession(test_db) as s:
-        s.add(ApiKey(
-            user_id=admin_user.id,
-            label="readonly-test-key",
-            key_hash=hash_api_key(raw_key),
-            readonly=True,
-        ))
+        s.add(
+            ApiKey(
+                user_id=admin_user.id,
+                label="readonly-test-key",
+                key_hash=hash_api_key(raw_key),
+                readonly=True,
+            )
+        )
         await s.commit()
 
     transport = ASGITransport(app=app)
@@ -191,6 +202,7 @@ async def readonly_api_key_client(test_db, admin_user):
 @pytest_asyncio.fixture
 async def anon_client(test_db):
     """Unauthenticated test client."""
+
     async def override_session():
         async with AsyncSession(test_db) as s:
             yield s

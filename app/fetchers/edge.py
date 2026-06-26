@@ -9,10 +9,7 @@ from app.fetchers.base import BaseFetcher, ExtensionMetadata, FetchError
 
 logger = logging.getLogger(__name__)
 
-_API_URL = (
-    "https://microsoftedge.microsoft.com/addons/getproductdetailsbycrxid"
-    "/{extension_id}?hl=en-US"
-)
+_API_URL = "https://microsoftedge.microsoft.com/addons/getproductdetailsbycrxid/{extension_id}?hl=en-US"
 _DETAIL_URL = "https://microsoftedge.microsoft.com/addons/detail/{extension_id}"
 _DOWNLOAD_URL = (
     "https://edge.microsoft.com/extensionwebstorebase/v1/crx"
@@ -64,7 +61,10 @@ class EdgeFetcher(BaseFetcher):
         metadata = _parse_response(data, extension_id)
         logger.info(
             "Edge metadata fetched: %s v%s by %s, installs=%s",
-            metadata.name, metadata.version, metadata.publisher, metadata.install_count,
+            metadata.name,
+            metadata.version,
+            metadata.publisher,
+            metadata.install_count,
         )
 
         manifest_str = data.get("manifest", "")
@@ -86,7 +86,8 @@ class EdgeFetcher(BaseFetcher):
             # being swallowed behind the manifest-only fallback (M5 / #10).
             logger.warning(
                 "Edge CRX unavailable for %s (%s) — JS analysis skipped, using manifest-only package",
-                extension_id, exc,
+                extension_id,
+                exc,
             )
 
         return metadata, pkg_bytes

@@ -3,15 +3,15 @@ from datetime import datetime, timedelta, timezone
 from typing import Annotated
 from urllib.parse import urlencode
 
-from fastapi import APIRouter, Depends, Form, HTTPException, Request
+from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
-from itsdangerous import BadSignature, URLSafeTimedSerializer
+from itsdangerous import URLSafeTimedSerializer
 from sqlalchemy import and_, func
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from app.auth import clear_session, get_current_user, require_auth, require_admin_ui, set_session, verify_credentials
+from app.auth import clear_session, get_current_user, require_admin_ui, require_auth, set_session, verify_credentials
 from app.config import settings
 from app.database import get_session
 from app.models import AlertDestination, AlertRule, ApiKey, Extension, FetchLog, User
@@ -91,6 +91,7 @@ def _render(request: Request, template: str, ctx: dict, user: User | None = None
 # Login / logout
 # ---------------------------------------------------------------------------
 
+
 @router.get("/login", response_class=HTMLResponse)
 async def login_page(request: Request):
     if get_current_user(request):
@@ -110,7 +111,8 @@ async def login_post(
     retry_after = login_limiter.retry_after(key)
     if retry_after is not None:
         response = _render(
-            request, "login.html",
+            request,
+            "login.html",
             {"error": "Too many failed attempts — please try again later."},
         )
         response.status_code = 429
@@ -137,6 +139,7 @@ async def logout(request: Request, _: Annotated[User, Depends(require_auth)]):
 # ---------------------------------------------------------------------------
 # Dashboard
 # ---------------------------------------------------------------------------
+
 
 def _ext_to_dict(e: Extension) -> dict:
     return {
@@ -170,37 +173,53 @@ def _finding_sections(rows: list[dict], source: str) -> tuple[list[dict], str]:
     details = _unique([row["detail"] for row in rows if row["detail"]])
 
     if len(details) == 1:
-        return ([{
-            "type": "detail",
-            "detail": details[0],
-            "locations": locations,
-        }], "locations")
+        return (
+            [
+                {
+                    "type": "detail",
+                    "detail": details[0],
+                    "locations": locations,
+                }
+            ],
+            "locations",
+        )
 
     if len(locations) == 1:
-        return ([{
-            "type": "location",
-            "location": "" if locations[0] == source else locations[0],
-            "details": details,
-        }], "findings")
+        return (
+            [
+                {
+                    "type": "location",
+                    "location": "" if locations[0] == source else locations[0],
+                    "details": details,
+                }
+            ],
+            "findings",
+        )
 
     if len(details) <= len(locations):
-        return ([
-            {
-                "type": "detail",
-                "detail": detail,
-                "locations": _unique([row["location"] for row in rows if row["detail"] == detail]),
-            }
-            for detail in details
-        ], "entries")
+        return (
+            [
+                {
+                    "type": "detail",
+                    "detail": detail,
+                    "locations": _unique([row["location"] for row in rows if row["detail"] == detail]),
+                }
+                for detail in details
+            ],
+            "entries",
+        )
 
-    return ([
-        {
-            "type": "location",
-            "location": "" if location == source else location,
-            "details": _unique([row["detail"] for row in rows if row["location"] == location and row["detail"]]),
-        }
-        for location in locations
-    ], "entries")
+    return (
+        [
+            {
+                "type": "location",
+                "location": "" if location == source else location,
+                "details": _unique([row["detail"] for row in rows if row["location"] == location and row["detail"]]),
+            }
+            for location in locations
+        ],
+        "entries",
+    )
 
 
 def _group_detection_findings(findings: list[dict]) -> list[dict]:
@@ -216,24 +235,29 @@ def _group_detection_findings(findings: list[dict]) -> list[dict]:
         detail = finding.get("detail") or ""
         key = (severity, source, code, title)
 
-        group = grouped.setdefault(key, {
-            "code": code,
-            "severity": severity,
-            "title": title,
-            "source": source,
-            "rows": [],
-            "_seen_rows": set(),
-        })
+        group = grouped.setdefault(
+            key,
+            {
+                "code": code,
+                "severity": severity,
+                "title": title,
+                "source": source,
+                "rows": [],
+                "_seen_rows": set(),
+            },
+        )
 
         location = _finding_location(finding, source)
         row_key = (location, detail)
         if row_key in group["_seen_rows"]:
             continue
         group["_seen_rows"].add(row_key)
-        group["rows"].append({
-            "location": location,
-            "detail": detail,
-        })
+        group["rows"].append(
+            {
+                "location": location,
+                "detail": detail,
+            }
+        )
 
     for group in grouped.values():
         group["sections"], group["row_label"] = _finding_sections(group["rows"], group["source"])
@@ -248,9 +272,7 @@ def _stale_after() -> timedelta:
     return timedelta(minutes=max(settings.fetch_interval_minutes * 2, 60))
 
 
-async def _latest_fetch_logs(
-    session: AsyncSession, ext_ids: list[int]
-) -> dict[int, FetchLog]:
+async def _latest_fetch_logs(session: AsyncSession, ext_ids: list[int]) -> dict[int, FetchLog]:
     """Map each extension id to its most recent FetchLog (one query, not N+1)."""
     if not ext_ids:
         return {}
@@ -259,15 +281,17 @@ async def _latest_fetch_logs(
         .where(FetchLog.extension_id.in_(ext_ids))
         .group_by(FetchLog.extension_id)
     ).subquery()
-    rows = (await session.exec(
-        select(FetchLog).join(
-            newest,
-            and_(
-                FetchLog.extension_id == newest.c.extension_id,
-                FetchLog.fetched_at == newest.c.mx,
-            ),
+    rows = (
+        await session.exec(
+            select(FetchLog).join(
+                newest,
+                and_(
+                    FetchLog.extension_id == newest.c.extension_id,
+                    FetchLog.fetched_at == newest.c.mx,
+                ),
+            )
         )
-    )).all()
+    ).all()
     # Two logs could share an exact timestamp; last one wins (arbitrary but stable).
     return {fl.extension_id: fl for fl in rows}
 
@@ -302,20 +326,19 @@ async def dashboard(
 
     # Lightweight fleet snapshot for the stat tiles (counts + fetch health) —
     # independent of the active filter, and cheap (no JSON columns loaded).
-    snapshot = (await session.exec(
-        select(
-            Extension.id, Extension.risk_score, Extension.watchlist, Extension.last_fetched_at
-        ).where(Extension.user_id == current_user.id)
-    )).all()
+    snapshot = (
+        await session.exec(
+            select(Extension.id, Extension.risk_score, Extension.watchlist, Extension.last_fetched_at).where(
+                Extension.user_id == current_user.id
+            )
+        )
+    ).all()
     extensions_count = len(snapshot)
     high_risk = sum(1 for r in snapshot if r.risk_score is not None and r.risk_score >= 50)
     watchlist_count = sum(1 for r in snapshot if r.watchlist)
     fetched = [r.last_fetched_at for r in snapshot if r.last_fetched_at]
     last_refresh = max(fetched) if fetched else None
-    next_refresh = (
-        last_refresh + timedelta(minutes=settings.fetch_interval_minutes)
-        if last_refresh else None
-    )
+    next_refresh = last_refresh + timedelta(minutes=settings.fetch_interval_minutes) if last_refresh else None
 
     now = datetime.now(timezone.utc)
     stale_after = _stale_after()
@@ -339,15 +362,18 @@ async def dashboard(
 
     # Filtered + sorted + paginated page of full rows for the table.
     stmt = build_extension_query(
-        current_user.id, store=store, risk=risk, q=q, sort=sort, order=order,
+        current_user.id,
+        store=store,
+        risk=risk,
+        q=q,
+        sort=sort,
+        order=order,
     )
     filtered_total = await _count(session, stmt)
     total_pages = max((filtered_total + _DASHBOARD_PAGE_SIZE - 1) // _DASHBOARD_PAGE_SIZE, 1)
     page = min(page, total_pages)
     offset = (page - 1) * _DASHBOARD_PAGE_SIZE
-    page_rows = (await session.exec(
-        stmt.limit(_DASHBOARD_PAGE_SIZE).offset(offset)
-    )).all()
+    page_rows = (await session.exec(stmt.limit(_DASHBOARD_PAGE_SIZE).offset(offset))).all()
 
     ext_dicts = []
     for e in page_rows:
@@ -384,36 +410,42 @@ async def dashboard(
         clean = {k: v for k, v in params.items() if v not in (None, "")}
         return "/api/extensions/export?" + urlencode(clean)
 
-    return _render(request, "dashboard.html", {
-        "qs": qs,
-        "export_csv_url": export_url("csv"),
-        "export_json_url": export_url("json"),
-        "extensions": ext_dicts,
-        "extensions_count": extensions_count,
-        "high_risk_count": high_risk,
-        "watchlist_count": watchlist_count,
-        "unhealthy_count": unhealthy,
-        "last_refresh_label": _ago(last_refresh),
-        "next_refresh_label": (
-            f"next ~{next_refresh.strftime('%H:%M')} UTC" if next_refresh else "next: scheduled"
-        ),
-        # Filter / sort / pagination state for the controls.
-        "filter_store": store,
-        "filter_risk": risk,
-        "search_q": q or "",
-        "sort": sort,
-        "order": order,
-        "page": page,
-        "total_pages": total_pages,
-        "filtered_total": filtered_total,
-        "showing_from": showing_from,
-        "showing_to": showing_to,
-    }, user=current_user)
+    return _render(
+        request,
+        "dashboard.html",
+        {
+            "qs": qs,
+            "export_csv_url": export_url("csv"),
+            "export_json_url": export_url("json"),
+            "extensions": ext_dicts,
+            "extensions_count": extensions_count,
+            "high_risk_count": high_risk,
+            "watchlist_count": watchlist_count,
+            "unhealthy_count": unhealthy,
+            "last_refresh_label": _ago(last_refresh),
+            "next_refresh_label": (
+                f"next ~{next_refresh.strftime('%H:%M')} UTC" if next_refresh else "next: scheduled"
+            ),
+            # Filter / sort / pagination state for the controls.
+            "filter_store": store,
+            "filter_risk": risk,
+            "search_q": q or "",
+            "sort": sort,
+            "order": order,
+            "page": page,
+            "total_pages": total_pages,
+            "filtered_total": filtered_total,
+            "showing_from": showing_from,
+            "showing_to": showing_to,
+        },
+        user=current_user,
+    )
 
 
 # ---------------------------------------------------------------------------
 # Add extension
 # ---------------------------------------------------------------------------
+
 
 @router.get("/extensions/add", response_class=HTMLResponse)
 async def add_extension_page(
@@ -435,6 +467,7 @@ async def bulk_import_page(
 # Extension detail
 # ---------------------------------------------------------------------------
 
+
 @router.get("/extensions/{ext_id}", response_class=HTMLResponse)
 async def extension_detail(
     ext_id: int,
@@ -448,12 +481,11 @@ async def extension_detail(
         _set_flash(response, "Extension not found")
         return response
 
-    fetch_logs = (await session.exec(
-        select(FetchLog)
-        .where(FetchLog.extension_id == ext_id)
-        .order_by(FetchLog.fetched_at.desc())
-        .limit(20)
-    )).all()
+    fetch_logs = (
+        await session.exec(
+            select(FetchLog).where(FetchLog.extension_id == ext_id).order_by(FetchLog.fetched_at.desc()).limit(20)
+        )
+    ).all()
 
     permissions = json.loads(ext.permissions or "[]")
     risk_detail = json.loads(ext.risk_detail or "null")
@@ -479,12 +511,10 @@ async def extension_detail(
         host_permissions = package_analysis.get("host_permissions", [])
     threat_intel_indicators = build_threat_intel_indicators(package_analysis)
     threat_intel_primary_indicators = [
-        indicator for indicator in threat_intel_indicators
-        if indicator.get("section") != "referenced"
+        indicator for indicator in threat_intel_indicators if indicator.get("section") != "referenced"
     ]
     threat_intel_referenced_indicators = [
-        indicator for indicator in threat_intel_indicators
-        if indicator.get("section") == "referenced"
+        indicator for indicator in threat_intel_indicators if indicator.get("section") == "referenced"
     ]
     score_history = [
         {"d": log.fetched_at.strftime("%b %d"), "s": log.risk_score_after}
@@ -492,23 +522,29 @@ async def extension_detail(
         if log.success and log.risk_score_after is not None
     ]
 
-    return _render(request, "extension_detail.html", {
-        "ext": ext,
-        "permissions": permissions,
-        "host_permissions": host_permissions,
-        "risk_detail": risk_detail,
-        "package_analysis": package_analysis,
-        "threat_intel_indicators": threat_intel_indicators,
-        "threat_intel_primary_indicators": threat_intel_primary_indicators,
-        "threat_intel_referenced_indicators": threat_intel_referenced_indicators,
-        "fetch_logs": fetch_logs,
-        "score_history": score_history,
-    }, user=current_user)
+    return _render(
+        request,
+        "extension_detail.html",
+        {
+            "ext": ext,
+            "permissions": permissions,
+            "host_permissions": host_permissions,
+            "risk_detail": risk_detail,
+            "package_analysis": package_analysis,
+            "threat_intel_indicators": threat_intel_indicators,
+            "threat_intel_primary_indicators": threat_intel_primary_indicators,
+            "threat_intel_referenced_indicators": threat_intel_referenced_indicators,
+            "fetch_logs": fetch_logs,
+            "score_history": score_history,
+        },
+        user=current_user,
+    )
 
 
 # ---------------------------------------------------------------------------
 # Admin — user management
 # ---------------------------------------------------------------------------
+
 
 @router.get("/admin/users", response_class=HTMLResponse)
 async def admin_users_page(
@@ -527,15 +563,21 @@ async def admin_users_page(
         }
         for u in users
     ]
-    return _render(request, "admin_users.html", {
-        "users": users_data,
-        "current_user_id": current_user.id,
-    }, user=current_user)
+    return _render(
+        request,
+        "admin_users.html",
+        {
+            "users": users_data,
+            "current_user_id": current_user.id,
+        },
+        user=current_user,
+    )
 
 
 # ---------------------------------------------------------------------------
 # Account — preferences (alert destinations + rules)
 # ---------------------------------------------------------------------------
+
 
 @router.get("/account", response_class=HTMLResponse)
 async def account_page(
@@ -543,57 +585,63 @@ async def account_page(
     current_user: Annotated[User, Depends(require_auth)],
     session: Annotated[AsyncSession, Depends(get_session)],
 ):
-    destinations = (await session.exec(
-        select(AlertDestination)
-        .where(AlertDestination.user_id == current_user.id)
-        .order_by(AlertDestination.created_at)
-    )).all()
+    destinations = (
+        await session.exec(
+            select(AlertDestination)
+            .where(AlertDestination.user_id == current_user.id)
+            .order_by(AlertDestination.created_at)
+        )
+    ).all()
 
-    rules = (await session.exec(
-        select(AlertRule)
-        .where(AlertRule.user_id == current_user.id)
-        .order_by(AlertRule.created_at)
-    )).all()
+    rules = (
+        await session.exec(select(AlertRule).where(AlertRule.user_id == current_user.id).order_by(AlertRule.created_at))
+    ).all()
 
-    extensions = (await session.exec(
-        select(Extension)
-        .where(Extension.user_id == current_user.id)
-        .order_by(Extension.name)
-    )).all()
+    extensions = (
+        await session.exec(select(Extension).where(Extension.user_id == current_user.id).order_by(Extension.name))
+    ).all()
 
     dest_map = {d.id: d.label for d in destinations}
     ext_map = {e.id: (e.name or e.extension_id) for e in extensions}
 
     destinations_data = [
-        {"id": d.id, "label": d.label, "target": d.target, "enabled": d.enabled,
-         "created_at": d.created_at.isoformat()}
+        {"id": d.id, "label": d.label, "target": d.target, "enabled": d.enabled, "created_at": d.created_at.isoformat()}
         for d in destinations
     ]
     rules_data = [
-        {"id": r.id, "destination_id": r.destination_id, "extension_id": r.extension_id,
-         "event_type": r.event_type, "enabled": r.enabled, "created_at": r.created_at.isoformat(),
-         "dest_label": dest_map.get(r.destination_id, "—"),
-         "ext_name": ext_map.get(r.extension_id) if r.extension_id else None}
+        {
+            "id": r.id,
+            "destination_id": r.destination_id,
+            "extension_id": r.extension_id,
+            "event_type": r.event_type,
+            "enabled": r.enabled,
+            "created_at": r.created_at.isoformat(),
+            "dest_label": dest_map.get(r.destination_id, "—"),
+            "ext_name": ext_map.get(r.extension_id) if r.extension_id else None,
+        }
         for r in rules
     ]
-    extensions_data = [
-        {"id": e.id, "name": e.name or e.extension_id, "store": e.store}
-        for e in extensions
-    ]
+    extensions_data = [{"id": e.id, "name": e.name or e.extension_id, "store": e.store} for e in extensions]
 
     alert_log_data = await get_alert_log(current_user.id, session)
 
-    return _render(request, "account.html", {
-        "destinations": destinations_data,
-        "rules": rules_data,
-        "extensions": extensions_data,
-        "alert_log": alert_log_data,
-    }, user=current_user)
+    return _render(
+        request,
+        "account.html",
+        {
+            "destinations": destinations_data,
+            "rules": rules_data,
+            "extensions": extensions_data,
+            "alert_log": alert_log_data,
+        },
+        user=current_user,
+    )
 
 
 # ---------------------------------------------------------------------------
 # Account — API keys
 # ---------------------------------------------------------------------------
+
 
 @router.get("/account/keys", response_class=HTMLResponse)
 async def account_keys_page(
@@ -601,11 +649,9 @@ async def account_keys_page(
     current_user: Annotated[User, Depends(require_auth)],
     session: Annotated[AsyncSession, Depends(get_session)],
 ):
-    keys = (await session.exec(
-        select(ApiKey)
-        .where(ApiKey.user_id == current_user.id)
-        .order_by(ApiKey.created_at)
-    )).all()
+    keys = (
+        await session.exec(select(ApiKey).where(ApiKey.user_id == current_user.id).order_by(ApiKey.created_at))
+    ).all()
     keys_data = [
         {
             "id": k.id,
@@ -625,6 +671,7 @@ async def account_keys_page(
 # Account — change password
 # ---------------------------------------------------------------------------
 
+
 @router.get("/account/password", response_class=HTMLResponse)
 async def account_password_page(
     request: Request,
@@ -636,6 +683,7 @@ async def account_password_page(
 # ---------------------------------------------------------------------------
 # Help
 # ---------------------------------------------------------------------------
+
 
 @router.get("/help", response_class=HTMLResponse)
 async def help_page(

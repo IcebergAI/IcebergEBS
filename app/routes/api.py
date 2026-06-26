@@ -5,13 +5,14 @@ import logging
 import re
 from datetime import datetime
 from typing import Annotated, Literal
-from urllib.parse import urlparse, parse_qs
+from urllib.parse import parse_qs, urlparse
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel
-from sqlalchemy import delete as sa_delete, func, or_
+from sqlalchemy import delete as sa_delete
+from sqlalchemy import func, or_
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
@@ -86,11 +87,13 @@ def build_extension_query(
         stmt = stmt.where(Extension.publisher == publisher)
     if q:
         like = f"%{_escape_like(q)}%"
-        stmt = stmt.where(or_(
-            Extension.name.ilike(like, escape="\\"),
-            Extension.publisher.ilike(like, escape="\\"),
-            Extension.extension_id.ilike(like, escape="\\"),
-        ))
+        stmt = stmt.where(
+            or_(
+                Extension.name.ilike(like, escape="\\"),
+                Extension.publisher.ilike(like, escape="\\"),
+                Extension.extension_id.ilike(like, escape="\\"),
+            )
+        )
     col = _SORT_COLUMNS.get(sort, Extension.risk_score)
     primary = col.desc().nullslast() if order == "desc" else col.asc().nullsfirst()
     return stmt.order_by(primary, Extension.id.asc())
@@ -98,14 +101,13 @@ def build_extension_query(
 
 async def _count(session: AsyncSession, stmt) -> int:
     """Total rows matching a built query, ignoring its ORDER BY / pagination."""
-    return await session.scalar(
-        select(func.count()).select_from(stmt.order_by(None).subquery())
-    ) or 0
+    return await session.scalar(select(func.count()).select_from(stmt.order_by(None).subquery())) or 0
 
 
 # ---------------------------------------------------------------------------
 # Request / response schemas
 # ---------------------------------------------------------------------------
+
 
 class ExtensionIn(BaseModel):
     store: StoreType
@@ -184,9 +186,7 @@ class ExtensionOut(BaseModel):
         analysis_raw = _safe_json(ext.package_analysis, "null", "package_analysis", ext.id)
         host_perms = analysis_raw.get("host_permissions", []) if analysis_raw else []
         findings = analysis_raw.get("findings", []) if analysis_raw else []
-        threat_intel_indicators = (
-            build_threat_intel_indicators(analysis_raw) if include_threat_intel else []
-        )
+        threat_intel_indicators = build_threat_intel_indicators(analysis_raw) if include_threat_intel else []
         detail = _safe_json(ext.risk_detail, "null", "risk_detail", ext.id)
         return cls(
             id=ext.id,
@@ -208,10 +208,7 @@ class ExtensionOut(BaseModel):
             risk_detail=detail,
             risk_level=risk_level(ext.risk_score),
             findings=[PackageFindingOut(**finding) for finding in findings],
-            threat_intel_indicators=[
-                ThreatIntelIndicatorOut(**indicator)
-                for indicator in threat_intel_indicators
-            ],
+            threat_intel_indicators=[ThreatIntelIndicatorOut(**indicator) for indicator in threat_intel_indicators],
         )
 
 
@@ -264,8 +261,8 @@ class HistoryPoint(BaseModel):
 # Extension ID validation
 # ---------------------------------------------------------------------------
 
-_CHROME_EDGE_ID_RE = re.compile(r'^[a-p]{32}$')
-_VSCODE_ID_RE = re.compile(r'^[a-zA-Z0-9][a-zA-Z0-9_-]*\.[a-zA-Z0-9][a-zA-Z0-9_.-]*$')
+_CHROME_EDGE_ID_RE = re.compile(r"^[a-p]{32}$")
+_VSCODE_ID_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_-]*\.[a-zA-Z0-9][a-zA-Z0-9_.-]*$")
 
 
 def _validate_extension_id(store: StoreType, extension_id: str) -> None:
@@ -286,6 +283,7 @@ def _validate_extension_id(store: StoreType, extension_id: str) -> None:
 # ---------------------------------------------------------------------------
 # URL normalisation helpers
 # ---------------------------------------------------------------------------
+
 
 def normalise_extension_id(store: StoreType, raw: str) -> str:
     """Extract the store-native ID from a full URL or return raw as-is."""
@@ -349,16 +347,21 @@ def _parse_bulk_text(text: str) -> list[dict]:
         elif (detected := _detect_store(line)) is not None:
             entries.append({"store": detected, "extension_id": line})
         else:
-            entries.append({
-                "store": None, "extension_id": line, "status": "invalid",
-                "detail": "Could not determine store — use 'store,id' or a store URL",
-            })
+            entries.append(
+                {
+                    "store": None,
+                    "extension_id": line,
+                    "status": "invalid",
+                    "detail": "Could not determine store — use 'store,id' or a store URL",
+                }
+            )
     return entries
 
 
 # ---------------------------------------------------------------------------
 # Core fetch-and-score helper (used by add + refresh)
 # ---------------------------------------------------------------------------
+
 
 async def _fetch_and_score(
     ext: Extension,
@@ -370,14 +373,16 @@ async def _fetch_and_score(
         ext, events = await fetch_and_store(ext, session, client)
     except FetchError as exc:
         logger.warning("Fetch failed for extension %d: %s", ext.id, exc)
-        session.add(FetchLog(
-            extension_id=ext.id,
-            success=False,
-            error_message=str(exc),
-            risk_score_before=score_before,
-        ))
+        session.add(
+            FetchLog(
+                extension_id=ext.id,
+                success=False,
+                error_message=str(exc),
+                risk_score_before=score_before,
+            )
+        )
         await session.commit()
-        raise HTTPException(status_code=502, detail="Failed to fetch extension from store")
+        raise HTTPException(status_code=502, detail="Failed to fetch extension from store") from exc
     await session.commit()
     await session.refresh(ext)
     # Fire alerts only after the commit above releases the write lock, so
@@ -405,19 +410,26 @@ async def _enroll_extension(
     except HTTPException as exc:
         return {"store": store, "extension_id": extension_id, "status": "invalid", "detail": exc.detail}
 
-    existing = (await session.exec(
-        select(Extension).where(
-            Extension.user_id == user_id,
-            Extension.store == store,
-            Extension.extension_id == extension_id,
+    existing = (
+        await session.exec(
+            select(Extension).where(
+                Extension.user_id == user_id,
+                Extension.store == store,
+                Extension.extension_id == extension_id,
+            )
         )
-    )).first()
+    ).first()
     if existing:
         return {"store": store, "extension_id": extension_id, "status": "duplicate", "id": existing.id}
 
     ext = Extension(
-        user_id=user_id, store=store, extension_id=extension_id,
-        name=extension_id, publisher="", version="", store_url="",
+        user_id=user_id,
+        store=store,
+        extension_id=extension_id,
+        name=extension_id,
+        publisher="",
+        version="",
+        store_url="",
     )
     session.add(ext)
     await session.commit()
@@ -427,9 +439,7 @@ async def _enroll_extension(
     try:
         scored = await _fetch_and_score(ext, session, client)
     except HTTPException as exc:
-        for fl in (await session.exec(
-            select(FetchLog).where(FetchLog.extension_id == ext_id)
-        )).all():
+        for fl in (await session.exec(select(FetchLog).where(FetchLog.extension_id == ext_id))).all():
             await session.delete(fl)
         orphan = await session.get(Extension, ext_id)
         if orphan is not None:
@@ -443,6 +453,7 @@ async def _enroll_extension(
 # ---------------------------------------------------------------------------
 # Routes
 # ---------------------------------------------------------------------------
+
 
 @router.get("/extensions", response_model=PaginatedExtensions)
 async def list_extensions(
@@ -458,7 +469,13 @@ async def list_extensions(
     offset: int = Query(0, ge=0),
 ):
     stmt = build_extension_query(
-        current_user.id, store=store, risk=risk, publisher=publisher, q=q, sort=sort, order=order,
+        current_user.id,
+        store=store,
+        risk=risk,
+        publisher=publisher,
+        q=q,
+        sort=sort,
+        order=order,
     )
     total = await _count(session, stmt)
     rows = (await session.exec(stmt.limit(limit).offset(offset))).all()
@@ -476,9 +493,20 @@ async def list_extensions(
 # signals, but not the heavy nested findings / threat-intel (those belong to the
 # single-extension view). Order defines the CSV column order.
 EXPORT_FIELDS = [
-    "id", "store", "extension_id", "name", "publisher", "version",
-    "install_count", "last_updated", "risk_score", "risk_level",
-    "permissions", "watchlist", "added_at", "last_fetched_at",
+    "id",
+    "store",
+    "extension_id",
+    "name",
+    "publisher",
+    "version",
+    "install_count",
+    "last_updated",
+    "risk_score",
+    "risk_level",
+    "permissions",
+    "watchlist",
+    "added_at",
+    "last_fetched_at",
 ]
 
 
@@ -518,7 +546,13 @@ async def export_extensions(
     reporting / downstream ingest. Shares the list endpoint's filter/sort params
     (`build_extension_query`) but is **not** paginated — it returns every match."""
     stmt = build_extension_query(
-        current_user.id, store=store, risk=risk, publisher=publisher, q=q, sort=sort, order=order,
+        current_user.id,
+        store=store,
+        risk=risk,
+        publisher=publisher,
+        q=q,
+        sort=sort,
+        order=order,
     )
     rows = [_export_row(e) for e in (await session.exec(stmt)).all()]
 
@@ -547,9 +581,7 @@ async def add_extension(
     session: Annotated[AsyncSession, Depends(get_session)],
 ):
     client: httpx.AsyncClient = request.app.state.http_client
-    result = await _enroll_extension(
-        body.store, body.extension_id, session, client, current_user.id
-    )
+    result = await _enroll_extension(body.store, body.extension_id, session, client, current_user.id)
     if result["status"] == "invalid":
         raise HTTPException(status_code=422, detail=result["detail"])
     if result["status"] == "duplicate":
@@ -601,9 +633,7 @@ async def bulk_add_extensions(
         if entry.get("status") == "invalid":
             results.append(entry)
             continue
-        results.append(await _enroll_extension(
-            entry["store"], entry["extension_id"], session, client, user_id
-        ))
+        results.append(await _enroll_extension(entry["store"], entry["extension_id"], session, client, user_id))
 
     tally = {"added": 0, "duplicate": 0, "invalid": 0, "error": 0}
     for r in results:
@@ -691,9 +721,11 @@ async def get_history(
     ext = await session.get(Extension, ext_id)
     if not ext or ext.user_id != current_user.id:
         raise HTTPException(status_code=404, detail="Not found")
-    rows = (await session.exec(
-        select(InstallCountHistory)
-        .where(InstallCountHistory.extension_id == ext_id)
-        .order_by(InstallCountHistory.recorded_at)
-    )).all()
+    rows = (
+        await session.exec(
+            select(InstallCountHistory)
+            .where(InstallCountHistory.extension_id == ext_id)
+            .order_by(InstallCountHistory.recorded_at)
+        )
+    ).all()
     return [HistoryPoint(recorded_at=r.recorded_at, install_count=r.install_count) for r in rows]

@@ -1,21 +1,38 @@
 import re
 from datetime import datetime, timezone
-from typing import NamedTuple
+from typing import NamedTuple, overload
 
 from app.inspector import PackageAnalysis
 
 # Permissions tiered by danger level
 _CRITICAL_PERMISSIONS = {
-    "<all_urls>", "debugger", "nativeMessaging", "proxy",
-    "webRequest", "webRequestBlocking", "declarativeNetRequestWithHostAccess",
+    "<all_urls>",
+    "debugger",
+    "nativeMessaging",
+    "proxy",
+    "webRequest",
+    "webRequestBlocking",
+    "declarativeNetRequestWithHostAccess",
 }
 _HIGH_PERMISSIONS = {
-    "cookies", "history", "tabs", "browsingData", "downloads",
-    "management", "clipboardRead", "contentSettings", "pageCapture",
+    "cookies",
+    "history",
+    "tabs",
+    "browsingData",
+    "downloads",
+    "management",
+    "clipboardRead",
+    "contentSettings",
+    "pageCapture",
 }
 _MEDIUM_PERMISSIONS = {
-    "storage", "notifications", "contextMenus", "bookmarks",
-    "identity", "geolocation", "scripting",
+    "storage",
+    "notifications",
+    "contextMenus",
+    "bookmarks",
+    "identity",
+    "geolocation",
+    "scripting",
 }
 _FINDING_WEIGHTS = {
     "critical": 6,
@@ -166,6 +183,10 @@ def compute_risk_score(
     )
 
 
+@overload
+def risk_level(score: int) -> str: ...
+@overload
+def risk_level(score: None) -> None: ...
 def risk_level(score: int | None) -> str | None:
     """Map a 0–100 risk score to its severity band. Returns None for an unknown score.
 
@@ -183,16 +204,34 @@ def risk_level(score: int | None) -> str | None:
     return "low"
 
 
-_GENERIC_WORDS = frozenset({
-    "extension", "extensions", "tool", "tools",
-    "addon", "addons", "plugin", "plugins",
-})
+_GENERIC_WORDS = frozenset(
+    {
+        "extension",
+        "extensions",
+        "tool",
+        "tools",
+        "addon",
+        "addons",
+        "plugin",
+        "plugins",
+    }
+)
 # Corporate suffixes stripped before judging — "Acme Tools Inc" is a real company,
 # not a generic name, so "inc" shouldn't keep it from being recognised as having a
 # distinctive word.
-_CORP_SUFFIXES = frozenset({
-    "inc", "llc", "ltd", "limited", "co", "corp", "corporation", "gmbh", "company",
-})
+_CORP_SUFFIXES = frozenset(
+    {
+        "inc",
+        "llc",
+        "ltd",
+        "limited",
+        "co",
+        "corp",
+        "corporation",
+        "gmbh",
+        "company",
+    }
+)
 
 
 def _looks_generic(publisher: str) -> bool:
@@ -235,4 +274,3 @@ def _counts_toward_code_behaviour(finding) -> bool:
     if finding.code == "manifest_v2":
         return True
     return False
-

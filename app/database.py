@@ -2,13 +2,13 @@ import logging
 from collections.abc import AsyncGenerator
 from pathlib import Path
 
-from alembic import command
 from alembic.config import Config
 from alembic.runtime.migration import MigrationContext
-from sqlmodel.ext.asyncio.session import AsyncSession
 from sqlalchemy import inspect, text
-from sqlalchemy.ext.asyncio import create_async_engine, AsyncEngine
+from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
+from sqlmodel.ext.asyncio.session import AsyncSession
 
+from alembic import command
 from app.config import settings
 
 logger = logging.getLogger(__name__)
@@ -16,13 +16,17 @@ logger = logging.getLogger(__name__)
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 _is_sqlite = settings.database_url.startswith("sqlite")
-_pool_kwargs = {} if _is_sqlite else {
-    "pool_size": 5,
-    "max_overflow": 10,
-    "pool_pre_ping": True,
-    "pool_timeout": 30,
-    "pool_recycle": 1800,  # Recycle connections every 30 min to avoid server-side idle timeouts
-}
+_pool_kwargs = (
+    {}
+    if _is_sqlite
+    else {
+        "pool_size": 5,
+        "max_overflow": 10,
+        "pool_pre_ping": True,
+        "pool_timeout": 30,
+        "pool_recycle": 1800,  # Recycle connections every 30 min to avoid server-side idle timeouts
+    }
+)
 
 # SQLite allows a single writer at a time. Set a busy timeout so a connection
 # waits (up to 30s) for the write lock instead of immediately raising
@@ -31,9 +35,7 @@ _pool_kwargs = {} if _is_sqlite else {
 # caller commits (see app/services.py).
 _connect_args = {"timeout": 30} if _is_sqlite else {}
 
-engine: AsyncEngine = create_async_engine(
-    settings.database_url, echo=False, connect_args=_connect_args, **_pool_kwargs
-)
+engine: AsyncEngine = create_async_engine(settings.database_url, echo=False, connect_args=_connect_args, **_pool_kwargs)
 
 
 def _alembic_config() -> Config:

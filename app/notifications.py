@@ -58,7 +58,7 @@ def _alert_text(event_type: str, name: str, old: object, new: object) -> str:
     if event_type == "risk_level_change":
         return f"Marvin: {name} risk level changed {old} → {new}"
     if event_type == "publisher_change":
-        return f"Marvin: {name} publisher changed from \"{old}\" to \"{new}\""
+        return f'Marvin: {name} publisher changed from "{old}" to "{new}"'
     if event_type == "permission_change":
         return f"Marvin: {name} permissions changed"
     if event_type == "new_version":
@@ -84,23 +84,23 @@ async def fire_alerts(
     event_types = list(event_map.keys())
 
     async with AsyncSession(engine) as session:
-        rules = (await session.exec(
-            select(AlertRule).where(
-                AlertRule.user_id == extension.user_id,
-                AlertRule.enabled == True,  # noqa: E712
-                AlertRule.event_type.in_(event_types),
-                or_(AlertRule.extension_id == None, AlertRule.extension_id == extension.id),  # noqa: E711
+        rules = (
+            await session.exec(
+                select(AlertRule).where(
+                    AlertRule.user_id == extension.user_id,
+                    AlertRule.enabled == True,  # noqa: E712
+                    AlertRule.event_type.in_(event_types),
+                    or_(AlertRule.extension_id == None, AlertRule.extension_id == extension.id),  # noqa: E711
+                )
             )
-        )).all()
+        ).all()
 
         if not rules:
             return
 
         # Batch load all destinations referenced by matching rules to avoid N+1 queries.
         dest_ids = list({r.destination_id for r in rules})
-        dests = (await session.exec(
-            select(AlertDestination).where(AlertDestination.id.in_(dest_ids))
-        )).all()
+        dests = (await session.exec(select(AlertDestination).where(AlertDestination.id.in_(dest_ids)))).all()
         dest_map = {d.id: d for d in dests}
 
         ext_payload = {
@@ -134,26 +134,34 @@ async def fire_alerts(
                 resp.raise_for_status()
                 logger.info(
                     "Alert webhook fired: event=%s ext=%d dest=%d status=%d",
-                    event.event_type, extension.id, dest.id, resp.status_code,
+                    event.event_type,
+                    extension.id,
+                    dest.id,
+                    resp.status_code,
                 )
             except Exception as exc:
                 success = False
                 error = str(exc)[:2000]
                 logger.warning(
                     "Alert webhook failed: event=%s ext=%d dest=%d error=%s",
-                    event.event_type, extension.id, dest.id, exc,
+                    event.event_type,
+                    extension.id,
+                    dest.id,
+                    exc,
                 )
 
-            session.add(AlertLog(
-                rule_id=rule.id,
-                destination_id=dest.id,
-                extension_id=extension.id,
-                user_id=extension.user_id,
-                event_type=event.event_type,
-                detail=json.dumps({"old": event.old_value, "new": event.new_value}),
-                success=success,
-                error=error,
-            ))
+            session.add(
+                AlertLog(
+                    rule_id=rule.id,
+                    destination_id=dest.id,
+                    extension_id=extension.id,
+                    user_id=extension.user_id,
+                    event_type=event.event_type,
+                    detail=json.dumps({"old": event.old_value, "new": event.new_value}),
+                    success=success,
+                    error=error,
+                )
+            )
 
         try:
             await session.commit()
@@ -166,6 +174,7 @@ async def fire_alerts(
             logger.exception(
                 "Failed to record %d AlertLog row(s) for ext=%s after delivering "
                 "webhooks — alert history will be incomplete",
-                len(rules), extension.id,
+                len(rules),
+                extension.id,
             )
             raise

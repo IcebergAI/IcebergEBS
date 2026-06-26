@@ -10,7 +10,6 @@ from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.fetchers import get_fetcher
-from app.fetchers.base import FetchError
 from app.inspector import InspectorError, PackageAnalysis, inspect_package
 from app.models import Extension, FetchLog, InstallCountHistory
 from app.notifications import ChangeEvent, detect_changes, fire_alerts
@@ -47,16 +46,20 @@ async def fetch_and_store(
     metadata, pkg_bytes = await fetcher.fetch(ext.extension_id)
 
     if metadata.install_count is not None:
-        session.add(InstallCountHistory(
-            extension_id=ext.id,
-            install_count=metadata.install_count,
-        ))
+        session.add(
+            InstallCountHistory(
+                extension_id=ext.id,
+                install_count=metadata.install_count,
+            )
+        )
 
-    history_rows = (await session.exec(
-        select(InstallCountHistory)
-        .where(InstallCountHistory.extension_id == ext.id)
-        .order_by(InstallCountHistory.recorded_at)
-    )).all()
+    history_rows = (
+        await session.exec(
+            select(InstallCountHistory)
+            .where(InstallCountHistory.extension_id == ext.id)
+            .order_by(InstallCountHistory.recorded_at)
+        )
+    ).all()
     history = [r.install_count for r in history_rows]
 
     analysis: PackageAnalysis | None = None
@@ -84,9 +87,7 @@ async def fetch_and_store(
         stored_pkg = json.loads(ext.package_analysis or "null") or {}
         host_permissions = stored_pkg.get("host_permissions", [])
 
-    publisher_changed = bool(
-        ext.last_fetched_at and ext.publisher and ext.publisher != metadata.publisher
-    )
+    publisher_changed = bool(ext.last_fetched_at and ext.publisher and ext.publisher != metadata.publisher)
 
     risk = compute_risk_score(
         permissions=permissions,
@@ -119,31 +120,35 @@ async def fetch_and_store(
     ext.risk_score = risk.total
     ext.risk_detail = json.dumps(risk._asdict())
     if analysis:
-        ext.package_analysis = json.dumps({
-            "permissions": analysis.permissions,
-            "host_permissions": analysis.host_permissions,
-            "external_domains": analysis.external_domains,
-            "external_urls": analysis.external_urls,
-            "network_callout_urls": analysis.network_callout_urls,
-            "package_sha256": analysis.package_sha256,
-            "archive_sha256": analysis.archive_sha256,
-            "uses_eval": analysis.uses_eval,
-            "uses_remote_code": analysis.uses_remote_code,
-            "obfuscation_score": analysis.obfuscation_score,
-            "file_count": analysis.file_count,
-            "total_size_bytes": analysis.total_size_bytes,
-            "has_minified_code": analysis.has_minified_code,
-            "manifest_version": analysis.manifest_version,
-            "findings": [asdict(finding) for finding in analysis.findings],
-        })
+        ext.package_analysis = json.dumps(
+            {
+                "permissions": analysis.permissions,
+                "host_permissions": analysis.host_permissions,
+                "external_domains": analysis.external_domains,
+                "external_urls": analysis.external_urls,
+                "network_callout_urls": analysis.network_callout_urls,
+                "package_sha256": analysis.package_sha256,
+                "archive_sha256": analysis.archive_sha256,
+                "uses_eval": analysis.uses_eval,
+                "uses_remote_code": analysis.uses_remote_code,
+                "obfuscation_score": analysis.obfuscation_score,
+                "file_count": analysis.file_count,
+                "total_size_bytes": analysis.total_size_bytes,
+                "has_minified_code": analysis.has_minified_code,
+                "manifest_version": analysis.manifest_version,
+                "findings": [asdict(finding) for finding in analysis.findings],
+            }
+        )
 
     session.add(ext)
-    session.add(FetchLog(
-        extension_id=ext.id,
-        success=True,
-        risk_score_before=score_before,
-        risk_score_after=risk.total,
-    ))
+    session.add(
+        FetchLog(
+            extension_id=ext.id,
+            success=True,
+            risk_score_before=score_before,
+            risk_score_after=risk.total,
+        )
+    )
 
     # Detect changes now (pre-fetch snapshot vs updated record), but let the caller
     # fire the alerts AFTER it commits — see the docstring and fire_pending_alerts.
@@ -176,6 +181,6 @@ async def fire_pending_alerts(
         await fire_alerts(events, ext, engine, client)
     except Exception:
         logger.exception(
-            "Alert processing failed for %s — any delivered webhooks may not have "
-            "been recorded in the alert log", ext.extension_id,
+            "Alert processing failed for %s — any delivered webhooks may not have been recorded in the alert log",
+            ext.extension_id,
         )

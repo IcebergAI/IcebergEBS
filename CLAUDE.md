@@ -100,6 +100,13 @@ venv/bin/python -m pytest tests/ -v
 
 `pytest.ini` sets `asyncio_mode = auto` so async tests run without extra decoration.
 
+### CI gates
+`.github/workflows/ci.yml` runs four **blocking** jobs on every PR + push to main: **test** (pytest), **lint** (`ruff check` + `ruff format --check`), **types** (`mypy app`), **security** (`bandit -c pyproject.toml -r app` + `pip-audit -r requirements.txt`). All tool config is in `pyproject.toml`; dev tooling is in `requirements-dev.txt`. Notes:
+- **Ruff** selects `E,F,W,I,B` (ignores `E501`, `B008` — the FastAPI `Depends`/`Query` default idiom). Deliberately **no `UP`** (pyupgrade) to preserve the documented `timezone.utc` / `Optional[...]` conventions.
+- **mypy** uses `pydantic.mypy` and enforces types only on the **pure logic / contract modules**; the ORM-query modules (`app.routes.*`, `services`, `scheduler`, `notifications`, `retention`, `database`, `fetchers.*`) are excluded via `ignore_errors` because mypy can't see through SQLModel's declarative column attributes (it reads `Extension.last_updated` as a plain `datetime`). When adding a pure-logic module, keep it type-clean rather than excluding it.
+- **Bandit** benign findings are annotated inline with justified `# nosec` (git subprocess in `version.py`, best-effort file-skip loops in `inspector.py`) — keep the gate at full strictness rather than lowering severity.
+- The separate `build.yml` (Docker image on push to main) is unchanged.
+
 ### Test structure
 - `tests/conftest.py` — in-memory SQLite fixture, authenticated/anonymous HTTPX test clients, `make_fake_crx()` / `make_fake_vsix()` helpers
 - HTTP calls are mocked with `respx`; fetcher classes are mocked with `unittest.mock.patch` in API tests

@@ -21,9 +21,16 @@ async def test_readyz_ok(anon_client):
 
 async def _add_ext(session, admin_user, *, ext_id_str, last_fetched, watchlist=True):
     ext = Extension(
-        user_id=admin_user.id, store="chrome", extension_id=ext_id_str, name="E",
-        publisher="p", version="1.0", store_url="https://example.com",
-        watchlist=watchlist, last_fetched_at=last_fetched, risk_score=10,
+        user_id=admin_user.id,
+        store="chrome",
+        extension_id=ext_id_str,
+        name="E",
+        publisher="p",
+        version="1.0",
+        store_url="https://example.com",
+        watchlist=watchlist,
+        last_fetched_at=last_fetched,
+        risk_score=10,
     )
     session.add(ext)
     await session.commit()

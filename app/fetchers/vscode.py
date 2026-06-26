@@ -27,8 +27,8 @@ class VSCodeFetcher(BaseFetcher):
         data = resp.json()
         try:
             return data["results"][0]["extensions"][0]
-        except (KeyError, IndexError):
-            raise FetchError(f"Extension not found: {extension_id}")
+        except (KeyError, IndexError) as exc:
+            raise FetchError(f"Extension not found: {extension_id}") from exc
 
     def _parse_metadata(self, ext: dict, extension_id: str) -> ExtensionMetadata:
         publisher = ext.get("publisher", {})
@@ -89,7 +89,8 @@ class VSCodeFetcher(BaseFetcher):
             # a programming bug surfaces instead of silently skipping analysis (M5).
             logger.warning(
                 "VS Code VSIX download failed for %s (%s) — JS analysis skipped",
-                extension_id, exc,
+                extension_id,
+                exc,
             )
             package = None
         return metadata, package

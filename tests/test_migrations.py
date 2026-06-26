@@ -5,9 +5,9 @@ Alembic. `_run_migrations` either upgrades a fresh/empty database to head or, fo
 a database created the old way (tables present, no alembic_version), stamps it to
 head without recreating anything.
 """
+
 import sqlite3
 
-import pytest
 from alembic.autogenerate import compare_metadata
 from alembic.runtime.migration import MigrationContext
 from sqlalchemy import create_engine
@@ -61,7 +61,7 @@ async def test_fresh_db_has_all_current_columns(tmp_path):
         apikey_cols = {r[1] for r in c.execute("PRAGMA table_info(apikey)")}
     finally:
         c.close()
-    assert "password_changed_at" in user_cols          # M1
+    assert "password_changed_at" in user_cols  # M1
     assert {"user_id", "destination_id"} <= alertlog_cols
     assert {"key_prefix", "key_suffix"} <= apikey_cols
 
@@ -85,8 +85,8 @@ async def test_existing_pre_alembic_db_is_stamped_not_recreated(tmp_path):
     # Seed a row so we can prove the tables were not dropped/recreated.
     c = sqlite3.connect(db)
     c.execute(
-        'INSERT INTO "user"(username, password_hash, is_admin, created_at) '
-        "VALUES (?, ?, ?, ?)", ("bob", "h", 0, "2024-01-01"),
+        'INSERT INTO "user"(username, password_hash, is_admin, created_at) VALUES (?, ?, ?, ?)',
+        ("bob", "h", 0, "2024-01-01"),
     )
     c.commit()
     c.close()
@@ -112,9 +112,7 @@ def test_head_matches_models(tmp_path):
     with engine.connect() as conn:
         _run_migrations(conn)
         conn.commit()
-        ctx = MigrationContext.configure(
-            conn, opts={"compare_type": True, "render_as_batch": True}
-        )
+        ctx = MigrationContext.configure(conn, opts={"compare_type": True, "render_as_batch": True})
         diffs = compare_metadata(ctx, SQLModel.metadata)
     engine.dispose()
     assert diffs == [], f"Models drifted from migrations head: {diffs}"
