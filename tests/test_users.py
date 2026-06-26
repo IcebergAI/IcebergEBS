@@ -222,5 +222,5 @@ async def test_user_isolation(client, test_db):
     # Admin (user A) should not see user B's extension
     r = await client.get("/api/extensions")
     assert r.status_code == 200
-    ext_ids = [e["extension_id"] for e in r.json()]
+    ext_ids = [e["extension_id"] for e in r.json()["items"]]
     assert "b.ext" not in ext_ids

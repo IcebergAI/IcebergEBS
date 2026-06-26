@@ -244,7 +244,7 @@ async def test_list_omits_threat_intel_but_detail_includes_it(api_key_client, te
 
     lst = await api_key_client.get("/api/extensions")
     assert lst.status_code == 200
-    assert lst.json()[0]["threat_intel_indicators"] == []  # skipped on list
+    assert lst.json()["items"][0]["threat_intel_indicators"] == []  # skipped on list
 
     detail = await api_key_client.get(f"/api/extensions/{ext_id}")
     assert detail.status_code == 200

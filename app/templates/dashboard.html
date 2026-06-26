@@ -66,36 +66,63 @@
 </div>
 {% else %}
 
+{% macro sort_arrow(col) %}{% if sort == col %} <span class="text-meta">{{ '↑' if order == 'asc' else '↓' }}</span>{% endif %}{% endmacro %}
+{% macro sort_link(col) %}{{ qs(sort=col, order=('asc' if sort == col and order == 'desc' else 'desc'), page=1) }}{% endmacro %}
+{% set active_pill = 'background:var(--ink-8);color:white;border-color:var(--ink-8)' %}
+
 <div x-data="dashboardData()">
 
-  {# Filter bar #}
+  {# Filter + search bar (server-driven via query params) #}
   <div class="flex items-center justify-between mb-3 flex-wrap gap-2">
-    <div class="flex items-center gap-1.5">
-      <button class="badge badge-store" :style="filter==='all' ? 'background:var(--ink-8);color:white;border-color:var(--ink-8)' : ''" @click="filter='all'">All</button>
-      <button class="badge badge-store badge-chrome" :style="filter==='chrome' ? 'background:var(--ink-8);color:white;border-color:var(--ink-8)' : ''" @click="filter='chrome'"><span class="dot"></span>chrome</button>
-      <button class="badge badge-store badge-vscode" :style="filter==='vscode' ? 'background:var(--ink-8);color:white;border-color:var(--ink-8)' : ''" @click="filter='vscode'"><span class="dot"></span>vscode</button>
-      <button class="badge badge-store badge-edge" :style="filter==='edge' ? 'background:var(--ink-8);color:white;border-color:var(--ink-8)' : ''" @click="filter='edge'"><span class="dot"></span>edge</button>
+    <div class="flex items-center gap-1.5 flex-wrap">
+      <a class="badge badge-store" href="{{ qs(store=None, page=1) }}" style="{% if not filter_store %}{{ active_pill }}{% endif %}">All</a>
+      {% for s in ['chrome', 'vscode', 'edge'] %}
+      <a class="badge badge-store badge-{{ s }}" href="{{ qs(store=s, page=1) }}" style="{% if filter_store == s %}{{ active_pill }}{% endif %}"><span class="dot"></span>{{ s }}</a>
+      {% endfor %}
       <div class="w-px h-4 mx-1.5" style="background:var(--ink-3)"></div>
-      <button class="badge badge-store" :style="filter==='watchlist' ? 'background:var(--ink-8);color:white;border-color:var(--ink-8)' : ''" @click="filter='watchlist'">watchlist only</button>
+      <a class="badge" href="{{ qs(risk=None, page=1) }}" style="{% if not filter_risk %}{{ active_pill }}{% endif %}">Any risk</a>
+      {% for lvl in ['critical', 'high', 'medium', 'low'] %}
+      <a class="badge badge-{{ lvl }}" href="{{ qs(risk=lvl, page=1) }}" style="{% if filter_risk == lvl %}{{ active_pill }}{% endif %}">{{ lvl }}</a>
+      {% endfor %}
     </div>
-    <div class="text-meta" x-text="`Showing ${sorted.length} of ${extensions.length}`"></div>
+    <form method="get" action="/" class="flex items-center gap-1.5">
+      {% if filter_store %}<input type="hidden" name="store" value="{{ filter_store }}">{% endif %}
+      {% if filter_risk %}<input type="hidden" name="risk" value="{{ filter_risk }}">{% endif %}
+      <input type="hidden" name="sort" value="{{ sort }}">
+      <input type="hidden" name="order" value="{{ order }}">
+      <input type="text" name="q" value="{{ search_q }}" placeholder="Search name, publisher, ID…"
+             class="field" style="min-width:220px;width:auto" autocomplete="off">
+      <button type="submit" class="btn btn-ghost btn-sm">Search</button>
+      {% if search_q %}<a href="{{ qs(q=None, page=1) }}" class="btn btn-ghost btn-sm">Clear</a>{% endif %}
+    </form>
   </div>
 
+  <div class="text-meta mb-2">
+    {% if filtered_total %}Showing {{ showing_from }}–{{ showing_to }} of {{ filtered_total }}{% else %}No matches{% endif %}
+    {% if filtered_total != extensions_count %} ({{ extensions_count }} total){% endif %}
+  </div>
+
+  {% if filtered_total == 0 %}
+  <div class="surface p-10 text-center">
+    <div class="text-[14px] font-medium mb-1" style="color:var(--ink-8)">No extensions match these filters</div>
+    <div class="text-[13px]" style="color:var(--ink-5)">Try clearing the search or filters.</div>
+  </div>
+  {% else %}
   <div class="surface overflow-hidden">
     <table>
       <thead>
         <tr>
-          <th class="sortable" @click="setSort('name')">Extension <span x-show="sort==='name'" x-text="dir==='asc'?'↑':'↓'"></span></th>
+          <th class="sortable"><a href="{{ sort_link('name') }}" style="color:inherit">Extension</a>{{ sort_arrow('name') }}</th>
           <th>Store</th>
-          <th class="sortable" @click="setSort('risk_score')">Risk score <span x-show="sort==='risk_score'" x-text="dir==='asc'?'↑':'↓'"></span></th>
-          <th class="sortable" @click="setSort('publisher')">Publisher <span x-show="sort==='publisher'" x-text="dir==='asc'?'↑':'↓'"></span></th>
-          <th class="sortable text-right" @click="setSort('install_count')">Installs <span x-show="sort==='install_count'" x-text="dir==='asc'?'↑':'↓'"></span></th>
-          <th class="sortable" @click="setSort('last_updated')">Updated <span x-show="sort==='last_updated'" x-text="dir==='asc'?'↑':'↓'"></span></th>
+          <th class="sortable"><a href="{{ sort_link('risk_score') }}" style="color:inherit">Risk score</a>{{ sort_arrow('risk_score') }}</th>
+          <th class="sortable"><a href="{{ sort_link('publisher') }}" style="color:inherit">Publisher</a>{{ sort_arrow('publisher') }}</th>
+          <th class="sortable text-right"><a href="{{ sort_link('install_count') }}" style="color:inherit">Installs</a>{{ sort_arrow('install_count') }}</th>
+          <th class="sortable"><a href="{{ sort_link('last_updated') }}" style="color:inherit">Updated</a>{{ sort_arrow('last_updated') }}</th>
           <th></th>
         </tr>
       </thead>
       <tbody>
-        <template x-for="ext in sorted" :key="ext.id">
+        <template x-for="ext in extensions" :key="ext.id">
           <tr style="cursor:pointer" @click="window.location='/extensions/' + ext.id">
             <td>
               <div class="flex items-center gap-2">
@@ -138,43 +165,24 @@
       </tbody>
     </table>
   </div>
+
+  {# Pagination #}
+  {% if total_pages > 1 %}
+  <div class="flex items-center justify-between mt-3">
+    <div class="text-meta">Page {{ page }} of {{ total_pages }}</div>
+    <div class="flex items-center gap-1.5">
+      {% if page > 1 %}<a href="{{ qs(page=page-1) }}" class="btn btn-ghost btn-sm">← Prev</a>{% else %}<span class="btn btn-ghost btn-sm" style="opacity:.4;pointer-events:none">← Prev</span>{% endif %}
+      {% if page < total_pages %}<a href="{{ qs(page=page+1) }}" class="btn btn-ghost btn-sm">Next →</a>{% else %}<span class="btn btn-ghost btn-sm" style="opacity:.4;pointer-events:none">Next →</span>{% endif %}
+    </div>
+  </div>
+  {% endif %}
+  {% endif %}
 </div>
 
 <script>
 function dashboardData() {
   return {
-    sort: 'risk_score',
-    dir: 'desc',
-    filter: 'all',
-    query: new URLSearchParams(location.search).get('q') || '',
     extensions: {{ extensions | tojson }},
-    get filtered() {
-      let list = this.extensions;
-      if (this.filter === 'watchlist') list = list.filter(e => e.watchlist);
-      else if (this.filter !== 'all') list = list.filter(e => e.store === this.filter);
-      if (this.query) {
-        const q = this.query.toLowerCase();
-        list = list.filter(e =>
-          (e.name || '').toLowerCase().includes(q) ||
-          (e.publisher || '').toLowerCase().includes(q) ||
-          (e.extension_id || '').toLowerCase().includes(q)
-        );
-      }
-      return list;
-    },
-    get sorted() {
-      return [...this.filtered].sort((a, b) => {
-        let va = a[this.sort], vb = b[this.sort];
-        if (va == null) va = this.dir === 'desc' ? -1 : 1e12;
-        if (vb == null) vb = this.dir === 'desc' ? -1 : 1e12;
-        if (typeof va === 'string') va = va.toLowerCase(), vb = vb.toLowerCase();
-        return (va < vb ? -1 : va > vb ? 1 : 0) * (this.dir === 'asc' ? 1 : -1);
-      });
-    },
-    setSort(col) {
-      if (this.sort === col) this.dir = this.dir === 'asc' ? 'desc' : 'asc';
-      else { this.sort = col; this.dir = 'desc'; }
-    },
     riskLevel(score) {
       if (score == null) return 'unknown';
       if (score >= 75) return 'critical';

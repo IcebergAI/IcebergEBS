@@ -61,7 +61,9 @@ def _risky_vsix() -> bytes:
 async def test_list_extensions_empty(client):
     r = await client.get("/api/extensions")
     assert r.status_code == 200
-    assert r.json() == []
+    body = r.json()
+    assert body["items"] == []
+    assert body["total"] == 0
 
 
 async def test_add_extension(client):
@@ -331,7 +333,7 @@ async def test_add_extension_fetch_failure_leaves_no_placeholder(client):
     # The failed add must not leave an unanalysed extension behind.
     r_list = await client.get("/api/extensions")
     assert r_list.status_code == 200
-    assert all(e["extension_id"] != "testpub.ghost-ext" for e in r_list.json())
+    assert all(e["extension_id"] != "testpub.ghost-ext" for e in r_list.json()["items"])
 
 
 async def test_add_extension_duplicate(client):

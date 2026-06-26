@@ -6,9 +6,9 @@ from typing import Annotated, Literal
 from urllib.parse import urlparse, parse_qs
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
-from sqlalchemy import delete as sa_delete
+from sqlalchemy import delete as sa_delete, func, or_
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
@@ -25,6 +25,79 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 StoreType = Literal["chrome", "vscode", "edge"]
+RiskLevel = Literal["low", "medium", "high", "critical"]
+SortField = Literal["name", "risk_score", "publisher", "install_count", "last_updated", "added_at"]
+SortOrder = Literal["asc", "desc"]
+
+# Risk band → score range [low, high) used to filter by risk level. Mirrors the
+# thresholds in app.scoring.risk_level (75/50/25) — the single source of truth.
+_RISK_BANDS: dict[str, tuple[int, int | None]] = {
+    "critical": (75, None),
+    "high": (50, 75),
+    "medium": (25, 50),
+    "low": (0, 25),
+}
+
+_SORT_COLUMNS = {
+    "name": Extension.name,
+    "risk_score": Extension.risk_score,
+    "publisher": Extension.publisher,
+    "install_count": Extension.install_count,
+    "last_updated": Extension.last_updated,
+    "added_at": Extension.added_at,
+}
+
+DEFAULT_PAGE_LIMIT = 50
+MAX_PAGE_LIMIT = 200
+
+
+def _escape_like(term: str) -> str:
+    """Escape LIKE wildcards so a literal % / _ in a search term isn't treated
+    as a pattern (escape char is backslash, passed via escape="\\")."""
+    return term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+def build_extension_query(
+    user_id: int,
+    *,
+    store: str | None = None,
+    risk: str | None = None,
+    publisher: str | None = None,
+    q: str | None = None,
+    sort: str = "risk_score",
+    order: str = "desc",
+):
+    """Build the filtered + sorted ``select(Extension)`` shared by the list API,
+    the export endpoint and the dashboard. No limit/offset — the caller paginates.
+    Unknown sort columns fall back to risk_score; an ``id`` tie-breaker keeps
+    pagination stable across pages."""
+    stmt = select(Extension).where(Extension.user_id == user_id)
+    if store:
+        stmt = stmt.where(Extension.store == store)
+    if risk and risk in _RISK_BANDS:
+        low, high = _RISK_BANDS[risk]
+        stmt = stmt.where(Extension.risk_score.is_not(None), Extension.risk_score >= low)
+        if high is not None:
+            stmt = stmt.where(Extension.risk_score < high)
+    if publisher:
+        stmt = stmt.where(Extension.publisher == publisher)
+    if q:
+        like = f"%{_escape_like(q)}%"
+        stmt = stmt.where(or_(
+            Extension.name.ilike(like, escape="\\"),
+            Extension.publisher.ilike(like, escape="\\"),
+            Extension.extension_id.ilike(like, escape="\\"),
+        ))
+    col = _SORT_COLUMNS.get(sort, Extension.risk_score)
+    primary = col.desc().nullslast() if order == "desc" else col.asc().nullsfirst()
+    return stmt.order_by(primary, Extension.id.asc())
+
+
+async def _count(session: AsyncSession, stmt) -> int:
+    """Total rows matching a built query, ignoring its ORDER BY / pagination."""
+    return await session.scalar(
+        select(func.count()).select_from(stmt.order_by(None).subquery())
+    ) or 0
 
 
 # ---------------------------------------------------------------------------
@@ -139,6 +212,13 @@ class ExtensionOut(BaseModel):
         )
 
 
+class PaginatedExtensions(BaseModel):
+    items: list[ExtensionOut]
+    total: int
+    limit: int
+    offset: int
+
+
 class WatchlistPatch(BaseModel):
     watchlist: bool
 
@@ -236,19 +316,32 @@ async def _fetch_and_score(
 # Routes
 # ---------------------------------------------------------------------------
 
-@router.get("/extensions", response_model=list[ExtensionOut])
+@router.get("/extensions", response_model=PaginatedExtensions)
 async def list_extensions(
     current_user: Annotated[User, Depends(require_api_auth)],
     session: Annotated[AsyncSession, Depends(get_session)],
+    store: StoreType | None = None,
+    risk: RiskLevel | None = None,
+    publisher: str | None = None,
+    q: str | None = Query(None, description="Free-text search over name, publisher and id"),
+    sort: SortField = "risk_score",
+    order: SortOrder = "desc",
+    limit: int = Query(DEFAULT_PAGE_LIMIT, ge=1, le=MAX_PAGE_LIMIT),
+    offset: int = Query(0, ge=0),
 ):
-    rows = (await session.exec(
-        select(Extension)
-        .where(Extension.user_id == current_user.id)
-        .order_by(Extension.added_at.desc())
-    )).all()
+    stmt = build_extension_query(
+        current_user.id, store=store, risk=risk, publisher=publisher, q=q, sort=sort, order=order,
+    )
+    total = await _count(session, stmt)
+    rows = (await session.exec(stmt.limit(limit).offset(offset))).all()
     # Skip per-extension threat-intel indicator construction here — the list view
     # doesn't render it, and building it for every row is O(extensions × domains).
-    return [ExtensionOut.from_db(r, include_threat_intel=False) for r in rows]
+    return PaginatedExtensions(
+        items=[ExtensionOut.from_db(r, include_threat_intel=False) for r in rows],
+        total=total,
+        limit=limit,
+        offset=offset,
+    )
 
 
 @router.post("/extensions", response_model=ExtensionOut, status_code=201)
