@@ -1,6 +1,7 @@
 import json
 from datetime import datetime, timedelta, timezone
 from typing import Annotated
+from urllib.parse import urlencode
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -16,6 +17,12 @@ from app.database import get_session
 from app.models import AlertDestination, AlertRule, ApiKey, Extension, FetchLog, User
 from app.ratelimit import login_limiter
 from app.routes.alerts import get_alert_log
+from app.routes.api import (
+    _RISK_BANDS,
+    _SORT_COLUMNS,
+    _count,
+    build_extension_query,
+)
 from app.threat_intel import build_threat_intel_indicators
 from app.version import get_version
 
@@ -265,56 +272,116 @@ async def _latest_fetch_logs(
     return {fl.extension_id: fl for fl in rows}
 
 
+_DASHBOARD_PAGE_SIZE = 25
+
+
 @router.get("/", response_class=HTMLResponse)
 async def dashboard(
     request: Request,
     current_user: Annotated[User, Depends(require_auth)],
     session: Annotated[AsyncSession, Depends(get_session)],
+    store: str | None = None,
+    risk: str | None = None,
+    q: str | None = None,
+    sort: str = "risk_score",
+    order: str = "desc",
+    page: int = 1,
 ):
-    extensions = (await session.exec(
-        select(Extension)
-        .where(Extension.user_id == current_user.id)
-        .order_by(Extension.risk_score.desc().nullslast())
-    )).all()
+    # Tolerate junk query params from the UI (don't 422 a browser) — fall back
+    # to defaults rather than rejecting.
+    if store not in ("chrome", "vscode", "edge"):
+        store = None
+    if risk not in _RISK_BANDS:
+        risk = None
+    if sort not in _SORT_COLUMNS:
+        sort = "risk_score"
+    if order not in ("asc", "desc"):
+        order = "desc"
+    q = (q or "").strip() or None
+    page = max(page, 1)
 
-    high_risk = sum(1 for e in extensions if e.risk_score is not None and e.risk_score >= 50)
-    watchlist_count = sum(1 for e in extensions if e.watchlist)
-    fetched = [e.last_fetched_at for e in extensions if e.last_fetched_at]
+    # Lightweight fleet snapshot for the stat tiles (counts + fetch health) —
+    # independent of the active filter, and cheap (no JSON columns loaded).
+    snapshot = (await session.exec(
+        select(
+            Extension.id, Extension.risk_score, Extension.watchlist, Extension.last_fetched_at
+        ).where(Extension.user_id == current_user.id)
+    )).all()
+    extensions_count = len(snapshot)
+    high_risk = sum(1 for r in snapshot if r.risk_score is not None and r.risk_score >= 50)
+    watchlist_count = sum(1 for r in snapshot if r.watchlist)
+    fetched = [r.last_fetched_at for r in snapshot if r.last_fetched_at]
     last_refresh = max(fetched) if fetched else None
     next_refresh = (
         last_refresh + timedelta(minutes=settings.fetch_interval_minutes)
         if last_refresh else None
     )
 
-    # Fetch health: surface the latest fetch outcome per extension and a fleet
-    # count of watchlist extensions that are failing (last fetch errored) or stale
-    # (no successful refresh within the staleness window).
     now = datetime.now(timezone.utc)
     stale_after = _stale_after()
-    latest_logs = await _latest_fetch_logs(session, [e.id for e in extensions])
+    latest_logs = await _latest_fetch_logs(session, [r.id for r in snapshot])
+
+    def _stale(watchlist: bool, lf) -> bool:
+        if not watchlist:
+            return False
+        if lf is None:
+            return True
+        if lf.tzinfo is None:
+            lf = lf.replace(tzinfo=timezone.utc)
+        return (now - lf) > stale_after
+
+    unhealthy = 0
+    for r in snapshot:
+        log = latest_logs.get(r.id)
+        failing = log is not None and not log.success
+        if r.watchlist and (failing or _stale(r.watchlist, r.last_fetched_at)):
+            unhealthy += 1
+
+    # Filtered + sorted + paginated page of full rows for the table.
+    stmt = build_extension_query(
+        current_user.id, store=store, risk=risk, q=q, sort=sort, order=order,
+    )
+    filtered_total = await _count(session, stmt)
+    total_pages = max((filtered_total + _DASHBOARD_PAGE_SIZE - 1) // _DASHBOARD_PAGE_SIZE, 1)
+    page = min(page, total_pages)
+    offset = (page - 1) * _DASHBOARD_PAGE_SIZE
+    page_rows = (await session.exec(
+        stmt.limit(_DASHBOARD_PAGE_SIZE).offset(offset)
+    )).all()
 
     ext_dicts = []
-    unhealthy = 0
-    for e in extensions:
+    for e in page_rows:
         log = latest_logs.get(e.id)
-        last_ok = log.success if log is not None else None
-        last_error = log.error_message if (log is not None and not log.success) else None
-        lf = e.last_fetched_at
-        if lf is not None and lf.tzinfo is None:
-            lf = lf.replace(tzinfo=timezone.utc)
-        stale = e.watchlist and (lf is None or (now - lf) > stale_after)
-        failing = last_ok is False
-        if e.watchlist and (failing or stale):
-            unhealthy += 1
         d = _ext_to_dict(e)
-        d["last_fetch_ok"] = last_ok
-        d["last_fetch_error"] = last_error
-        d["stale"] = stale
+        d["last_fetch_ok"] = log.success if log is not None else None
+        d["last_fetch_error"] = log.error_message if (log is not None and not log.success) else None
+        d["stale"] = _stale(e.watchlist, e.last_fetched_at)
         ext_dicts.append(d)
 
+    showing_from = offset + 1 if filtered_total else 0
+    showing_to = offset + len(ext_dicts)
+
+    # Build relative dashboard URLs that preserve the current filter/sort/page
+    # state with selective overrides (None drops a param). Used by the template's
+    # filter pills, sort headers and pagination links.
+    base_params = {"store": store, "risk": risk, "q": q, "sort": sort, "order": order, "page": page}
+
+    def qs(**overrides) -> str:
+        params = {**base_params, **overrides}
+        # Drop empty params and defaults (sort/order defaults, page 1) to keep URLs clean.
+        clean = {k: v for k, v in params.items() if v not in (None, "")}
+        if clean.get("page") == 1:
+            clean.pop("page", None)
+        if clean.get("sort") == "risk_score":
+            clean.pop("sort", None)
+        if clean.get("order") == "desc":
+            clean.pop("order", None)
+        return "/?" + urlencode(clean) if clean else "/"
+
     return _render(request, "dashboard.html", {
+        "qs": qs,
         "extensions": ext_dicts,
-        "extensions_count": len(extensions),
+        "extensions_count": extensions_count,
         "high_risk_count": high_risk,
         "watchlist_count": watchlist_count,
         "unhealthy_count": unhealthy,
@@ -322,6 +389,17 @@ async def dashboard(
         "next_refresh_label": (
             f"next ~{next_refresh.strftime('%H:%M')} UTC" if next_refresh else "next: scheduled"
         ),
+        # Filter / sort / pagination state for the controls.
+        "filter_store": store,
+        "filter_risk": risk,
+        "search_q": q or "",
+        "sort": sort,
+        "order": order,
+        "page": page,
+        "total_pages": total_pages,
+        "filtered_total": filtered_total,
+        "showing_from": showing_from,
+        "showing_to": showing_to,
     }, user=current_user)
 
 
