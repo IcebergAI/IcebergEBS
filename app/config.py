@@ -12,6 +12,10 @@ class Settings(BaseSettings):
     secure_cookies: bool = True
     fetch_interval_minutes: int = 60
     httpx_timeout: float = 15.0
+    # Data retention: prune FetchLog / InstallCountHistory / AlertLog rows older
+    # than this many days. 0 (default) disables pruning entirely. The scheduler
+    # runs the prune job daily when enabled (see app/retention.py).
+    retention_days: int = 0
     # Minimum seconds between ApiKey.last_used_at writes. Throttles the per-request
     # write (and its SQLite write-lock contention) so read-only bearer GETs don't
     # commit on every call — see require_api_auth.
