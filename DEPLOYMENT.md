@@ -6,6 +6,21 @@ Marvin currently runs on SQLite with no reverse proxy. This plan replaces SQLite
 
 ---
 
+## Database choice — use PostgreSQL for any SOC-scale deployment
+
+**SQLite is for local development only. Production and any multi-team / SOC deployment should run PostgreSQL** (set `MARVIN_DATABASE_URL` to a `postgresql+asyncpg://…` URL — the Docker Compose and Helm stacks below already do this).
+
+**Why:** SQLite serializes all writes behind a single database-level write lock. Marvin has three concurrent write sources — the background scheduler refreshing the watchlist, interactive API/UI writes, and bulk ingestion — and under that contention the single-writer lock becomes a real ceiling: writers block each other and slow operations can surface as `database is locked`. PostgreSQL uses row-level locking and MVCC, so these writers proceed concurrently. Postgres also scales the history tables (`FetchLog`, `InstallCountHistory`, `AlertLog`) far better as the watchlist grows.
+
+**App-side, both backends are already supported and safe:**
+- The schema is backend-agnostic (managed by Alembic) and the test suite runs on SQLite, so there are **no app regressions on the SQLite dev path**.
+- All writers are commit-isolated: the scheduler and the retention prune each use their own `AsyncSession` + commit, and alert firing (`fire_pending_alerts`) runs only **after** the caller commits — so a second writer never contends with an open transaction. This is what keeps even the SQLite path correct; on Postgres it removes the lock contention entirely.
+- `app/database.py` already gives Postgres a tuned connection pool (`pool_size=5`, `max_overflow=10`, `pool_pre_ping`, `pool_recycle=1800`) and applies the SQLite-only WAL pragma conditionally.
+
+**Single uvicorn worker remains mandatory regardless of backend** — APScheduler is per-process, so multiple workers produce duplicate watchlist refreshes and `AlertLog` rows. Scale read/write throughput with Postgres, not with extra app workers.
+
+---
+
 ## Files to create
 
 | Path | Purpose |
