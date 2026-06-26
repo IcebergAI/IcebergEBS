@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from itsdangerous import BadSignature, URLSafeTimedSerializer
+from sqlalchemy import and_, func
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
@@ -233,6 +234,37 @@ def _group_detection_findings(findings: list[dict]) -> list[dict]:
     return list(grouped.values())
 
 
+def _stale_after() -> timedelta:
+    """A watchlist extension is "stale" once it has gone this long without a
+    successful refresh — two scheduled intervals (with a 1h floor for tiny
+    intervals), enough to absorb one missed cycle without false alarms."""
+    return timedelta(minutes=max(settings.fetch_interval_minutes * 2, 60))
+
+
+async def _latest_fetch_logs(
+    session: AsyncSession, ext_ids: list[int]
+) -> dict[int, FetchLog]:
+    """Map each extension id to its most recent FetchLog (one query, not N+1)."""
+    if not ext_ids:
+        return {}
+    newest = (
+        select(FetchLog.extension_id, func.max(FetchLog.fetched_at).label("mx"))
+        .where(FetchLog.extension_id.in_(ext_ids))
+        .group_by(FetchLog.extension_id)
+    ).subquery()
+    rows = (await session.exec(
+        select(FetchLog).join(
+            newest,
+            and_(
+                FetchLog.extension_id == newest.c.extension_id,
+                FetchLog.fetched_at == newest.c.mx,
+            ),
+        )
+    )).all()
+    # Two logs could share an exact timestamp; last one wins (arbitrary but stable).
+    return {fl.extension_id: fl for fl in rows}
+
+
 @router.get("/", response_class=HTMLResponse)
 async def dashboard(
     request: Request,
@@ -254,11 +286,38 @@ async def dashboard(
         if last_refresh else None
     )
 
+    # Fetch health: surface the latest fetch outcome per extension and a fleet
+    # count of watchlist extensions that are failing (last fetch errored) or stale
+    # (no successful refresh within the staleness window).
+    now = datetime.now(timezone.utc)
+    stale_after = _stale_after()
+    latest_logs = await _latest_fetch_logs(session, [e.id for e in extensions])
+
+    ext_dicts = []
+    unhealthy = 0
+    for e in extensions:
+        log = latest_logs.get(e.id)
+        last_ok = log.success if log is not None else None
+        last_error = log.error_message if (log is not None and not log.success) else None
+        lf = e.last_fetched_at
+        if lf is not None and lf.tzinfo is None:
+            lf = lf.replace(tzinfo=timezone.utc)
+        stale = e.watchlist and (lf is None or (now - lf) > stale_after)
+        failing = last_ok is False
+        if e.watchlist and (failing or stale):
+            unhealthy += 1
+        d = _ext_to_dict(e)
+        d["last_fetch_ok"] = last_ok
+        d["last_fetch_error"] = last_error
+        d["stale"] = stale
+        ext_dicts.append(d)
+
     return _render(request, "dashboard.html", {
-        "extensions": [_ext_to_dict(e) for e in extensions],
+        "extensions": ext_dicts,
         "extensions_count": len(extensions),
         "high_risk_count": high_risk,
         "watchlist_count": watchlist_count,
+        "unhealthy_count": unhealthy,
         "last_refresh_label": _ago(last_refresh),
         "next_refresh_label": (
             f"next ~{next_refresh.strftime('%H:%M')} UTC" if next_refresh else "next: scheduled"

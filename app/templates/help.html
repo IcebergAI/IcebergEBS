@@ -164,6 +164,14 @@
       detects publisher changes, install count drops, and new code patterns. Toggle watchlist
       per extension on the detail page.
     </p>
+    <p class="text-[13.5px] leading-relaxed mt-3" style="color:var(--ink-6)">
+      The dashboard <strong>Fetch health</strong> tile counts watchlist extensions that are
+      <em>failing</em> (last fetch errored) or <em>stale</em> (no successful refresh recently),
+      and the extension row flags each one. Set
+      <code class="mono">MARVIN_RETENTION_DAYS</code> to prune fetch/install/alert history older
+      than the window. Ops probes: <code class="mono">/healthz</code> (liveness) and
+      <code class="mono">/readyz</code> (readiness — checks the database).
+    </p>
   </div>
 
   <div class="surface p-6">
@@ -201,6 +209,11 @@
           <td class="mono" style="white-space:nowrap">MARVIN_FETCH_INTERVAL_MINUTES</td>
           <td style="color:var(--ink-5)">60</td>
           <td style="color:var(--ink-5)">background refresh cadence</td>
+        </tr>
+        <tr>
+          <td class="mono" style="white-space:nowrap">MARVIN_RETENTION_DAYS</td>
+          <td style="color:var(--ink-5)">0</td>
+          <td style="color:var(--ink-5)">prune fetch/install/alert history older than N days (0 = disabled)</td>
         </tr>
         <tr>
           <td class="mono" style="white-space:nowrap">MARVIN_APP_BASE_URL</td>

@@ -50,6 +50,30 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="Marvin", version=get_version(), lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
 
 
+@app.get("/healthz", include_in_schema=False)
+async def healthz() -> JSONResponse:
+    """Liveness probe: the process is up and serving. No dependency checks — a
+    failing dependency must not cause the orchestrator to kill an otherwise-live
+    pod (that's what /readyz is for)."""
+    return JSONResponse({"status": "ok"})
+
+
+@app.get("/readyz", include_in_schema=False)
+async def readyz() -> JSONResponse:
+    """Readiness probe: verify the database is reachable before taking traffic."""
+    from sqlalchemy import text
+
+    from app.database import engine
+
+    try:
+        async with engine.connect() as conn:
+            await conn.execute(text("SELECT 1"))
+    except Exception:
+        logging.getLogger(__name__).exception("Readiness check failed: database unreachable")
+        return JSONResponse({"status": "unavailable", "database": "down"}, status_code=503)
+    return JSONResponse({"status": "ok", "database": "up"})
+
+
 @app.middleware("http")
 async def security_headers(request: Request, call_next) -> Response:
     response = await call_next(request)

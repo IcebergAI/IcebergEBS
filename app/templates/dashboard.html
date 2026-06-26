@@ -17,7 +17,7 @@
 </div>
 
 {# ── Stat tiles ─────────────────────────────────────────── #}
-<div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
+<div class="grid grid-cols-2 md:grid-cols-5 gap-3 mb-6">
   <div class="surface p-4">
     <div class="label-cap">Tracked</div>
     <div class="flex items-baseline gap-2 mt-2">
@@ -38,6 +38,14 @@
     <div class="flex items-baseline gap-2 mt-2">
       <div class="text-[26px] font-semibold tabular-nums" style="color:var(--ink-8);letter-spacing:-0.01em">{{ watchlist_count|default(extensions_count) }}</div>
       <div class="text-[11.5px]" style="color:var(--ink-5)">auto-refreshed</div>
+    </div>
+  </div>
+  <div class="surface p-4">
+    <div class="label-cap">Fetch health</div>
+    <div class="flex items-baseline gap-2 mt-2">
+      <div class="text-[26px] font-semibold tabular-nums"
+           style="color:{% if unhealthy_count|default(0) > 0 %}var(--risk-high){% else %}var(--ink-8){% endif %};letter-spacing:-0.01em">{{ unhealthy_count|default(0) }}</div>
+      <div class="text-[11.5px]" style="color:var(--ink-5)">{% if unhealthy_count|default(0) > 0 %}stale or failing{% else %}all healthy{% endif %}</div>
     </div>
   </div>
   <div class="surface p-4">
@@ -90,7 +98,15 @@
         <template x-for="ext in sorted" :key="ext.id">
           <tr style="cursor:pointer" @click="window.location='/extensions/' + ext.id">
             <td>
-              <div class="font-medium" style="color:var(--ink-8)" x-text="ext.name || ext.extension_id"></div>
+              <div class="flex items-center gap-2">
+                <div class="font-medium" style="color:var(--ink-8)" x-text="ext.name || ext.extension_id"></div>
+                <template x-if="ext.last_fetch_ok === false">
+                  <span class="badge badge-critical" :title="ext.last_fetch_error || 'Last fetch failed'">fetch failed</span>
+                </template>
+                <template x-if="ext.last_fetch_ok !== false && ext.stale">
+                  <span class="badge badge-medium" title="No successful refresh within the staleness window">stale</span>
+                </template>
+              </div>
               <div class="mono text-[11.5px] mt-0.5" style="color:var(--ink-5)" x-text="ext.extension_id"></div>
             </td>
             <td>
