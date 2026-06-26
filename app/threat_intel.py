@@ -6,6 +6,12 @@ from app.utils import domain_from_url as _domain_from_url
 OTX_LABEL = "AlienVault OTX"
 CODE_SOURCE_LABEL = "Found in code"
 NETWORK_CALLOUT_SOURCE_LABEL = "Network call in code"
+# Hard ceiling on the number of indicators returned for a single extension. A
+# heavily-obfuscated or adversarial package can reference hundreds of domains/URLs;
+# without a cap each one fans out into an indicator (with multiple lookup links),
+# bloating the API payload and the detail page. Hashes are appended first, so the
+# cap never drops the primary package/archive indicators (#28).
+MAX_THREAT_INTEL_INDICATORS = 100
 _REFERENCE_NOISE_DOMAINS = {
     "fb.me",
     "github.com",
@@ -100,7 +106,7 @@ def build_threat_intel_indicators(package_analysis: dict | None) -> list[dict]:
             ],
         ))
 
-    return indicators
+    return indicators[:MAX_THREAT_INTEL_INDICATORS]
 
 
 def _indicator(

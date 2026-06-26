@@ -3,13 +3,13 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel, Field
-from sqlalchemy import delete as sa_delete, or_
+from sqlalchemy import delete as sa_delete, update as sa_update
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.auth import clear_session, hash_password, verify_password, require_admin, require_api_auth
 from app.database import get_session
-from app.models import AlertDestination, AlertLog, AlertRule, ApiKey, Extension, FetchLog, InstallCountHistory, User
+from app.models import AlertDestination, AlertLog, AlertRule, ApiKey, Extension, User
 
 router = APIRouter()
 
@@ -77,34 +77,44 @@ async def delete_user(
     if not target:
         raise HTTPException(status_code=404, detail="User not found")
 
-    # Collect the user's extension and rule ids so child rows can be removed in
-    # bulk (and in FK-safe order) rather than row-by-row.
-    ext_ids = (await session.exec(
-        select(Extension.id).where(Extension.user_id == user_id)
-    )).all()
+    # Preserve history rather than hard-cascading owned data — mirror how
+    # delete_rule / delete_destination keep AlertLog rows and only sever the FKs
+    # to the rows being removed (#28). The forensic trail (alert log + each
+    # extension's fetch/install history) survives an account deletion.
     rule_ids = (await session.exec(
         select(AlertRule.id).where(AlertRule.user_id == user_id)
     )).all()
+    dest_ids = (await session.exec(
+        select(AlertDestination.id).where(AlertDestination.user_id == user_id)
+    )).all()
 
-    # AlertLog rows owned by this user — directly (user_id), via one of their
-    # extensions, or via one of their rules (covers legacy logs with a null user_id).
-    log_conditions = [AlertLog.user_id == user_id]
-    if ext_ids:
-        log_conditions.append(AlertLog.extension_id.in_(ext_ids))
+    # Null the AlertLog FKs that point at the user/rules/destinations we delete,
+    # leaving the log rows (and their still-valid extension_id) intact. The
+    # extension FK stays valid because we orphan extensions below rather than
+    # deleting them — a dangling FK would raise IntegrityError on Postgres.
+    await session.execute(
+        sa_update(AlertLog).where(AlertLog.user_id == user_id).values(user_id=None)
+    )
     if rule_ids:
-        log_conditions.append(AlertLog.rule_id.in_(rule_ids))
-    await session.execute(sa_delete(AlertLog).where(or_(*log_conditions)))
+        await session.execute(
+            sa_update(AlertLog).where(AlertLog.rule_id.in_(rule_ids)).values(rule_id=None)
+        )
+    if dest_ids:
+        await session.execute(
+            sa_update(AlertLog).where(AlertLog.destination_id.in_(dest_ids)).values(destination_id=None)
+        )
 
-    # Rules and destinations next (referenced by logs, reference extensions/user).
+    # Remove the user's own config rows (rules, destinations, API keys).
     await session.execute(sa_delete(AlertRule).where(AlertRule.user_id == user_id))
     await session.execute(sa_delete(AlertDestination).where(AlertDestination.user_id == user_id))
-
-    if ext_ids:
-        await session.execute(sa_delete(FetchLog).where(FetchLog.extension_id.in_(ext_ids)))
-        await session.execute(sa_delete(InstallCountHistory).where(InstallCountHistory.extension_id.in_(ext_ids)))
-
     await session.execute(sa_delete(ApiKey).where(ApiKey.user_id == user_id))
-    await session.execute(sa_delete(Extension).where(Extension.user_id == user_id))
+
+    # Orphan the user's extensions (and, transitively, their FetchLog /
+    # InstallCountHistory / AlertLog) instead of deleting them: null the owner and
+    # drop them off the watchlist so the scheduler stops refreshing unowned rows.
+    await session.execute(
+        sa_update(Extension).where(Extension.user_id == user_id).values(user_id=None, watchlist=False)
+    )
 
     await session.delete(target)
     await session.commit()
