@@ -44,7 +44,7 @@ API-first design. All data flows through FastAPI endpoints; the UI consumes them
 - `app/ratelimit.py` — `LoginRateLimiter` (process-local `login_limiter` singleton) for app-level login throttling (M3), independent of nginx: counts failures per (client IP + username), locks the pair out for `settings.login_lockout_seconds` after `settings.login_max_attempts` within `login_attempt_window_seconds`. In-process state is fine because the deployment mandates a single worker. `login_post` returns 429 + `Retry-After` while locked and `reset()`s on success
 - `app/routes/api.py` — JSON API routes for extensions (`/api/extensions/...`). `ExtensionOut.from_db(ext, include_threat_intel=...)`: the list endpoint passes `include_threat_intel=False` to skip the O(extensions × domains/URLs) VirusTotal/OTX indicator build it never renders; single-extension views keep the default `True` (D2)
 - `app/routes/alerts.py` — JSON API routes for alert destinations, rules, and log (`/api/alerts/...`)
-- `app/routes/users.py` — JSON API routes for user management (`/api/users/...`)
+- `app/routes/users.py` — JSON API routes for user management (`/api/users/...`). `delete_user` **preserves history** like `delete_rule`/`delete_destination` (#28): it deletes the user's config rows (rules, destinations, API keys), nulls the corresponding `AlertLog` FKs, and **orphans** the user's extensions (`user_id=None`, `watchlist=False`) rather than hard-deleting them — so `AlertLog`/`FetchLog`/`InstallCountHistory` survive the account deletion
 - `app/routes/ui.py` — HTML routes, Jinja2 templates, flash messages
 
 ### Data flow

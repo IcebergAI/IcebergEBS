@@ -116,3 +116,18 @@ def test_virustotal_url_lookup_uses_url_identifier_for_postman_ioc():
 
     assert vt_lookup["url"] == "https://www.virustotal.com/gui/url/aHR0cHM6Ly9hbmFseXRpY3MuZ2V0cG9zdG1hbi1iZXRhLmNvbS9ldmVudHM/detection"
     assert "/gui/search/" not in vt_lookup["url"]
+
+
+def test_total_indicators_are_capped():
+    from app.threat_intel import MAX_THREAT_INTEL_INDICATORS
+
+    # An adversarial package referencing far more callout URLs than the cap.
+    many_urls = [f"https://callout-{i}.evil.example/beacon" for i in range(MAX_THREAT_INTEL_INDICATORS * 3)]
+    indicators = build_threat_intel_indicators({
+        "package_sha256": "a" * 64,
+        "network_callout_urls": many_urls,
+    })
+
+    assert len(indicators) == MAX_THREAT_INTEL_INDICATORS
+    # The primary package hash is appended first, so the cap never drops it.
+    assert indicators[0]["type"] == "sha256"

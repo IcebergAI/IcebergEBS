@@ -115,8 +115,11 @@ async def test_change_password_unauthenticated_returns_401(anon_client):
     assert r.status_code == 401
 
 
-async def test_delete_user_cascades_owned_data(client, test_db, admin_user):
-    """Deleting a user removes all of their extensions, logs, rules, destinations and keys."""
+async def test_delete_user_preserves_history(client, test_db, admin_user):
+    """Deleting a user removes their config rows (rules, destinations, keys) but
+    preserves the forensic trail: AlertLog / FetchLog / InstallCountHistory survive,
+    and the extensions are orphaned (user_id nulled, dropped from the watchlist)
+    rather than hard-deleted (#28)."""
     from app.models import (
         AlertDestination, AlertLog, AlertRule, ApiKey,
         Extension, FetchLog, InstallCountHistory,
@@ -165,14 +168,27 @@ async def test_delete_user_cascades_owned_data(client, test_db, admin_user):
     assert r_del.status_code == 200
 
     async with AsyncSession(test_db) as s:
-        assert (await s.exec(select(Extension).where(Extension.user_id == vid))).all() == []
+        # User + their config rows are gone.
+        assert await s.get(User, vid) is None
         assert (await s.exec(select(AlertRule).where(AlertRule.user_id == vid))).all() == []
         assert (await s.exec(select(AlertDestination).where(AlertDestination.user_id == vid))).all() == []
         assert (await s.exec(select(ApiKey).where(ApiKey.user_id == vid))).all() == []
-        assert (await s.exec(select(AlertLog).where(AlertLog.user_id == vid))).all() == []
-        assert (await s.exec(select(FetchLog))).all() == []
-        assert (await s.exec(select(InstallCountHistory))).all() == []
-        assert await s.get(User, vid) is None
+
+        # Extensions are orphaned, not deleted: owner nulled, off the watchlist.
+        orphan = await s.get(Extension, ext_id)
+        assert orphan is not None
+        assert orphan.user_id is None
+        assert orphan.watchlist is False
+
+        # History is preserved; AlertLog rows survive with severed FKs.
+        assert len((await s.exec(select(FetchLog).where(FetchLog.extension_id == ext_id))).all()) == 1
+        assert len((await s.exec(select(InstallCountHistory).where(InstallCountHistory.extension_id == ext_id))).all()) == 1
+        logs = (await s.exec(select(AlertLog).where(AlertLog.extension_id == ext_id))).all()
+        assert len(logs) == 2
+        for log in logs:
+            assert log.user_id is None
+            assert log.rule_id is None
+            assert log.destination_id is None
 
 
 async def test_user_isolation(client, test_db):
