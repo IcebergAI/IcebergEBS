@@ -6,7 +6,6 @@ import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy import or_
-from sqlalchemy import update as sa_update
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
@@ -150,20 +149,10 @@ async def delete_destination(
     dest = await session.get(AlertDestination, dest_id)
     if not dest or dest.user_id != current_user.id:
         raise HTTPException(status_code=404, detail="Not found")
-    # Preserve historical alert logs but sever their foreign keys to the rows
-    # being deleted: null the destination snapshot on every log pointing at this
-    # destination, and the rule_id on logs pointing at the rules we remove. Logs
-    # keep their user_id, so they stay visible in the alert history (rendered with
-    # a "—" destination). This is required, not optional: Postgres enforces foreign
-    # keys, so leaving these FKs dangling would raise an IntegrityError.
-    await session.execute(sa_update(AlertLog).where(AlertLog.destination_id == dest_id).values(destination_id=None))
-    rules = (await session.exec(select(AlertRule).where(AlertRule.destination_id == dest_id))).all()
-    for r in rules:
-        await session.execute(sa_update(AlertLog).where(AlertLog.rule_id == r.id).values(rule_id=None))
-        await session.delete(r)
-    # Flush the rule deletes before deleting the destination they reference: Postgres
-    # enforces the alertrule → alertdestination FK, so the child rows must be gone first.
-    await session.flush()
+    # The FK ON DELETE actions handle the cleanup: the destination's rules cascade
+    # away, and the AlertLog history rows pointing at this destination (and at those
+    # rules) keep their user_id but have destination_id/rule_id set to NULL — so they
+    # stay visible in the alert history rendered with a "—" destination.
     await session.delete(dest)
     await session.commit()
     return {"ok": True}
@@ -250,7 +239,7 @@ async def delete_rule(
     rule = await session.get(AlertRule, rule_id)
     if not rule or rule.user_id != current_user.id:
         raise HTTPException(status_code=404, detail="Not found")
-    await session.execute(sa_update(AlertLog).where(AlertLog.rule_id == rule_id).values(rule_id=None))
+    # AlertLog.rule_id is ON DELETE SET NULL, so the history rows survive the rule.
     await session.delete(rule)
     await session.commit()
     return {"ok": True}

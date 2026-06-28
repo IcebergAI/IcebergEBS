@@ -36,7 +36,9 @@ class Extension(SQLModel, table=True):
     __table_args__ = (UniqueConstraint("user_id", "store", "extension_id"),)
 
     id: Optional[int] = Field(default=None, primary_key=True)
-    user_id: Optional[int] = Field(default=None, foreign_key="user.id", index=True)
+    # Orphaned (not deleted) when the owner is removed — see delete_user, which also
+    # drops them off the watchlist. SET NULL keeps the row + its fetch/alert history.
+    user_id: Optional[int] = Field(default=None, foreign_key="user.id", ondelete="SET NULL", index=True)
     store: str  # "chrome" | "vscode" | "edge"
     extension_id: str
     name: str
@@ -57,7 +59,7 @@ class Extension(SQLModel, table=True):
 
 class FetchLog(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
-    extension_id: int = Field(foreign_key="extension.id", index=True)
+    extension_id: int = Field(foreign_key="extension.id", ondelete="CASCADE", index=True)
     fetched_at: datetime = Field(default_factory=_utcnow, sa_column=_tz_column(nullable=False))
     success: bool
     error_message: Optional[str] = None
@@ -67,14 +69,14 @@ class FetchLog(SQLModel, table=True):
 
 class InstallCountHistory(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
-    extension_id: int = Field(foreign_key="extension.id", index=True)
+    extension_id: int = Field(foreign_key="extension.id", ondelete="CASCADE", index=True)
     recorded_at: datetime = Field(default_factory=_utcnow, sa_column=_tz_column(nullable=False))
     install_count: int
 
 
 class AlertDestination(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
-    user_id: int = Field(foreign_key="user.id", index=True)
+    user_id: int = Field(foreign_key="user.id", ondelete="CASCADE", index=True)
     label: str
     target: str  # webhook URL
     enabled: bool = True
@@ -83,9 +85,9 @@ class AlertDestination(SQLModel, table=True):
 
 class AlertRule(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
-    user_id: int = Field(foreign_key="user.id", index=True)
-    destination_id: int = Field(foreign_key="alertdestination.id", index=True)
-    extension_id: Optional[int] = Field(default=None, foreign_key="extension.id")
+    user_id: int = Field(foreign_key="user.id", ondelete="CASCADE", index=True)
+    destination_id: int = Field(foreign_key="alertdestination.id", ondelete="CASCADE", index=True)
+    extension_id: Optional[int] = Field(default=None, foreign_key="extension.id", ondelete="CASCADE")
     event_type: str  # "risk_level_change" | "publisher_change" | "permission_change" | "new_version"
     enabled: bool = True
     created_at: datetime = Field(default_factory=_utcnow, sa_column=_tz_column(nullable=False))
@@ -93,7 +95,7 @@ class AlertRule(SQLModel, table=True):
 
 class ApiKey(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
-    user_id: int = Field(foreign_key="user.id", index=True)
+    user_id: int = Field(foreign_key="user.id", ondelete="CASCADE", index=True)
     label: str
     key_hash: str = Field(index=True)  # SHA-256 hex of raw key
     key_prefix: str = ""  # first 12 chars of raw key for display
@@ -104,11 +106,13 @@ class ApiKey(SQLModel, table=True):
 
 
 class AlertLog(SQLModel, table=True):
+    # History rows: severing FKs (SET NULL) keeps the audit trail when the rule /
+    # destination / owning user is deleted; extension deletion removes its logs.
     id: Optional[int] = Field(default=None, primary_key=True)
-    rule_id: Optional[int] = Field(default=None, foreign_key="alertrule.id", index=True)
-    destination_id: Optional[int] = Field(default=None, foreign_key="alertdestination.id")
-    extension_id: int = Field(foreign_key="extension.id", index=True)
-    user_id: Optional[int] = Field(default=None, foreign_key="user.id", index=True)
+    rule_id: Optional[int] = Field(default=None, foreign_key="alertrule.id", ondelete="SET NULL", index=True)
+    destination_id: Optional[int] = Field(default=None, foreign_key="alertdestination.id", ondelete="SET NULL")
+    extension_id: int = Field(foreign_key="extension.id", ondelete="CASCADE", index=True)
+    user_id: Optional[int] = Field(default=None, foreign_key="user.id", ondelete="SET NULL", index=True)
     event_type: str
     detail: str  # JSON: {"old": ..., "new": ...}
     sent_at: datetime = Field(default_factory=_utcnow, sa_column=_tz_column(nullable=False))

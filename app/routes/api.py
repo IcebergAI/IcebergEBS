@@ -11,7 +11,6 @@ import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel
-from sqlalchemy import delete as sa_delete
 from sqlalchemy import func, or_
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
@@ -19,7 +18,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 from app.auth import require_api_auth
 from app.database import engine, get_session
 from app.fetchers.base import FetchError
-from app.models import AlertLog, AlertRule, Extension, FetchLog, InstallCountHistory, User
+from app.models import Extension, FetchLog, InstallCountHistory, User
 from app.scoring import risk_level
 from app.services import fetch_and_store, fire_pending_alerts
 from app.threat_intel import build_threat_intel_indicators
@@ -669,13 +668,8 @@ async def delete_extension(
     if not ext or ext.user_id != current_user.id:
         raise HTTPException(status_code=404, detail="Not found")
 
-    # Remove all child rows referencing this extension in FK-safe order.
-    # AlertLog references both the extension and (optionally) a rule, so it goes first.
-    await session.execute(sa_delete(AlertLog).where(AlertLog.extension_id == ext_id))
-    await session.execute(sa_delete(AlertRule).where(AlertRule.extension_id == ext_id))
-    await session.execute(sa_delete(FetchLog).where(FetchLog.extension_id == ext_id))
-    await session.execute(sa_delete(InstallCountHistory).where(InstallCountHistory.extension_id == ext_id))
-
+    # Every child FK (AlertLog, AlertRule, FetchLog, InstallCountHistory) is
+    # ON DELETE CASCADE, so deleting the extension removes its dependent rows.
     await session.delete(ext)
     await session.commit()
     return {"ok": True}

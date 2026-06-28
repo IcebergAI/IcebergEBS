@@ -10,7 +10,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.auth import clear_session, hash_password, require_admin, require_api_auth, verify_password
 from app.database import get_session
-from app.models import AlertDestination, AlertLog, AlertRule, ApiKey, Extension, User
+from app.models import ApiKey, Extension, User
 
 router = APIRouter()
 
@@ -78,33 +78,15 @@ async def delete_user(
     if not target:
         raise HTTPException(status_code=404, detail="User not found")
 
-    # Preserve history rather than hard-cascading owned data — mirror how
-    # delete_rule / delete_destination keep AlertLog rows and only sever the FKs
-    # to the rows being removed (#28). The forensic trail (alert log + each
-    # extension's fetch/install history) survives an account deletion.
-    rule_ids = (await session.exec(select(AlertRule.id).where(AlertRule.user_id == user_id))).all()
-    dest_ids = (await session.exec(select(AlertDestination.id).where(AlertDestination.user_id == user_id))).all()
-
-    # Null the AlertLog FKs that point at the user/rules/destinations we delete,
-    # leaving the log rows (and their still-valid extension_id) intact. The
-    # extension FK stays valid because we orphan extensions below rather than
-    # deleting them — a dangling FK would raise IntegrityError on Postgres.
-    await session.execute(sa_update(AlertLog).where(AlertLog.user_id == user_id).values(user_id=None))
-    if rule_ids:
-        await session.execute(sa_update(AlertLog).where(AlertLog.rule_id.in_(rule_ids)).values(rule_id=None))
-    if dest_ids:
-        await session.execute(
-            sa_update(AlertLog).where(AlertLog.destination_id.in_(dest_ids)).values(destination_id=None)
-        )
-
-    # Remove the user's own config rows (rules, destinations, API keys).
-    await session.execute(sa_delete(AlertRule).where(AlertRule.user_id == user_id))
-    await session.execute(sa_delete(AlertDestination).where(AlertDestination.user_id == user_id))
-    await session.execute(sa_delete(ApiKey).where(ApiKey.user_id == user_id))
-
-    # Orphan the user's extensions (and, transitively, their FetchLog /
-    # InstallCountHistory / AlertLog) instead of deleting them: null the owner and
-    # drop them off the watchlist so the scheduler stops refreshing unowned rows.
+    # Preserve history rather than hard-cascading owned data (#28). The user's config
+    # rows (rules, destinations, API keys) are ON DELETE CASCADE; AlertLog rows keep
+    # their extension_id but have user_id/rule_id/destination_id set to NULL by their
+    # SET NULL FKs — so the forensic trail (alert log + each extension's fetch/install
+    # history) survives the account deletion.
+    #
+    # Extensions are *orphaned*, not deleted: the FK alone (SET NULL) would null the
+    # owner but leave them on the watchlist, so do it explicitly here — null the owner
+    # and drop them off the watchlist so the scheduler stops refreshing unowned rows.
     await session.execute(
         sa_update(Extension).where(Extension.user_id == user_id).values(user_id=None, watchlist=False)
     )
