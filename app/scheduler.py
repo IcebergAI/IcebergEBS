@@ -41,8 +41,8 @@ async def _refresh_one(ext_id: int, client: httpx.AsyncClient) -> None:
             logger.exception("Unexpected error refreshing ext_id=%d", ext_id)
             await session.rollback()
             return
-        # The commit above released this session's SQLite write lock, so it is now
-        # safe to fire alerts (fire_alerts opens its own session to write AlertLog).
+        # Fire alerts only after committing above, so fire_alerts' own session (which
+        # writes AlertLog) does not run inside this session's open write transaction.
         await session.refresh(ext)
         await fire_pending_alerts(events, ext, engine, client)
 

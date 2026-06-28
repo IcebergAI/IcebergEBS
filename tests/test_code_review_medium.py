@@ -40,7 +40,7 @@ def test_session_valid_when_password_changed_at_missing():
 
 def test_session_after_password_change_handles_naive_datetime():
     user = MagicMock()
-    user.password_changed_at = datetime.now()  # naive (e.g. from SQLite)
+    user.password_changed_at = datetime.now()  # naive (e.g. from an external source)
     # Must not raise comparing aware vs naive.
     assert isinstance(_session_after_password_change(user, datetime.now(timezone.utc)), bool)
 

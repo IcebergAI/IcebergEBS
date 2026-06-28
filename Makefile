@@ -1,0 +1,26 @@
+# Developer convenience targets. Dev runs against containerized Postgres
+# (see docker-compose.dev.yml); SQLite is no longer supported.
+
+COMPOSE := docker compose -f docker-compose.yml -f docker-compose.dev.yml
+TEST_DATABASE_URL ?= postgresql+asyncpg://marvin:marvin@localhost:5432/marvin
+PYTHON ?= venv/bin/python
+
+.PHONY: db dev test test-up down logs
+
+# Start just Postgres (published on localhost:5432) for host-side tests / uvicorn.
+db:
+	$(COMPOSE) up -d postgres
+
+# Full dev stack with live reload (Postgres + app, no nginx) on http://localhost:8000.
+dev:
+	$(COMPOSE) up --build postgres app
+
+# Run the test suite against the dev Postgres. Brings Postgres up first.
+test: db
+	MARVIN_TEST_DATABASE_URL=$(TEST_DATABASE_URL) $(PYTHON) -m pytest tests/ -v
+
+down:
+	$(COMPOSE) down
+
+logs:
+	$(COMPOSE) logs -f

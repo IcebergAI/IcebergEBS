@@ -11,26 +11,37 @@ Multi-user. Each user maintains an independent list of monitored extensions. A b
 
 - Python 3.14+
 
-## Quick start (local dev, SQLite)
+## Quick start (local dev, containers)
+
+Marvin runs on PostgreSQL — dev included. The dev stack runs the app with live
+reload against a containerized Postgres (no nginx):
 
 ```bash
-python -m venv venv
-venv/bin/pip install -r requirements.txt
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build postgres app
+# or: make dev
 ```
 
-Create a `.env` file (or export environment variables):
+Open `http://localhost:8000` and log in (default dev credentials `admin` / `admin`).
+The admin account is seeded automatically on first startup.
 
-```env
-MARVIN_ADMIN_USERNAME=admin
-MARVIN_ADMIN_PASSWORD=changeme
-MARVIN_SECRET_KEY=<run: python -c "import secrets; print(secrets.token_hex(32))">
-```
+To run a host-side uvicorn instead, start just Postgres and point the app at it:
 
 ```bash
-venv/bin/uvicorn app.main:app --reload
+make db   # docker compose ... up -d postgres  (published on localhost:5432)
+MARVIN_DATABASE_URL=postgresql+asyncpg://marvin:marvin@localhost:5432/marvin \
+  MARVIN_ADMIN_USERNAME=admin MARVIN_ADMIN_PASSWORD=admin \
+  MARVIN_SECRET_KEY=$(python -c "import secrets; print(secrets.token_hex(32))") \
+  MARVIN_SECURE_COOKIES=false venv/bin/uvicorn app.main:app --reload
 ```
 
-The admin account is seeded automatically on first startup using the credentials in your environment. Open `http://localhost:8000` and log in.
+### Tests
+
+The suite runs against a real Postgres (the dev stack above provides one):
+
+```bash
+make test
+# or: MARVIN_TEST_DATABASE_URL=postgresql+asyncpg://marvin:marvin@localhost:5432/marvin venv/bin/python -m pytest tests/ -v
+```
 
 ## Production deployment (Docker + PostgreSQL + nginx)
 
@@ -45,7 +56,7 @@ docker compose up --build
 
 This starts three containers: PostgreSQL, the Marvin app, and nginx as a TLS-terminating reverse proxy. For production, replace `nginx/certs/` with a real certificate (Let's Encrypt via Certbot or similar) and set `MARVIN_APP_BASE_URL` to your public domain.
 
-> **Database:** SQLite is for local development only. **Run PostgreSQL for production and any SOC-scale deployment** — SQLite's single database-level write lock becomes a ceiling once the scheduler, interactive writes, and bulk ingestion contend for it. The Compose and Helm stacks default to Postgres. See [DEPLOYMENT.md → Database choice](DEPLOYMENT.md#database-choice--use-postgresql-for-any-soc-scale-deployment).
+> **Database:** Marvin runs on **PostgreSQL only** — in development, test, and production. The Compose and Helm stacks provision it for you. See [DEPLOYMENT.md → Database choice](DEPLOYMENT.md#database-choice--use-postgresql-for-any-soc-scale-deployment).
 
 A Kubernetes/Helm chart is also provided under `helm/marvin/` — see DEPLOYMENT.md for details.
 
@@ -58,7 +69,7 @@ All settings use the `MARVIN_` prefix and can be set via `.env` or environment v
 | `MARVIN_ADMIN_USERNAME` | — | **required** — seeded admin username |
 | `MARVIN_ADMIN_PASSWORD` | — | **required** — seeded admin password |
 | `MARVIN_SECRET_KEY` | — | **required** — signs session cookies |
-| `MARVIN_DATABASE_URL` | `sqlite+aiosqlite:///./marvin.db` | SQLAlchemy async database URL |
+| `MARVIN_DATABASE_URL` | `postgresql+asyncpg://marvin:marvin@localhost:5432/marvin` | SQLAlchemy async Postgres URL |
 | `MARVIN_SESSION_MAX_AGE` | `86400` | Session lifetime in seconds |
 | `MARVIN_FETCH_INTERVAL_MINUTES` | `60` | Background watchlist refresh cadence |
 | `MARVIN_RETENTION_DAYS` | `0` | Prune `FetchLog`/`InstallCountHistory`/`AlertLog` rows older than N days (`0` = disabled) |

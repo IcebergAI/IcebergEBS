@@ -2,22 +2,22 @@
 
 ## Context
 
-Marvin currently runs on SQLite with no reverse proxy. This plan replaces SQLite with PostgreSQL and adds nginx as a TLS-terminating reverse proxy following security hardening best practices. Everything is wired together with Docker Compose for a one-command production deployment.
+Marvin runs on PostgreSQL (dev, test, and production — SQLite is not supported) behind nginx as a TLS-terminating reverse proxy following security hardening best practices. Everything is wired together with Docker Compose for a one-command production deployment.
 
 ---
 
 ## Database choice — use PostgreSQL for any SOC-scale deployment
 
-**SQLite is for local development only. Production and any multi-team / SOC deployment should run PostgreSQL** (set `MARVIN_DATABASE_URL` to a `postgresql+asyncpg://…` URL — the Docker Compose and Helm stacks below already do this).
+**Marvin runs on PostgreSQL everywhere — dev, test, and production** (set `MARVIN_DATABASE_URL` to a `postgresql+asyncpg://…` URL; the Docker Compose, dev override, and Helm stacks all do this). SQLite is not supported.
 
-**Why:** SQLite serializes all writes behind a single database-level write lock. Marvin has three concurrent write sources — the background scheduler refreshing the watchlist, interactive API/UI writes, and bulk ingestion — and under that contention the single-writer lock becomes a real ceiling: writers block each other and slow operations can surface as `database is locked`. PostgreSQL uses row-level locking and MVCC, so these writers proceed concurrently. Postgres also scales the history tables (`FetchLog`, `InstallCountHistory`, `AlertLog`) far better as the watchlist grows.
+**Why:** Marvin has three concurrent write sources — the background scheduler refreshing the watchlist, interactive API/UI writes, and bulk ingestion. PostgreSQL's row-level locking and MVCC let these writers proceed concurrently, and it scales the history tables (`FetchLog`, `InstallCountHistory`, `AlertLog`) far better as the watchlist grows. (SQLite's single database-level write lock — which serialized all writes and surfaced as `database is locked` under contention — was the reason it was dropped.)
 
-**App-side, both backends are already supported and safe:**
-- The schema is backend-agnostic (managed by Alembic) and the test suite runs on SQLite, so there are **no app regressions on the SQLite dev path**.
-- All writers are commit-isolated: the scheduler and the retention prune each use their own `AsyncSession` + commit, and alert firing (`fire_pending_alerts`) runs only **after** the caller commits — so a second writer never contends with an open transaction. This is what keeps even the SQLite path correct; on Postgres it removes the lock contention entirely.
-- `app/database.py` already gives Postgres a tuned connection pool (`pool_size=5`, `max_overflow=10`, `pool_pre_ping`, `pool_recycle=1800`) and applies the SQLite-only WAL pragma conditionally.
+**App-side guarantees:**
+- The schema is managed by Alembic; the test suite runs against a real Postgres (containerized), so CI exercises the same database as production.
+- All writers are commit-isolated: the scheduler and the retention prune each use their own `AsyncSession` + commit, and alert firing (`fire_pending_alerts`) runs only **after** the caller commits — so a second session never runs inside an open write transaction.
+- `app/database.py` gives the engine a tuned connection pool (`pool_size=5`, `max_overflow=10`, `pool_pre_ping`, `pool_recycle=1800`).
 
-**Single uvicorn worker remains mandatory regardless of backend** — APScheduler is per-process, so multiple workers produce duplicate watchlist refreshes and `AlertLog` rows. Scale read/write throughput with Postgres, not with extra app workers.
+**A single uvicorn worker is mandatory** — APScheduler is per-process, so multiple workers produce duplicate watchlist refreshes and `AlertLog` rows. Scale read/write throughput with Postgres, not with extra app workers.
 
 ---
 
@@ -38,44 +38,35 @@ Marvin currently runs on SQLite with no reverse proxy. This plan replaces SQLite
 
 | Path | Change |
 |------|--------|
-| `requirements.txt` | Add `asyncpg`; keep `aiosqlite` (still used by tests) |
-| `app/database.py` | Conditional WAL pragma (SQLite only); add Postgres pool settings |
+| `requirements.txt` | `asyncpg` (async Postgres driver) |
+| `app/database.py` | Postgres engine + tuned connection pool |
 | `app/templates/base.html` | Replace inline `tailwind.config` script with `<script src="/static/js/tailwind-config.js">` |
 
 ---
 
 ## 1. `requirements.txt`
 
-Add `asyncpg` after `aiosqlite`. Both stay — `aiosqlite` is still used by the in-memory SQLite fixtures in `tests/conftest.py`.
+`asyncpg` is the async Postgres driver used at runtime. `psycopg2-binary` (in `requirements-dev.txt`) backs the sync Alembic CLI / migration tests only — production migrates via the async startup connection and does not need it.
 
 ---
 
 ## 2. `app/database.py`
 
-Two changes:
-
-**a) Conditional WAL pragma** — `PRAGMA journal_mode=WAL` is SQLite-only; calling it against Postgres raises an error:
+The engine is created with a tuned connection pool suited to production:
 
 ```python
-async def init_db() -> None:
-    async with engine.begin() as conn:
-        if settings.database_url.startswith("sqlite"):
-            await conn.execute(text("PRAGMA journal_mode=WAL"))
-        await conn.run_sync(SQLModel.metadata.create_all)
+engine: AsyncEngine = create_async_engine(
+    settings.database_url,
+    echo=False,
+    pool_size=5,
+    max_overflow=10,
+    pool_pre_ping=True,
+    pool_timeout=30,
+    pool_recycle=1800,
+)
 ```
 
-**b) Postgres connection pool** — SQLAlchemy's default pool is too small for production; SQLite uses `StaticPool` and must not be given pool kwargs:
-
-```python
-_is_sqlite = settings.database_url.startswith("sqlite")
-_pool_kwargs = {} if _is_sqlite else {
-    "pool_size": 5,
-    "max_overflow": 10,
-    "pool_pre_ping": True,
-    "pool_timeout": 30,
-}
-engine: AsyncEngine = create_async_engine(settings.database_url, echo=False, **_pool_kwargs)
-```
+`init_db()` runs Alembic migrations to head against a connection and commits the `alembic_version` row (the connection is not in autocommit). There is no SQLite WAL/pragma path.
 
 ---
 
@@ -387,7 +378,7 @@ Substitute the result as `'sha256-<base64>'` in `security_headers.conf`. This is
 ## Build order
 
 1. `requirements.txt` — add `asyncpg`
-2. `app/database.py` — conditional WAL + pool settings
+2. `app/database.py` — Postgres engine + pool settings
 3. `static/js/tailwind-config.js` — new file
 4. `app/templates/base.html` — replace inline script block with `<script src>` tag
 5. `Dockerfile`, `.dockerignore`, `.env.example`
@@ -420,8 +411,9 @@ curl -sI http://localhost/ | head -3
 # Static asset served by nginx (not proxied through Python)
 curl -sI https://localhost/static/css/app.css | grep -E "Cache-Control|Server"
 
-# Tests still pass (in-memory SQLite, unaffected by Postgres changes)
-venv/bin/python -m pytest tests/ -v
+# Tests pass against a containerized Postgres (start one with `make db` first)
+MARVIN_TEST_DATABASE_URL=postgresql+asyncpg://marvin:marvin@localhost:5432/marvin \
+  venv/bin/python -m pytest tests/ -v
 ```
 
 For production: replace `nginx/certs/` with a real certificate, uncomment OCSP stapling, and set `MARVIN_APP_BASE_URL` to your public domain.

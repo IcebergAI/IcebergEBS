@@ -16,6 +16,22 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: marvin
+          POSTGRES_USER: marvin
+          POSTGRES_PASSWORD: marvin
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U marvin -d marvin"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      MARVIN_TEST_DATABASE_URL: postgresql+asyncpg://marvin:marvin@localhost:5432/marvin
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

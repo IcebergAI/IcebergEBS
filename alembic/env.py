@@ -1,7 +1,6 @@
 """Alembic environment for Marvin.
 
-Reads the database URL from ``app.config.settings`` so dev SQLite and prod
-Postgres share one config. Supports three callers:
+Reads the database URL from ``app.config.settings``. Supports three callers:
 
 * the ``alembic`` CLI (offline ``--sql`` or online), building its own sync engine;
 * application startup, which hands in an existing (sync) connection via
@@ -26,13 +25,12 @@ target_metadata = SQLModel.metadata
 
 def _sync_url() -> str:
     """Translate the app's async URL to a sync driver for CLI engine creation."""
-    return settings.database_url.replace("+aiosqlite", "").replace("+asyncpg", "+psycopg2")
+    return settings.database_url.replace("+asyncpg", "+psycopg2")
 
 
 def _configure(**kwargs) -> None:
     context.configure(
         target_metadata=target_metadata,
-        render_as_batch=True,  # batch mode so future SQLite ALTERs work
         compare_type=True,
         **kwargs,
     )

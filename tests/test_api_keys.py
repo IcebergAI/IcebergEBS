@@ -143,8 +143,8 @@ async def _only_key(test_db, admin_user) -> ApiKey:
 async def test_last_used_at_write_is_throttled(api_key_client, test_db, admin_user):
     """A second request inside the throttle window must NOT re-write last_used_at.
 
-    The per-request write takes the SQLite write lock; throttling it keeps read-only
-    GETs from committing on every call (issue #5).
+    Throttling the per-request write keeps read-only GETs from committing on every
+    call (issue #5).
     """
     await api_key_client.get("/api/extensions")
     first = (await _only_key(test_db, admin_user)).last_used_at
@@ -172,7 +172,6 @@ async def test_last_used_at_rewritten_once_stale(api_key_client, test_db, admin_
     await api_key_client.get("/api/extensions")
     refreshed = (await _only_key(test_db, admin_user)).last_used_at
     assert refreshed is not None
-    # Compare tz-aware; SQLite may return naive datetimes.
     if refreshed.tzinfo is None:
         refreshed = refreshed.replace(tzinfo=timezone.utc)
     assert refreshed > stale
