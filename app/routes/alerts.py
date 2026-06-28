@@ -82,11 +82,11 @@ class RulePatch(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-@router.get("/alerts/destinations", response_model=list[DestinationOut])
+@router.get("/alerts/destinations")
 async def list_destinations(
     current_user: CurrentUser,
     session: SessionDep,
-):
+) -> list[DestinationOut]:
     dests = (
         await session.exec(
             select(AlertDestination)
@@ -97,12 +97,12 @@ async def list_destinations(
     return [DestinationOut.model_validate(d) for d in dests]
 
 
-@router.post("/alerts/destinations", response_model=DestinationOut, status_code=201)
+@router.post("/alerts/destinations", status_code=201)
 async def create_destination(
     body: DestinationIn,
     current_user: CurrentUser,
     session: SessionDep,
-):
+) -> DestinationOut:
     await _validate_webhook_url(body.target)
     dest = AlertDestination(
         user_id=current_user.id,
@@ -116,13 +116,13 @@ async def create_destination(
     return DestinationOut.model_validate(dest)
 
 
-@router.patch("/alerts/destinations/{dest_id}", response_model=DestinationOut)
+@router.patch("/alerts/destinations/{dest_id}")
 async def update_destination(
     dest_id: int,
     body: DestinationPatch,
     current_user: CurrentUser,
     session: SessionDep,
-):
+) -> DestinationOut:
     dest = await session.get(AlertDestination, dest_id)
     if not dest or dest.user_id != current_user.id:
         raise HTTPException(status_code=404, detail="Not found")
@@ -162,23 +162,23 @@ async def delete_destination(
 # ---------------------------------------------------------------------------
 
 
-@router.get("/alerts/rules", response_model=list[RuleOut])
+@router.get("/alerts/rules")
 async def list_rules(
     current_user: CurrentUser,
     session: SessionDep,
-):
+) -> list[RuleOut]:
     rules = (
         await session.exec(select(AlertRule).where(AlertRule.user_id == current_user.id).order_by(AlertRule.created_at))
     ).all()
     return [RuleOut.model_validate(r) for r in rules]
 
 
-@router.post("/alerts/rules", response_model=RuleOut, status_code=201)
+@router.post("/alerts/rules", status_code=201)
 async def create_rule(
     body: RuleIn,
     current_user: CurrentUser,
     session: SessionDep,
-):
+) -> RuleOut:
     if body.event_type not in VALID_EVENT_TYPES:
         raise HTTPException(status_code=422, detail=f"event_type must be one of: {sorted(VALID_EVENT_TYPES)}")
 
@@ -206,13 +206,13 @@ async def create_rule(
     return RuleOut.model_validate(rule)
 
 
-@router.patch("/alerts/rules/{rule_id}", response_model=RuleOut)
+@router.patch("/alerts/rules/{rule_id}")
 async def update_rule(
     rule_id: int,
     body: RulePatch,
     current_user: CurrentUser,
     session: SessionDep,
-):
+) -> RuleOut:
     rule = await session.get(AlertRule, rule_id)
     if not rule or rule.user_id != current_user.id:
         raise HTTPException(status_code=404, detail="Not found")

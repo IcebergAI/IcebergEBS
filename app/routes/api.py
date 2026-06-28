@@ -454,7 +454,7 @@ async def _enroll_extension(
 # ---------------------------------------------------------------------------
 
 
-@router.get("/extensions", response_model=PaginatedExtensions)
+@router.get("/extensions")
 async def list_extensions(
     current_user: CurrentUser,
     session: SessionDep,
@@ -466,7 +466,7 @@ async def list_extensions(
     order: SortOrder = "desc",
     limit: Annotated[int, Query(ge=1, le=MAX_PAGE_LIMIT)] = DEFAULT_PAGE_LIMIT,
     offset: Annotated[int, Query(ge=0)] = 0,
-):
+) -> PaginatedExtensions:
     stmt = build_extension_query(
         current_user.id,
         store=store,
@@ -572,13 +572,13 @@ async def export_extensions(
     )
 
 
-@router.post("/extensions", response_model=ExtensionOut, status_code=201)
+@router.post("/extensions", status_code=201)
 async def add_extension(
     body: ExtensionIn,
     request: Request,
     current_user: CurrentUser,
     session: SessionDep,
-):
+) -> ExtensionOut:
     client: httpx.AsyncClient = request.app.state.http_client
     result = await _enroll_extension(body.store, body.extension_id, session, client, current_user.id)
     if result["status"] == "invalid":
@@ -594,13 +594,13 @@ async def add_extension(
 MAX_BULK_ITEMS = 100
 
 
-@router.post("/extensions/bulk", response_model=BulkResult)
+@router.post("/extensions/bulk")
 async def bulk_add_extensions(
     body: BulkIn,
     request: Request,
     current_user: CurrentUser,
     session: SessionDep,
-):
+) -> BulkResult:
     """Enroll many extensions in one request, reusing the add+score path.
 
     Accepts structured ``items`` and/or a pasted ``text`` blob ("store,id" per
@@ -646,12 +646,12 @@ async def bulk_add_extensions(
     )
 
 
-@router.get("/extensions/{ext_id}", response_model=ExtensionOut)
+@router.get("/extensions/{ext_id}")
 async def get_extension(
     ext_id: int,
     current_user: CurrentUser,
     session: SessionDep,
-):
+) -> ExtensionOut:
     ext = await session.get(Extension, ext_id)
     if not ext or ext.user_id != current_user.id:
         raise HTTPException(status_code=404, detail="Not found")
@@ -675,13 +675,13 @@ async def delete_extension(
     return {"ok": True}
 
 
-@router.post("/extensions/{ext_id}/refresh", response_model=ExtensionOut)
+@router.post("/extensions/{ext_id}/refresh")
 async def refresh_extension(
     ext_id: int,
     request: Request,
     current_user: CurrentUser,
     session: SessionDep,
-):
+) -> ExtensionOut:
     ext = await session.get(Extension, ext_id)
     if not ext or ext.user_id != current_user.id:
         raise HTTPException(status_code=404, detail="Not found")
@@ -689,13 +689,13 @@ async def refresh_extension(
     return ExtensionOut.from_db(await _fetch_and_score(ext, session, client))
 
 
-@router.patch("/extensions/{ext_id}/watchlist", response_model=ExtensionOut)
+@router.patch("/extensions/{ext_id}/watchlist")
 async def toggle_watchlist(
     ext_id: int,
     body: WatchlistPatch,
     current_user: CurrentUser,
     session: SessionDep,
-):
+) -> ExtensionOut:
     ext = await session.get(Extension, ext_id)
     if not ext or ext.user_id != current_user.id:
         raise HTTPException(status_code=404, detail="Not found")
@@ -706,12 +706,12 @@ async def toggle_watchlist(
     return ExtensionOut.from_db(ext)
 
 
-@router.get("/extensions/{ext_id}/history", response_model=list[HistoryPoint])
+@router.get("/extensions/{ext_id}/history")
 async def get_history(
     ext_id: int,
     current_user: CurrentUser,
     session: SessionDep,
-):
+) -> list[HistoryPoint]:
     ext = await session.get(Extension, ext_id)
     if not ext or ext.user_id != current_user.id:
         raise HTTPException(status_code=404, detail="Not found")
