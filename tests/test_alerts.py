@@ -100,6 +100,33 @@ def test_detect_changes_permissions():
     assert any(e.event_type == "permission_change" for e in events)
 
 
+def test_detect_changes_host_permission_added():
+    # Host permissions live in package_analysis, not ext.permissions. Gaining broad
+    # host access must still fire permission_change (#60).
+    old = _ext(package_analysis=json.dumps({"host_permissions": []}))
+    new = _ext(package_analysis=json.dumps({"host_permissions": ["<all_urls>"]}))
+    events = detect_changes(old, new)
+    ev = next(e for e in events if e.event_type == "permission_change")
+    assert "<all_urls>" in ev.new_value
+    assert "<all_urls>" not in ev.old_value
+
+
+def test_detect_changes_host_permission_unchanged_no_event():
+    same = json.dumps({"host_permissions": ["https://example.com/*"]})
+    old = _ext(package_analysis=same)
+    new = _ext(package_analysis=same)
+    events = detect_changes(old, new)
+    assert not any(e.event_type == "permission_change" for e in events)
+
+
+def test_detect_changes_malformed_package_analysis_no_crash():
+    # Corrupt stored analysis must not raise — treated as no host permissions.
+    old = _ext(package_analysis="{not json")
+    new = _ext(package_analysis="{not json")
+    events = detect_changes(old, new)
+    assert not any(e.event_type == "permission_change" for e in events)
+
+
 def test_detect_changes_new_version():
     old = _ext(version="1.0.0")
     new = _ext(version="2.0.0")

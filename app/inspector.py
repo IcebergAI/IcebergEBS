@@ -5,6 +5,9 @@ import zipfile
 from dataclasses import dataclass, field
 from hashlib import sha256
 
+from app.permissions import BROAD_HOST_PATTERNS as _BROAD_HOST_PATTERNS
+from app.permissions import CRITICAL_PERMISSIONS as _CRITICAL_PERMISSIONS
+from app.permissions import HIGH_PERMISSIONS as _HIGH_PERMISSIONS
 from app.utils import domain_from_url as _domain_from_url
 
 
@@ -72,28 +75,6 @@ _SAFE_DOMAINS = {
     "visualstudio.com",
     "vsassets.io",
 }
-
-_CRITICAL_PERMISSIONS = {
-    "<all_urls>",
-    "debugger",
-    "nativeMessaging",
-    "proxy",
-    "webRequest",
-    "webRequestBlocking",
-    "declarativeNetRequestWithHostAccess",
-}
-_HIGH_PERMISSIONS = {
-    "cookies",
-    "history",
-    "tabs",
-    "browsingData",
-    "downloads",
-    "management",
-    "clipboardRead",
-    "contentSettings",
-    "pageCapture",
-}
-_BROAD_HOST_PATTERNS = {"<all_urls>", "*://*/*", "http://*/*", "https://*/*"}
 
 _URL_LITERAL_TAIL = r'[^\s\'"`<>{}\\]+'
 _URL_RE = re.compile(r"https?://" + _URL_LITERAL_TAIL)

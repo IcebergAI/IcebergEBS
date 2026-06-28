@@ -1,4 +1,3 @@
-import json
 from datetime import datetime, timedelta, timezone
 from typing import Annotated
 from urllib.parse import urlencode
@@ -21,6 +20,7 @@ from app.routes.api import (
     _RISK_BANDS,
     _SORT_COLUMNS,
     _count,
+    _safe_json,
     build_extension_query,
 )
 from app.threat_intel import build_threat_intel_indicators
@@ -487,9 +487,12 @@ async def extension_detail(
         )
     ).all()
 
-    permissions = json.loads(ext.permissions or "[]")
-    risk_detail = json.loads(ext.risk_detail or "null")
-    package_analysis = json.loads(ext.package_analysis or "null")
+    # Parse defensively: a partial write or manual DB edit could leave invalid JSON,
+    # which must not 500 the detail page — fall back and log instead (#61, mirroring
+    # the JSON API's #17 hardening).
+    permissions = _safe_json(ext.permissions, "[]", "permissions", ext.id)
+    risk_detail = _safe_json(ext.risk_detail, "null", "risk_detail", ext.id)
+    package_analysis = _safe_json(ext.package_analysis, "null", "package_analysis", ext.id)
 
     host_permissions = []
     if package_analysis:

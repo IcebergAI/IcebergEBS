@@ -3,37 +3,16 @@ from datetime import datetime, timezone
 from typing import NamedTuple, overload
 
 from app.inspector import PackageAnalysis
+from app.permissions import (
+    CRITICAL_PERMISSIONS as _CRITICAL_PERMISSIONS,
+)
+from app.permissions import (
+    HIGH_PERMISSIONS as _HIGH_PERMISSIONS,
+)
+from app.permissions import (
+    MEDIUM_PERMISSIONS as _MEDIUM_PERMISSIONS,
+)
 
-# Permissions tiered by danger level
-_CRITICAL_PERMISSIONS = {
-    "<all_urls>",
-    "debugger",
-    "nativeMessaging",
-    "proxy",
-    "webRequest",
-    "webRequestBlocking",
-    "declarativeNetRequestWithHostAccess",
-}
-_HIGH_PERMISSIONS = {
-    "cookies",
-    "history",
-    "tabs",
-    "browsingData",
-    "downloads",
-    "management",
-    "clipboardRead",
-    "contentSettings",
-    "pageCapture",
-}
-_MEDIUM_PERMISSIONS = {
-    "storage",
-    "notifications",
-    "contextMenus",
-    "bookmarks",
-    "identity",
-    "geolocation",
-    "scripting",
-}
 _FINDING_WEIGHTS = {
     "critical": 6,
     "high": 4,
