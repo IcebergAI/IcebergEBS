@@ -154,13 +154,16 @@ async def delete_destination(
     # being deleted: null the destination snapshot on every log pointing at this
     # destination, and the rule_id on logs pointing at the rules we remove. Logs
     # keep their user_id, so they stay visible in the alert history (rendered with
-    # a "—" destination). Leaving these FKs dangling raises an IntegrityError on
-    # Postgres, where foreign keys are enforced (SQLite dev/test does not enforce).
+    # a "—" destination). This is required, not optional: Postgres enforces foreign
+    # keys, so leaving these FKs dangling would raise an IntegrityError.
     await session.execute(sa_update(AlertLog).where(AlertLog.destination_id == dest_id).values(destination_id=None))
     rules = (await session.exec(select(AlertRule).where(AlertRule.destination_id == dest_id))).all()
     for r in rules:
         await session.execute(sa_update(AlertLog).where(AlertLog.rule_id == r.id).values(rule_id=None))
         await session.delete(r)
+    # Flush the rule deletes before deleting the destination they reference: Postgres
+    # enforces the alertrule → alertdestination FK, so the child rows must be gone first.
+    await session.flush()
     await session.delete(dest)
     await session.commit()
     return {"ok": True}

@@ -149,10 +149,9 @@ async def require_api_auth(
         if api_key.readonly and request.method not in ("GET", "HEAD"):
             raise HTTPException(status_code=403, detail="Read-only API key")
         user_id = api_key.user_id  # capture before commit expires the object
-        # Throttle the last_used_at write: on SQLite the commit takes the single
-        # write lock, contending with the scheduler, and would otherwise fire on
-        # every request (including read-only GETs). Only write when the recorded
-        # value is missing or older than the configured window.
+        # Throttle the last_used_at write: a commit per request (including read-only
+        # GETs) is a wasted write that contends with the scheduler under load. Only
+        # write when the recorded value is missing or older than the configured window.
         now = datetime.now(timezone.utc)
         last_used = api_key.last_used_at
         if last_used is not None and last_used.tzinfo is None:

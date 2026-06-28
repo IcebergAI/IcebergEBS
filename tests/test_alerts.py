@@ -647,8 +647,8 @@ async def test_alerts_deferred_until_after_commit(test_db, admin_user):
     """fetch_and_store must NOT fire alerts (it holds the write transaction);
     fire_pending_alerts fires afterwards and the AlertLog is recorded.
 
-    Regression for the SQLite 'database is locked' deadlock — firing opened a
-    second writer while the caller's write lock was still held.
+    Regression for firing alerts while the caller's write transaction was still
+    open — fire_alerts opens a second session and must run after the commit.
     """
     respx.post(f"https://{_PINNED_IP}/deferred").mock(return_value=httpx.Response(200))
 

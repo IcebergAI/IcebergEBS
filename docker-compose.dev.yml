@@ -1,0 +1,37 @@
+# Local development override. Layer it on the base stack:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up postgres app
+#
+# It publishes Postgres on localhost (so the test suite / a host-side uvicorn can
+# reach it), mounts the source for live reload, and supplies throwaway dev
+# credentials so you don't need a populated .env. nginx is intentionally not
+# started in dev (run the two named services only, as above).
+services:
+  postgres:
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_DB: marvin
+      POSTGRES_USER: marvin
+      POSTGRES_PASSWORD: marvin
+
+  app:
+    build: .
+    command:
+      - uvicorn
+      - app.main:app
+      - --host
+      - "0.0.0.0"
+      - --port
+      - "8000"
+      - --reload
+    volumes:
+      - ./:/app
+    ports:
+      - "8000:8000"
+    environment:
+      MARVIN_DATABASE_URL: postgresql+asyncpg://marvin:marvin@postgres:5432/marvin
+      MARVIN_ADMIN_USERNAME: ${MARVIN_ADMIN_USERNAME:-admin}
+      MARVIN_ADMIN_PASSWORD: ${MARVIN_ADMIN_PASSWORD:-admin}
+      MARVIN_SECRET_KEY: ${MARVIN_SECRET_KEY:-dev-secret-key-not-for-production-use-only}
+      MARVIN_SECURE_COOKIES: "false"

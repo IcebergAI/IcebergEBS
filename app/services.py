@@ -29,10 +29,9 @@ async def fetch_and_store(
     decides when to commit (immediately for API routes, batched for the scheduler).
 
     Returns the updated extension and the list of detected change events. Alerts are
-    deliberately NOT fired here: firing opens a second DB session, and on SQLite that
-    second writer deadlocks against this caller's still-open write transaction
-    ("database is locked"). The caller must commit first (releasing the write lock)
-    and then pass the returned events to ``fire_pending_alerts``.
+    deliberately NOT fired here: firing opens a second DB session, which would contend
+    with this caller's still-open write transaction. The caller must commit first and
+    then pass the returned events to ``fire_pending_alerts``.
 
     Raises FetchError if the remote fetch fails; the caller is responsible for adding
     a failure FetchLog and handling the error appropriately.
@@ -169,8 +168,8 @@ async def fire_pending_alerts(
 ) -> None:
     """Fire alerts for events detected by ``fetch_and_store``.
 
-    MUST be called only after the caller has committed, so the SQLite write lock is
-    released; otherwise fire_alerts' own session deadlocks ("database is locked").
+    MUST be called only after the caller has committed; fire_alerts opens its own DB
+    session, which must not run inside the caller's still-open write transaction.
     Never raises — a delivery or logging failure must not break the fetch pipeline.
     The extension's attributes must be loaded (refresh after commit) before calling,
     since fire_alerts reads them to build the webhook payload.

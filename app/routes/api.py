@@ -385,8 +385,8 @@ async def _fetch_and_score(
         raise HTTPException(status_code=502, detail="Failed to fetch extension from store") from exc
     await session.commit()
     await session.refresh(ext)
-    # Fire alerts only after the commit above releases the write lock, so
-    # fire_alerts' own session can write the AlertLog without deadlocking SQLite.
+    # Fire alerts only after committing above, so fire_alerts' own session can write
+    # the AlertLog without contending with this request's open write transaction.
     await fire_pending_alerts(events, ext, engine, client)
     return ext
 

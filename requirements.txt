@@ -2,7 +2,6 @@ fastapi
 uvicorn[standard]
 sqlmodel
 greenlet
-aiosqlite
 asyncpg
 httpx
 pydantic-settings

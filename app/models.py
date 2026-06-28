@@ -1,11 +1,23 @@
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Any, Optional
 
+from sqlalchemy import Column, DateTime
 from sqlmodel import Field, SQLModel, UniqueConstraint
 
 
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def _tz_column(*, nullable: bool) -> Column[Any]:
+    """A timezone-aware timestamp column (Postgres ``timestamptz``).
+
+    All timestamps are stored tz-aware (UTC): the app writes tz-aware datetimes
+    (see `_utcnow` / `datetime.now(timezone.utc)`), which a plain
+    ``TIMESTAMP WITHOUT TIME ZONE`` column rejects under asyncpg. A fresh Column is
+    returned per call because a Column instance binds to a single table.
+    """
+    return Column(DateTime(timezone=True), nullable=nullable)
 
 
 class User(SQLModel, table=True):
@@ -14,10 +26,10 @@ class User(SQLModel, table=True):
     password_hash: str
     email: Optional[str] = None
     is_admin: bool = False
-    created_at: datetime = Field(default_factory=_utcnow)
+    created_at: datetime = Field(default_factory=_utcnow, sa_column=_tz_column(nullable=False))
     # Bumped on password change; sessions/cookies signed before this instant are
     # rejected, invalidating other-device sessions on reset (M1 / #6).
-    password_changed_at: Optional[datetime] = Field(default_factory=_utcnow)
+    password_changed_at: Optional[datetime] = Field(default_factory=_utcnow, sa_column=_tz_column(nullable=True))
 
 
 class Extension(SQLModel, table=True):
@@ -32,11 +44,11 @@ class Extension(SQLModel, table=True):
     description: Optional[str] = None
     version: str
     install_count: Optional[int] = None
-    last_updated: Optional[datetime] = None
+    last_updated: Optional[datetime] = Field(default=None, sa_column=_tz_column(nullable=True))
     permissions: str = "[]"  # JSON-encoded list
     store_url: str
-    added_at: datetime = Field(default_factory=_utcnow)
-    last_fetched_at: Optional[datetime] = None
+    added_at: datetime = Field(default_factory=_utcnow, sa_column=_tz_column(nullable=False))
+    last_fetched_at: Optional[datetime] = Field(default=None, sa_column=_tz_column(nullable=True))
     watchlist: bool = True
     risk_score: Optional[int] = None
     risk_detail: Optional[str] = None  # JSON breakdown per signal
@@ -46,7 +58,7 @@ class Extension(SQLModel, table=True):
 class FetchLog(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     extension_id: int = Field(foreign_key="extension.id", index=True)
-    fetched_at: datetime = Field(default_factory=_utcnow)
+    fetched_at: datetime = Field(default_factory=_utcnow, sa_column=_tz_column(nullable=False))
     success: bool
     error_message: Optional[str] = None
     risk_score_before: Optional[int] = None
@@ -56,7 +68,7 @@ class FetchLog(SQLModel, table=True):
 class InstallCountHistory(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     extension_id: int = Field(foreign_key="extension.id", index=True)
-    recorded_at: datetime = Field(default_factory=_utcnow)
+    recorded_at: datetime = Field(default_factory=_utcnow, sa_column=_tz_column(nullable=False))
     install_count: int
 
 
@@ -66,7 +78,7 @@ class AlertDestination(SQLModel, table=True):
     label: str
     target: str  # webhook URL
     enabled: bool = True
-    created_at: datetime = Field(default_factory=_utcnow)
+    created_at: datetime = Field(default_factory=_utcnow, sa_column=_tz_column(nullable=False))
 
 
 class AlertRule(SQLModel, table=True):
@@ -76,7 +88,7 @@ class AlertRule(SQLModel, table=True):
     extension_id: Optional[int] = Field(default=None, foreign_key="extension.id")
     event_type: str  # "risk_level_change" | "publisher_change" | "permission_change" | "new_version"
     enabled: bool = True
-    created_at: datetime = Field(default_factory=_utcnow)
+    created_at: datetime = Field(default_factory=_utcnow, sa_column=_tz_column(nullable=False))
 
 
 class ApiKey(SQLModel, table=True):
@@ -87,8 +99,8 @@ class ApiKey(SQLModel, table=True):
     key_prefix: str = ""  # first 12 chars of raw key for display
     key_suffix: str = ""  # last 4 chars of raw key for display
     readonly: bool = False
-    created_at: datetime = Field(default_factory=_utcnow)
-    last_used_at: Optional[datetime] = None
+    created_at: datetime = Field(default_factory=_utcnow, sa_column=_tz_column(nullable=False))
+    last_used_at: Optional[datetime] = Field(default=None, sa_column=_tz_column(nullable=True))
 
 
 class AlertLog(SQLModel, table=True):
@@ -99,6 +111,6 @@ class AlertLog(SQLModel, table=True):
     user_id: Optional[int] = Field(default=None, foreign_key="user.id", index=True)
     event_type: str
     detail: str  # JSON: {"old": ..., "new": ...}
-    sent_at: datetime = Field(default_factory=_utcnow)
+    sent_at: datetime = Field(default_factory=_utcnow, sa_column=_tz_column(nullable=False))
     success: bool
     error: Optional[str] = None

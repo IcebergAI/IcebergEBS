@@ -6,7 +6,7 @@ class Settings(BaseSettings):
     admin_username: str
     admin_password: SecretStr
     secret_key: SecretStr
-    database_url: str = "sqlite+aiosqlite:///./marvin.db"
+    database_url: str = "postgresql+asyncpg://marvin:marvin@localhost:5432/marvin"
     session_cookie_name: str = "marvin_session"
     session_max_age: int = 86400
     secure_cookies: bool = True
@@ -17,8 +17,8 @@ class Settings(BaseSettings):
     # runs the prune job daily when enabled (see app/retention.py).
     retention_days: int = 0
     # Minimum seconds between ApiKey.last_used_at writes. Throttles the per-request
-    # write (and its SQLite write-lock contention) so read-only bearer GETs don't
-    # commit on every call — see require_api_auth.
+    # write so read-only bearer GETs don't commit on every call (a wasted round-trip
+    # + row update under the scheduler's concurrent load) — see require_api_auth.
     api_key_last_used_throttle_seconds: int = 60
     # App-level login throttling (defense-in-depth, independent of the reverse proxy).
     login_max_attempts: int = 5

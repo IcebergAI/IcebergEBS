@@ -4,7 +4,7 @@ from pathlib import Path
 
 from alembic.config import Config
 from alembic.runtime.migration import MigrationContext
-from sqlalchemy import inspect, text
+from sqlalchemy import inspect
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 from sqlmodel.ext.asyncio.session import AsyncSession
 
@@ -15,27 +15,15 @@ logger = logging.getLogger(__name__)
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
-_is_sqlite = settings.database_url.startswith("sqlite")
-_pool_kwargs = (
-    {}
-    if _is_sqlite
-    else {
-        "pool_size": 5,
-        "max_overflow": 10,
-        "pool_pre_ping": True,
-        "pool_timeout": 30,
-        "pool_recycle": 1800,  # Recycle connections every 30 min to avoid server-side idle timeouts
-    }
+engine: AsyncEngine = create_async_engine(
+    settings.database_url,
+    echo=False,
+    pool_size=5,
+    max_overflow=10,
+    pool_pre_ping=True,
+    pool_timeout=30,
+    pool_recycle=1800,  # Recycle connections every 30 min to avoid server-side idle timeouts
 )
-
-# SQLite allows a single writer at a time. Set a busy timeout so a connection
-# waits (up to 30s) for the write lock instead of immediately raising
-# "database is locked" when another connection (e.g. the scheduler vs. an API
-# request) is mid-write. Defense-in-depth alongside firing alerts only after the
-# caller commits (see app/services.py).
-_connect_args = {"timeout": 30} if _is_sqlite else {}
-
-engine: AsyncEngine = create_async_engine(settings.database_url, echo=False, connect_args=_connect_args, **_pool_kwargs)
 
 
 def _alembic_config() -> Config:
@@ -72,13 +60,10 @@ def _run_migrations(sync_conn) -> None:
 
 
 async def init_db() -> None:
-    if _is_sqlite:
-        async with engine.begin() as conn:
-            await conn.execute(text("PRAGMA journal_mode=WAL"))
     async with engine.connect() as conn:
         await conn.run_sync(_run_migrations)
-        # Persist the alembic_version row: SQLite auto-commits DDL but the version
-        # INSERT is DML and would otherwise be rolled back when the connection closes.
+        # Persist the alembic_version row: the connection is not in autocommit, so
+        # the version INSERT (DML) would otherwise be rolled back when it closes.
         await conn.commit()
 
 

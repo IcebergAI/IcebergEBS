@@ -9,6 +9,7 @@ from unittest.mock import MagicMock
 import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
 from sqlmodel import SQLModel
 from sqlmodel.ext.asyncio.session import AsyncSession
@@ -22,6 +23,10 @@ from app.config import settings
 from app.database import get_session
 from app.main import app
 from app.models import ApiKey, User
+
+# The suite runs against a real Postgres (dev compose service / CI service container).
+# Point it via MARVIN_TEST_DATABASE_URL; otherwise fall back to the app's configured URL.
+TEST_DATABASE_URL = os.environ.get("MARVIN_TEST_DATABASE_URL", settings.database_url)
 
 
 def make_fake_vsix(manifest: dict | None = None) -> bytes:
@@ -77,14 +82,34 @@ def anyio_backend():
     return "asyncio"
 
 
-@pytest_asyncio.fixture
+@pytest_asyncio.fixture(scope="session", loop_scope="session")
 async def test_db():
-    """In-memory SQLite for each test."""
-    test_engine = create_async_engine("sqlite+aiosqlite:///:memory:", echo=False)
+    """Shared Postgres engine for the whole test session.
+
+    The schema is created once (the models == migrations head; migrations
+    themselves are exercised by tests/test_migrations.py). Per-test isolation is
+    provided by the autouse ``_clean_tables`` fixture, which TRUNCATEs every table
+    after each test.
+    """
+    test_engine = create_async_engine(TEST_DATABASE_URL, echo=False)
     async with test_engine.begin() as conn:
+        await conn.run_sync(SQLModel.metadata.drop_all)
         await conn.run_sync(SQLModel.metadata.create_all)
     yield test_engine
+    async with test_engine.begin() as conn:
+        await conn.run_sync(SQLModel.metadata.drop_all)
     await test_engine.dispose()
+
+
+@pytest_asyncio.fixture(autouse=True, loop_scope="session")
+async def _clean_tables(test_db):
+    """Reset every table after each test so the next starts from a clean DB."""
+    yield
+    table_list = ", ".join(f'"{t.name}"' for t in SQLModel.metadata.sorted_tables)
+    if not table_list:
+        return
+    async with test_db.begin() as conn:
+        await conn.execute(text(f"TRUNCATE TABLE {table_list} RESTART IDENTITY CASCADE"))
 
 
 @pytest_asyncio.fixture
@@ -95,7 +120,7 @@ async def session(test_db):
 
 @pytest_asyncio.fixture
 async def admin_user(test_db) -> User:
-    """Insert the testadmin user into the in-memory DB."""
+    """Insert the testadmin user into the test DB."""
     async with AsyncSession(test_db) as s:
         user = User(
             username="testadmin",
@@ -110,7 +135,7 @@ async def admin_user(test_db) -> User:
 
 @pytest_asyncio.fixture
 async def client(test_db, admin_user):
-    """Authenticated test client with in-memory DB."""
+    """Authenticated test client backed by the shared test DB."""
 
     async def override_session():
         async with AsyncSession(test_db) as s:
