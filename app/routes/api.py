@@ -3,12 +3,13 @@ import io
 import json
 import logging
 import re
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Annotated, Literal
 from urllib.parse import parse_qs, urlparse
 
 import httpx
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel
 from sqlalchemy import func, or_
@@ -60,32 +61,57 @@ def _escape_like(term: str) -> str:
     return term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
-def build_extension_query(
-    user_id: int,
-    *,
-    store: str | None = None,
-    risk: str | None = None,
+@dataclass(frozen=True)
+class ExtensionFilters:
+    """Shared filter/sort params for the extension list, export and dashboard.
+
+    One definition so the three call sites can't drift. The API endpoints build it
+    from typed Query params (FastAPI 422s on bad input via the ``extension_filters``
+    dependency); the dashboard builds it from coerced raw strings (tolerating junk
+    from a browser). ``build_extension_query`` consumes it. ``publisher`` is only
+    used by the API endpoints — the dashboard leaves it None."""
+
+    store: str | None = None
+    risk: str | None = None
+    publisher: str | None = None
+    q: str | None = None
+    sort: str = "risk_score"
+    order: str = "desc"
+
+
+def extension_filters(
+    store: StoreType | None = None,
+    risk: RiskLevel | None = None,
     publisher: str | None = None,
-    q: str | None = None,
-    sort: str = "risk_score",
-    order: str = "desc",
-):
+    q: Annotated[str | None, Query(description="Free-text search over name, publisher and id")] = None,
+    sort: SortField = "risk_score",
+    order: SortOrder = "desc",
+) -> ExtensionFilters:
+    """FastAPI dependency: validate + collect the filter/sort query params shared by
+    the list and export endpoints (declared once here instead of on each route)."""
+    return ExtensionFilters(store=store, risk=risk, publisher=publisher, q=q, sort=sort, order=order)
+
+
+FilterParams = Annotated[ExtensionFilters, Depends(extension_filters)]
+
+
+def build_extension_query(user_id: int, filters: ExtensionFilters):
     """Build the filtered + sorted ``select(Extension)`` shared by the list API,
     the export endpoint and the dashboard. No limit/offset — the caller paginates.
     Unknown sort columns fall back to risk_score; an ``id`` tie-breaker keeps
     pagination stable across pages."""
     stmt = select(Extension).where(Extension.user_id == user_id)
-    if store:
-        stmt = stmt.where(Extension.store == store)
-    if risk and risk in _RISK_BANDS:
-        low, high = _RISK_BANDS[risk]
+    if filters.store:
+        stmt = stmt.where(Extension.store == filters.store)
+    if filters.risk and filters.risk in _RISK_BANDS:
+        low, high = _RISK_BANDS[filters.risk]
         stmt = stmt.where(Extension.risk_score.is_not(None), Extension.risk_score >= low)
         if high is not None:
             stmt = stmt.where(Extension.risk_score < high)
-    if publisher:
-        stmt = stmt.where(Extension.publisher == publisher)
-    if q:
-        like = f"%{_escape_like(q)}%"
+    if filters.publisher:
+        stmt = stmt.where(Extension.publisher == filters.publisher)
+    if filters.q:
+        like = f"%{_escape_like(filters.q)}%"
         stmt = stmt.where(
             or_(
                 Extension.name.ilike(like, escape="\\"),
@@ -93,8 +119,8 @@ def build_extension_query(
                 Extension.extension_id.ilike(like, escape="\\"),
             )
         )
-    col = _SORT_COLUMNS.get(sort, Extension.risk_score)
-    primary = col.desc().nullslast() if order == "desc" else col.asc().nullsfirst()
+    col = _SORT_COLUMNS.get(filters.sort, Extension.risk_score)
+    primary = col.desc().nullslast() if filters.order == "desc" else col.asc().nullsfirst()
     return stmt.order_by(primary, Extension.id.asc())
 
 
@@ -458,24 +484,11 @@ async def _enroll_extension(
 async def list_extensions(
     current_user: CurrentUser,
     session: SessionDep,
-    store: StoreType | None = None,
-    risk: RiskLevel | None = None,
-    publisher: str | None = None,
-    q: Annotated[str | None, Query(description="Free-text search over name, publisher and id")] = None,
-    sort: SortField = "risk_score",
-    order: SortOrder = "desc",
+    filters: FilterParams,
     limit: Annotated[int, Query(ge=1, le=MAX_PAGE_LIMIT)] = DEFAULT_PAGE_LIMIT,
     offset: Annotated[int, Query(ge=0)] = 0,
 ) -> PaginatedExtensions:
-    stmt = build_extension_query(
-        current_user.id,
-        store=store,
-        risk=risk,
-        publisher=publisher,
-        q=q,
-        sort=sort,
-        order=order,
-    )
+    stmt = build_extension_query(current_user.id, filters)
     total = await _count(session, stmt)
     rows = (await session.exec(stmt.limit(limit).offset(offset))).all()
     # Skip per-extension threat-intel indicator construction here — the list view
@@ -533,26 +546,13 @@ def _export_row(ext: Extension) -> dict:
 async def export_extensions(
     current_user: CurrentUser,
     session: SessionDep,
+    filters: FilterParams,
     format: Literal["csv", "json"] = "csv",
-    store: StoreType | None = None,
-    risk: RiskLevel | None = None,
-    publisher: str | None = None,
-    q: Annotated[str | None, Query(description="Free-text search over name, publisher and id")] = None,
-    sort: SortField = "risk_score",
-    order: SortOrder = "desc",
 ):
     """Export the full (filtered) extension set with score + key fields, for
     reporting / downstream ingest. Shares the list endpoint's filter/sort params
     (`build_extension_query`) but is **not** paginated — it returns every match."""
-    stmt = build_extension_query(
-        current_user.id,
-        store=store,
-        risk=risk,
-        publisher=publisher,
-        q=q,
-        sort=sort,
-        order=order,
-    )
+    stmt = build_extension_query(current_user.id, filters)
     rows = [_export_row(e) for e in (await session.exec(stmt)).all()]
 
     if format == "json":

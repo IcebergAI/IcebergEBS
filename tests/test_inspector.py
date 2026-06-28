@@ -287,6 +287,26 @@ def test_findings_are_capped():
     assert len(result.findings) == 200
 
 
+def test_identical_findings_are_deduped():
+    # A manifest can list the same broad host permission twice; both produce a
+    # finding with an identical identity tuple, which must collapse to one (#64).
+    data = make_zip(
+        {
+            "manifest.json": json.dumps(
+                {
+                    "manifest_version": 3,
+                    "name": "x",
+                    "version": "1",
+                    "host_permissions": ["<all_urls>", "<all_urls>"],
+                }
+            )
+        }
+    )
+    result = inspect_package(data)
+    broad = [f for f in result.findings if f.code == "broad_host_access"]
+    assert len(broad) == 1
+
+
 def test_external_domains_are_capped():
     urls = "\n".join(f"https://tracker{i}.example/path" for i in range(600))
     data = make_zip(
