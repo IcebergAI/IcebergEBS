@@ -32,21 +32,21 @@ class ChangePasswordIn(BaseModel):
     new_password: str = Field(min_length=8)
 
 
-@router.get("/users", response_model=list[UserOut])
+@router.get("/users")
 async def list_users(
     _: AdminUser,
     session: SessionDep,
-):
+) -> list[UserOut]:
     users = (await session.exec(select(User).order_by(User.created_at))).all()
     return [UserOut(id=u.id, username=u.username, email=u.email, is_admin=u.is_admin) for u in users]
 
 
-@router.post("/users", response_model=UserOut, status_code=201)
+@router.post("/users", status_code=201)
 async def create_user(
     body: CreateUserIn,
     _: AdminUser,
     session: SessionDep,
-):
+) -> UserOut:
     existing = (await session.exec(select(User).where(User.username == body.username))).first()
     if existing:
         raise HTTPException(status_code=409, detail="Username already taken")

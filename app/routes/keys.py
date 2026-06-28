@@ -31,11 +31,11 @@ class ApiKeyCreateOut(ApiKeyOut):
     raw_key: str  # returned once at creation time only
 
 
-@router.get("/keys", response_model=list[ApiKeyOut])
+@router.get("/keys")
 async def list_keys(
     current_user: CurrentUser,
     session: SessionDep,
-):
+) -> list[ApiKeyOut]:
     keys = (
         await session.exec(select(ApiKey).where(ApiKey.user_id == current_user.id).order_by(ApiKey.created_at))
     ).all()
@@ -53,12 +53,12 @@ async def list_keys(
     ]
 
 
-@router.post("/keys", response_model=ApiKeyCreateOut, status_code=201)
+@router.post("/keys", status_code=201)
 async def create_key(
     body: ApiKeyCreateIn,
     current_user: CurrentUser,
     session: SessionDep,
-):
+) -> ApiKeyCreateOut:
     raw_key = generate_api_key()
     key_prefix = raw_key[:12]
     key_suffix = raw_key[-4:]
