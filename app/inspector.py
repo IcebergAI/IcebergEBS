@@ -42,6 +42,10 @@ class PackageAnalysis:
     # Fields extracted from the manifest that may fill gaps in store metadata
     version: str = ""
     author: str = ""  # present in some Chrome/Edge manifests as "author" field
+    # Running set of finding identity tuples for O(1) dedupe in _add_finding.
+    # Internal bookkeeping only — not serialized (services.py picks named fields)
+    # and excluded from equality/repr so it doesn't affect comparisons or tests.
+    _finding_keys: set = field(default_factory=set, compare=False, repr=False)
 
 
 class InspectorError(Exception):
@@ -177,7 +181,7 @@ def _load_manifest(zf: zipfile.ZipFile) -> dict | None:
         if name in zf.namelist():
             try:
                 return _read_manifest_json(zf, name)
-            except (json.JSONDecodeError, Exception):
+            except Exception:  # nosec B112 - try the next manifest-name candidate on any read/parse error
                 continue
     # Try case-insensitive search
     lower_map = {n.lower(): n for n in zf.namelist()}
@@ -563,8 +567,8 @@ def _add_finding(
         line=line,
     )
     key = (finding.code, finding.severity, finding.source, finding.file, finding.line, finding.detail)
-    existing = {(f.code, f.severity, f.source, f.file, f.line, f.detail) for f in analysis.findings}
-    if key not in existing and len(analysis.findings) < _MAX_FINDINGS:
+    if key not in analysis._finding_keys and len(analysis.findings) < _MAX_FINDINGS:
+        analysis._finding_keys.add(key)
         analysis.findings.append(finding)
 
 

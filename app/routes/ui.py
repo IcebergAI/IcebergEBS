@@ -19,6 +19,7 @@ from app.routes.alerts import get_alert_log
 from app.routes.api import (
     _RISK_BANDS,
     _SORT_COLUMNS,
+    ExtensionFilters,
     _count,
     _safe_json,
     build_extension_query,
@@ -360,15 +361,11 @@ async def dashboard(
         if r.watchlist and (failing or _stale(r.watchlist, r.last_fetched_at)):
             unhealthy += 1
 
-    # Filtered + sorted + paginated page of full rows for the table.
-    stmt = build_extension_query(
-        current_user.id,
-        store=store,
-        risk=risk,
-        q=q,
-        sort=sort,
-        order=order,
-    )
+    # Filtered + sorted + paginated page of full rows for the table. Same filter
+    # object the API endpoints use (built from coerced params rather than via the
+    # 422-ing dependency) — the dashboard doesn't filter by publisher.
+    filters = ExtensionFilters(store=store, risk=risk, q=q, sort=sort, order=order)
+    stmt = build_extension_query(current_user.id, filters)
     filtered_total = await _count(session, stmt)
     total_pages = max((filtered_total + _DASHBOARD_PAGE_SIZE - 1) // _DASHBOARD_PAGE_SIZE, 1)
     page = min(page, total_pages)
