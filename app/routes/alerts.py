@@ -3,21 +3,20 @@ from datetime import datetime
 from typing import Annotated
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy import or_
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from app.auth import require_api_auth
 from app.config import settings
-from app.database import get_session
-from app.models import AlertDestination, AlertLog, AlertRule, Extension, User
+from app.deps import CurrentUser, SessionDep
+from app.models import AlertDestination, AlertLog, AlertRule, Extension
 from app.webhooks import WebhookValidationError, send_webhook, validate_webhook_url
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter()
+router = APIRouter(prefix="/api", tags=["alerts"])
 
 VALID_EVENT_TYPES = {"risk_level_change", "publisher_change", "permission_change", "new_version"}
 
@@ -85,8 +84,8 @@ class RulePatch(BaseModel):
 
 @router.get("/alerts/destinations", response_model=list[DestinationOut])
 async def list_destinations(
-    current_user: Annotated[User, Depends(require_api_auth)],
-    session: Annotated[AsyncSession, Depends(get_session)],
+    current_user: CurrentUser,
+    session: SessionDep,
 ):
     dests = (
         await session.exec(
@@ -101,8 +100,8 @@ async def list_destinations(
 @router.post("/alerts/destinations", response_model=DestinationOut, status_code=201)
 async def create_destination(
     body: DestinationIn,
-    current_user: Annotated[User, Depends(require_api_auth)],
-    session: Annotated[AsyncSession, Depends(get_session)],
+    current_user: CurrentUser,
+    session: SessionDep,
 ):
     await _validate_webhook_url(body.target)
     dest = AlertDestination(
@@ -121,8 +120,8 @@ async def create_destination(
 async def update_destination(
     dest_id: int,
     body: DestinationPatch,
-    current_user: Annotated[User, Depends(require_api_auth)],
-    session: Annotated[AsyncSession, Depends(get_session)],
+    current_user: CurrentUser,
+    session: SessionDep,
 ):
     dest = await session.get(AlertDestination, dest_id)
     if not dest or dest.user_id != current_user.id:
@@ -143,8 +142,8 @@ async def update_destination(
 @router.delete("/alerts/destinations/{dest_id}")
 async def delete_destination(
     dest_id: int,
-    current_user: Annotated[User, Depends(require_api_auth)],
-    session: Annotated[AsyncSession, Depends(get_session)],
+    current_user: CurrentUser,
+    session: SessionDep,
 ):
     dest = await session.get(AlertDestination, dest_id)
     if not dest or dest.user_id != current_user.id:
@@ -165,8 +164,8 @@ async def delete_destination(
 
 @router.get("/alerts/rules", response_model=list[RuleOut])
 async def list_rules(
-    current_user: Annotated[User, Depends(require_api_auth)],
-    session: Annotated[AsyncSession, Depends(get_session)],
+    current_user: CurrentUser,
+    session: SessionDep,
 ):
     rules = (
         await session.exec(select(AlertRule).where(AlertRule.user_id == current_user.id).order_by(AlertRule.created_at))
@@ -177,8 +176,8 @@ async def list_rules(
 @router.post("/alerts/rules", response_model=RuleOut, status_code=201)
 async def create_rule(
     body: RuleIn,
-    current_user: Annotated[User, Depends(require_api_auth)],
-    session: Annotated[AsyncSession, Depends(get_session)],
+    current_user: CurrentUser,
+    session: SessionDep,
 ):
     if body.event_type not in VALID_EVENT_TYPES:
         raise HTTPException(status_code=422, detail=f"event_type must be one of: {sorted(VALID_EVENT_TYPES)}")
@@ -211,8 +210,8 @@ async def create_rule(
 async def update_rule(
     rule_id: int,
     body: RulePatch,
-    current_user: Annotated[User, Depends(require_api_auth)],
-    session: Annotated[AsyncSession, Depends(get_session)],
+    current_user: CurrentUser,
+    session: SessionDep,
 ):
     rule = await session.get(AlertRule, rule_id)
     if not rule or rule.user_id != current_user.id:
@@ -233,8 +232,8 @@ async def update_rule(
 @router.delete("/alerts/rules/{rule_id}")
 async def delete_rule(
     rule_id: int,
-    current_user: Annotated[User, Depends(require_api_auth)],
-    session: Annotated[AsyncSession, Depends(get_session)],
+    current_user: CurrentUser,
+    session: SessionDep,
 ):
     rule = await session.get(AlertRule, rule_id)
     if not rule or rule.user_id != current_user.id:
@@ -315,8 +314,8 @@ async def get_alert_log(user_id: int, session: AsyncSession, limit: int = 50) ->
 
 @router.get("/alerts/log")
 async def alert_log(
-    current_user: Annotated[User, Depends(require_api_auth)],
-    session: Annotated[AsyncSession, Depends(get_session)],
+    current_user: CurrentUser,
+    session: SessionDep,
     limit: Annotated[int, Query(ge=1, le=500)] = 50,
 ):
     return await get_alert_log(current_user.id, session, limit)
@@ -331,8 +330,8 @@ async def alert_log(
 async def test_destination(
     dest_id: int,
     request: Request,
-    current_user: Annotated[User, Depends(require_api_auth)],
-    session: Annotated[AsyncSession, Depends(get_session)],
+    current_user: CurrentUser,
+    session: SessionDep,
 ):
     dest = await session.get(AlertDestination, dest_id)
     if not dest or dest.user_id != current_user.id:

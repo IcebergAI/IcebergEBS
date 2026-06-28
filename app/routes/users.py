@@ -1,18 +1,16 @@
 from datetime import datetime, timezone
-from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import APIRouter, HTTPException, Response
 from pydantic import BaseModel, Field
 from sqlalchemy import delete as sa_delete
 from sqlalchemy import update as sa_update
 from sqlmodel import select
-from sqlmodel.ext.asyncio.session import AsyncSession
 
-from app.auth import clear_session, hash_password, require_admin, require_api_auth, verify_password
-from app.database import get_session
+from app.auth import clear_session, hash_password, verify_password
+from app.deps import AdminUser, CurrentUser, SessionDep
 from app.models import ApiKey, Extension, User
 
-router = APIRouter()
+router = APIRouter(prefix="/api", tags=["users"])
 
 
 class UserOut(BaseModel):
@@ -36,8 +34,8 @@ class ChangePasswordIn(BaseModel):
 
 @router.get("/users", response_model=list[UserOut])
 async def list_users(
-    _: Annotated[User, Depends(require_admin)],
-    session: Annotated[AsyncSession, Depends(get_session)],
+    _: AdminUser,
+    session: SessionDep,
 ):
     users = (await session.exec(select(User).order_by(User.created_at))).all()
     return [UserOut(id=u.id, username=u.username, email=u.email, is_admin=u.is_admin) for u in users]
@@ -46,8 +44,8 @@ async def list_users(
 @router.post("/users", response_model=UserOut, status_code=201)
 async def create_user(
     body: CreateUserIn,
-    _: Annotated[User, Depends(require_admin)],
-    session: Annotated[AsyncSession, Depends(get_session)],
+    _: AdminUser,
+    session: SessionDep,
 ):
     existing = (await session.exec(select(User).where(User.username == body.username))).first()
     if existing:
@@ -68,8 +66,8 @@ async def create_user(
 @router.delete("/users/{user_id}")
 async def delete_user(
     user_id: int,
-    current_user: Annotated[User, Depends(require_admin)],
-    session: Annotated[AsyncSession, Depends(get_session)],
+    current_user: AdminUser,
+    session: SessionDep,
 ):
     if user_id == current_user.id:
         raise HTTPException(status_code=400, detail="Cannot delete your own account")
@@ -100,8 +98,8 @@ async def delete_user(
 async def change_password(
     body: ChangePasswordIn,
     response: Response,
-    current_user: Annotated[User, Depends(require_api_auth)],
-    session: Annotated[AsyncSession, Depends(get_session)],
+    current_user: CurrentUser,
+    session: SessionDep,
 ):
     if not await verify_password(body.current_password, current_user.password_hash):
         raise HTTPException(status_code=400, detail="Current password is incorrect")

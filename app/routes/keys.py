@@ -1,16 +1,15 @@
 from datetime import datetime
-from typing import Annotated, Optional
+from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 from sqlmodel import select
-from sqlmodel.ext.asyncio.session import AsyncSession
 
-from app.auth import generate_api_key, hash_api_key, require_api_auth
-from app.database import get_session
-from app.models import ApiKey, User
+from app.auth import generate_api_key, hash_api_key
+from app.deps import CurrentUser, SessionDep
+from app.models import ApiKey
 
-router = APIRouter()
+router = APIRouter(prefix="/api", tags=["api-keys"])
 
 
 class ApiKeyOut(BaseModel):
@@ -34,8 +33,8 @@ class ApiKeyCreateOut(ApiKeyOut):
 
 @router.get("/keys", response_model=list[ApiKeyOut])
 async def list_keys(
-    current_user: Annotated[User, Depends(require_api_auth)],
-    session: Annotated[AsyncSession, Depends(get_session)],
+    current_user: CurrentUser,
+    session: SessionDep,
 ):
     keys = (
         await session.exec(select(ApiKey).where(ApiKey.user_id == current_user.id).order_by(ApiKey.created_at))
@@ -57,8 +56,8 @@ async def list_keys(
 @router.post("/keys", response_model=ApiKeyCreateOut, status_code=201)
 async def create_key(
     body: ApiKeyCreateIn,
-    current_user: Annotated[User, Depends(require_api_auth)],
-    session: Annotated[AsyncSession, Depends(get_session)],
+    current_user: CurrentUser,
+    session: SessionDep,
 ):
     raw_key = generate_api_key()
     key_prefix = raw_key[:12]
@@ -89,8 +88,8 @@ async def create_key(
 @router.delete("/keys/{key_id}")
 async def revoke_key(
     key_id: int,
-    current_user: Annotated[User, Depends(require_api_auth)],
-    session: Annotated[AsyncSession, Depends(get_session)],
+    current_user: CurrentUser,
+    session: SessionDep,
 ):
     api_key = await session.get(ApiKey, key_id)
     if not api_key or api_key.user_id != current_user.id:

@@ -8,24 +8,24 @@ from typing import Annotated, Literal
 from urllib.parse import parse_qs, urlparse
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel
 from sqlalchemy import func, or_
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from app.auth import require_api_auth
-from app.database import engine, get_session
+from app.database import engine
+from app.deps import CurrentUser, SessionDep
 from app.fetchers.base import FetchError
-from app.models import Extension, FetchLog, InstallCountHistory, User
+from app.models import Extension, FetchLog, InstallCountHistory
 from app.scoring import risk_level
 from app.services import fetch_and_store, fire_pending_alerts
 from app.threat_intel import build_threat_intel_indicators
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter()
+router = APIRouter(prefix="/api", tags=["extensions"])
 
 StoreType = Literal["chrome", "vscode", "edge"]
 RiskLevel = Literal["low", "medium", "high", "critical"]
@@ -456,16 +456,16 @@ async def _enroll_extension(
 
 @router.get("/extensions", response_model=PaginatedExtensions)
 async def list_extensions(
-    current_user: Annotated[User, Depends(require_api_auth)],
-    session: Annotated[AsyncSession, Depends(get_session)],
+    current_user: CurrentUser,
+    session: SessionDep,
     store: StoreType | None = None,
     risk: RiskLevel | None = None,
     publisher: str | None = None,
-    q: str | None = Query(None, description="Free-text search over name, publisher and id"),
+    q: Annotated[str | None, Query(description="Free-text search over name, publisher and id")] = None,
     sort: SortField = "risk_score",
     order: SortOrder = "desc",
-    limit: int = Query(DEFAULT_PAGE_LIMIT, ge=1, le=MAX_PAGE_LIMIT),
-    offset: int = Query(0, ge=0),
+    limit: Annotated[int, Query(ge=1, le=MAX_PAGE_LIMIT)] = DEFAULT_PAGE_LIMIT,
+    offset: Annotated[int, Query(ge=0)] = 0,
 ):
     stmt = build_extension_query(
         current_user.id,
@@ -531,13 +531,13 @@ def _export_row(ext: Extension) -> dict:
 
 @router.get("/extensions/export")
 async def export_extensions(
-    current_user: Annotated[User, Depends(require_api_auth)],
-    session: Annotated[AsyncSession, Depends(get_session)],
+    current_user: CurrentUser,
+    session: SessionDep,
     format: Literal["csv", "json"] = "csv",
     store: StoreType | None = None,
     risk: RiskLevel | None = None,
     publisher: str | None = None,
-    q: str | None = Query(None, description="Free-text search over name, publisher and id"),
+    q: Annotated[str | None, Query(description="Free-text search over name, publisher and id")] = None,
     sort: SortField = "risk_score",
     order: SortOrder = "desc",
 ):
@@ -576,8 +576,8 @@ async def export_extensions(
 async def add_extension(
     body: ExtensionIn,
     request: Request,
-    current_user: Annotated[User, Depends(require_api_auth)],
-    session: Annotated[AsyncSession, Depends(get_session)],
+    current_user: CurrentUser,
+    session: SessionDep,
 ):
     client: httpx.AsyncClient = request.app.state.http_client
     result = await _enroll_extension(body.store, body.extension_id, session, client, current_user.id)
@@ -598,8 +598,8 @@ MAX_BULK_ITEMS = 100
 async def bulk_add_extensions(
     body: BulkIn,
     request: Request,
-    current_user: Annotated[User, Depends(require_api_auth)],
-    session: Annotated[AsyncSession, Depends(get_session)],
+    current_user: CurrentUser,
+    session: SessionDep,
 ):
     """Enroll many extensions in one request, reusing the add+score path.
 
@@ -649,8 +649,8 @@ async def bulk_add_extensions(
 @router.get("/extensions/{ext_id}", response_model=ExtensionOut)
 async def get_extension(
     ext_id: int,
-    current_user: Annotated[User, Depends(require_api_auth)],
-    session: Annotated[AsyncSession, Depends(get_session)],
+    current_user: CurrentUser,
+    session: SessionDep,
 ):
     ext = await session.get(Extension, ext_id)
     if not ext or ext.user_id != current_user.id:
@@ -661,8 +661,8 @@ async def get_extension(
 @router.delete("/extensions/{ext_id}")
 async def delete_extension(
     ext_id: int,
-    current_user: Annotated[User, Depends(require_api_auth)],
-    session: Annotated[AsyncSession, Depends(get_session)],
+    current_user: CurrentUser,
+    session: SessionDep,
 ):
     ext = await session.get(Extension, ext_id)
     if not ext or ext.user_id != current_user.id:
@@ -679,8 +679,8 @@ async def delete_extension(
 async def refresh_extension(
     ext_id: int,
     request: Request,
-    current_user: Annotated[User, Depends(require_api_auth)],
-    session: Annotated[AsyncSession, Depends(get_session)],
+    current_user: CurrentUser,
+    session: SessionDep,
 ):
     ext = await session.get(Extension, ext_id)
     if not ext or ext.user_id != current_user.id:
@@ -693,8 +693,8 @@ async def refresh_extension(
 async def toggle_watchlist(
     ext_id: int,
     body: WatchlistPatch,
-    current_user: Annotated[User, Depends(require_api_auth)],
-    session: Annotated[AsyncSession, Depends(get_session)],
+    current_user: CurrentUser,
+    session: SessionDep,
 ):
     ext = await session.get(Extension, ext_id)
     if not ext or ext.user_id != current_user.id:
@@ -709,8 +709,8 @@ async def toggle_watchlist(
 @router.get("/extensions/{ext_id}/history", response_model=list[HistoryPoint])
 async def get_history(
     ext_id: int,
-    current_user: Annotated[User, Depends(require_api_auth)],
-    session: Annotated[AsyncSession, Depends(get_session)],
+    current_user: CurrentUser,
+    session: SessionDep,
 ):
     ext = await session.get(Extension, ext_id)
     if not ext or ext.user_id != current_user.id:
