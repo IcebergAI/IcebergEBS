@@ -24,6 +24,26 @@ class ChangeEvent:
     new_value: Any
 
 
+def _host_permissions(ext: Extension) -> frozenset[str]:
+    """Host permissions recorded in the extension's stored package_analysis.
+
+    Returns an empty set on missing/malformed analysis so change detection never
+    raises. Like ext.permissions, package_analysis is only rewritten on a fresh
+    successful inspection (see services.fetch_and_store), so a transient download
+    failure leaves both stale and cannot produce a spurious permission_change.
+    """
+    try:
+        data = json.loads(ext.package_analysis or "null")
+    except (json.JSONDecodeError, TypeError):
+        return frozenset()
+    if not isinstance(data, dict):
+        return frozenset()
+    hosts = data.get("host_permissions", [])
+    if not isinstance(hosts, list):
+        return frozenset()
+    return frozenset(str(h) for h in hosts)
+
+
 def detect_changes(old: Extension, new: Extension) -> list[ChangeEvent]:
     """Compare two Extension snapshots and return triggered change events.
 
@@ -43,8 +63,12 @@ def detect_changes(old: Extension, new: Extension) -> list[ChangeEvent]:
     if old.publisher and new.publisher and old.publisher != new.publisher:
         events.append(ChangeEvent("publisher_change", old.publisher, new.publisher))
 
-    old_perms = frozenset(json.loads(old.permissions or "[]"))
-    new_perms = frozenset(json.loads(new.permissions or "[]"))
+    # Compare API permissions *and* host permissions. Host patterns (<all_urls>,
+    # *://*/*, …) are stored separately inside package_analysis, not in
+    # ext.permissions — gaining broad host access is the highest-signal capability
+    # change an update can make, so it must trigger permission_change too (#60).
+    old_perms = frozenset(json.loads(old.permissions or "[]")) | _host_permissions(old)
+    new_perms = frozenset(json.loads(new.permissions or "[]")) | _host_permissions(new)
     if old_perms != new_perms:
         events.append(ChangeEvent("permission_change", sorted(old_perms), sorted(new_perms)))
 

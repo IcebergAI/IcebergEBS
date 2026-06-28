@@ -87,3 +87,29 @@ async def test_dashboard_tolerates_bad_params(client, test_db, admin_user):
     r = await client.get("/?store=firefox&risk=spicy&sort=bogus&order=sideways&page=-5")
     assert r.status_code == 200
     assert "Showing 1–3 of 3" in r.text
+
+
+async def test_detail_page_tolerates_malformed_json(client, test_db, admin_user):
+    # A partial write / manual edit can leave invalid JSON in the stored columns;
+    # the detail page must fall back instead of 500-ing, like the JSON API (#61).
+    async with AsyncSession(test_db) as s:
+        ext = Extension(
+            user_id=admin_user.id,
+            store="chrome",
+            extension_id="a" * 32,
+            name="Broken",
+            publisher="Acme",
+            version="1.0",
+            store_url="https://example.com",
+            permissions="{not json",
+            risk_detail="{not json",
+            package_analysis="{not json",
+        )
+        s.add(ext)
+        await s.commit()
+        await s.refresh(ext)
+        ext_id = ext.id
+
+    r = await client.get(f"/extensions/{ext_id}")
+    assert r.status_code == 200
+    assert "Broken" in r.text
