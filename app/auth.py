@@ -2,6 +2,7 @@ import hashlib
 import logging
 import secrets
 from datetime import datetime, timedelta, timezone
+from typing import Annotated
 
 import anyio.to_thread
 import bcrypt
@@ -13,6 +14,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.config import settings
 from app.database import engine, get_session
+from app.models import User
 
 logger = logging.getLogger(__name__)
 
@@ -104,8 +106,6 @@ _DUMMY_HASH: str = bcrypt.hashpw(b"dummy", bcrypt.gensalt(rounds=BCRYPT_ROUNDS))
 
 async def verify_credentials(username: str, password: str, session: AsyncSession):
     """Return the User if credentials are valid, None otherwise."""
-    from app.models import User
-
     user = (await session.exec(select(User).where(User.username == username))).first()
     hash_to_check = user.password_hash if user else _DUMMY_HASH
     valid = await verify_password(password, hash_to_check)
@@ -114,11 +114,9 @@ async def verify_credentials(username: str, password: str, session: AsyncSession
 
 async def require_auth(
     request: Request,
-    session: AsyncSession = Depends(get_session),
+    session: Annotated[AsyncSession, Depends(get_session)],
 ):
     """FastAPI dependency — returns the authenticated User or redirects to /login."""
-    from app.models import User
-
     claims = get_session_claims(request)
     if claims is None:
         raise HTTPException(status_code=303, headers={"Location": "/login"})
@@ -131,14 +129,14 @@ async def require_auth(
 
 async def require_api_auth(
     request: Request,
-    session: AsyncSession = Depends(get_session),
+    session: Annotated[AsyncSession, Depends(get_session)],
 ):
     """FastAPI dependency for /api/* routes.
 
     Tries Bearer token first, then session cookie. Always returns a User or
     raises HTTPException(401) — never redirects.
     """
-    from app.models import ApiKey, User
+    from app.models import ApiKey
 
     scheme, raw_key = get_authorization_scheme_param(request.headers.get("Authorization", ""))
     if scheme.lower() == "bearer" and raw_key:
@@ -168,8 +166,6 @@ async def require_api_auth(
     # Fall back to session cookie
     claims = get_session_claims(request)
     if claims is not None:
-        from app.models import User
-
         username, issued_at = claims
         user = (await session.exec(select(User).where(User.username == username))).first()
         if user is not None and _session_after_password_change(user, issued_at):
@@ -178,14 +174,14 @@ async def require_api_auth(
     raise HTTPException(status_code=401, detail="Authentication required")
 
 
-async def require_admin(current_user=Depends(require_api_auth)):
+async def require_admin(current_user: Annotated[User, Depends(require_api_auth)]):
     """FastAPI dependency for JSON API routes — requires admin, raises 401/403."""
     if not current_user.is_admin:
         raise HTTPException(status_code=403, detail="Admin access required")
     return current_user
 
 
-async def require_admin_ui(current_user=Depends(require_auth)):
+async def require_admin_ui(current_user: Annotated[User, Depends(require_auth)]):
     """FastAPI dependency for HTML admin routes — redirect semantics, not JSON errors.
 
     Built on ``require_auth`` so an expired/absent session redirects to /login (303)
@@ -222,7 +218,6 @@ def clear_session(response) -> None:
 
 async def seed_admin() -> None:
     """Create the initial admin user from env vars if no users exist."""
-    from app.models import User
 
     async with AsyncSession(engine) as session:
         existing = (await session.exec(select(User))).first()

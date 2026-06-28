@@ -3,7 +3,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Annotated
 from urllib.parse import urlencode
 
-from fastapi import APIRouter, Depends, Form, Request
+from fastapi import APIRouter, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from itsdangerous import URLSafeTimedSerializer
@@ -11,9 +11,9 @@ from sqlalchemy import and_, func
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from app.auth import clear_session, get_current_user, require_admin_ui, require_auth, set_session, verify_credentials
+from app.auth import clear_session, get_current_user, set_session, verify_credentials
 from app.config import settings
-from app.database import get_session
+from app.deps import AdminUserUI, SessionDep, WebUser
 from app.models import AlertDestination, AlertRule, ApiKey, Extension, FetchLog, User
 from app.ratelimit import login_limiter
 from app.routes.alerts import get_alert_log
@@ -102,9 +102,9 @@ async def login_page(request: Request):
 @router.post("/login")
 async def login_post(
     request: Request,
-    username: str = Form(...),
-    password: str = Form(...),
-    session: AsyncSession = Depends(get_session),
+    username: Annotated[str, Form()],
+    password: Annotated[str, Form()],
+    session: SessionDep,
 ):
     # App-level brute-force throttle, independent of nginx (M3 / #8).
     key = login_limiter.key(request.client.host if request.client else None, username)
@@ -130,7 +130,7 @@ async def login_post(
 
 
 @router.post("/logout")
-async def logout(request: Request, _: Annotated[User, Depends(require_auth)]):
+async def logout(request: Request, _: WebUser):
     response = RedirectResponse("/login", status_code=303)
     clear_session(response)
     return response
@@ -302,8 +302,8 @@ _DASHBOARD_PAGE_SIZE = 25
 @router.get("/", response_class=HTMLResponse)
 async def dashboard(
     request: Request,
-    current_user: Annotated[User, Depends(require_auth)],
-    session: Annotated[AsyncSession, Depends(get_session)],
+    current_user: WebUser,
+    session: SessionDep,
     store: str | None = None,
     risk: str | None = None,
     q: str | None = None,
@@ -450,7 +450,7 @@ async def dashboard(
 @router.get("/extensions/add", response_class=HTMLResponse)
 async def add_extension_page(
     request: Request,
-    current_user: Annotated[User, Depends(require_auth)],
+    current_user: WebUser,
 ):
     return _render(request, "add_extension.html", {}, user=current_user)
 
@@ -458,7 +458,7 @@ async def add_extension_page(
 @router.get("/extensions/bulk", response_class=HTMLResponse)
 async def bulk_import_page(
     request: Request,
-    current_user: Annotated[User, Depends(require_auth)],
+    current_user: WebUser,
 ):
     return _render(request, "bulk_import.html", {}, user=current_user)
 
@@ -472,8 +472,8 @@ async def bulk_import_page(
 async def extension_detail(
     ext_id: int,
     request: Request,
-    current_user: Annotated[User, Depends(require_auth)],
-    session: Annotated[AsyncSession, Depends(get_session)],
+    current_user: WebUser,
+    session: SessionDep,
 ):
     ext = await session.get(Extension, ext_id)
     if not ext or ext.user_id != current_user.id:
@@ -549,8 +549,8 @@ async def extension_detail(
 @router.get("/admin/users", response_class=HTMLResponse)
 async def admin_users_page(
     request: Request,
-    current_user: Annotated[User, Depends(require_admin_ui)],
-    session: Annotated[AsyncSession, Depends(get_session)],
+    current_user: AdminUserUI,
+    session: SessionDep,
 ):
     users = (await session.exec(select(User).order_by(User.created_at))).all()
     users_data = [
@@ -582,8 +582,8 @@ async def admin_users_page(
 @router.get("/account", response_class=HTMLResponse)
 async def account_page(
     request: Request,
-    current_user: Annotated[User, Depends(require_auth)],
-    session: Annotated[AsyncSession, Depends(get_session)],
+    current_user: WebUser,
+    session: SessionDep,
 ):
     destinations = (
         await session.exec(
@@ -646,8 +646,8 @@ async def account_page(
 @router.get("/account/keys", response_class=HTMLResponse)
 async def account_keys_page(
     request: Request,
-    current_user: Annotated[User, Depends(require_auth)],
-    session: Annotated[AsyncSession, Depends(get_session)],
+    current_user: WebUser,
+    session: SessionDep,
 ):
     keys = (
         await session.exec(select(ApiKey).where(ApiKey.user_id == current_user.id).order_by(ApiKey.created_at))
@@ -675,7 +675,7 @@ async def account_keys_page(
 @router.get("/account/password", response_class=HTMLResponse)
 async def account_password_page(
     request: Request,
-    current_user: Annotated[User, Depends(require_auth)],
+    current_user: WebUser,
 ):
     return _render(request, "account_password.html", {}, user=current_user)
 
@@ -688,6 +688,6 @@ async def account_password_page(
 @router.get("/help", response_class=HTMLResponse)
 async def help_page(
     request: Request,
-    current_user: Annotated[User, Depends(require_auth)],
+    current_user: WebUser,
 ):
     return _render(request, "help.html", {}, user=current_user)
