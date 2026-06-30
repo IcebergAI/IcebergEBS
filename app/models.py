@@ -55,6 +55,10 @@ class Extension(SQLModel, table=True):
     risk_score: Optional[int] = None
     risk_detail: Optional[str] = None  # JSON breakdown per signal
     package_analysis: Optional[str] = None  # JSON output from inspector
+    # Cached org install footprint = distinct asset count from SOAR inventory (#29),
+    # maintained on each /api/inventory upsert. Exposure ("blast radius") is computed
+    # downstream as risk_score × install_footprint (never stored).
+    install_footprint: Optional[int] = None
 
 
 class FetchLog(SQLModel, table=True):
@@ -72,6 +76,22 @@ class InstallCountHistory(SQLModel, table=True):
     extension_id: int = Field(foreign_key="extension.id", ondelete="CASCADE", index=True)
     recorded_at: datetime = Field(default_factory=_utcnow, sa_column=_tz_column(nullable=False))
     install_count: int
+
+
+class InstallObservation(SQLModel, table=True):
+    # Org install inventory fed from the SOAR (#29). One row per (extension, asset);
+    # re-pushing the same pair upserts last_seen. CASCADE removes observations with
+    # their parent extension via the schema, like FetchLog / InstallCountHistory.
+    __table_args__ = (UniqueConstraint("extension_id", "asset_id"),)
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    extension_id: int = Field(foreign_key="extension.id", ondelete="CASCADE", index=True)
+    asset_id: str  # endpoint/device identifier from the SOAR
+    asset_type: Optional[str] = None  # e.g. "workstation" | "server"
+    department: Optional[str] = None  # department / tag
+    source: str = "soar"  # which SOAR feed reported it
+    first_seen: datetime = Field(default_factory=_utcnow, sa_column=_tz_column(nullable=False))
+    last_seen: datetime = Field(default_factory=_utcnow, sa_column=_tz_column(nullable=False))
 
 
 class AlertDestination(SQLModel, table=True):

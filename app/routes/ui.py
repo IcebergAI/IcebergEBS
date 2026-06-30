@@ -13,10 +13,11 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 from app.auth import clear_session, get_current_user, set_session, verify_credentials
 from app.config import settings
 from app.deps import AdminUserUI, SessionDep, WebUser
-from app.models import AlertDestination, AlertRule, ApiKey, Extension, FetchLog, User
+from app.models import AlertDestination, AlertRule, ApiKey, Extension, FetchLog, InstallObservation, User
 from app.ratelimit import login_limiter
 from app.routes.alerts import get_alert_log
 from app.routes.api import (
+    _EXPOSURE_EXPR,
     _RISK_BANDS,
     _SORT_COLUMNS,
     ExtensionFilters,
@@ -361,6 +362,40 @@ async def dashboard(
         if r.watchlist and (failing or _stale(r.watchlist, r.last_fetched_at)):
             unhealthy += 1
 
+    # Top exposure ("blast radius", #29): risk × org footprint, highest first.
+    # Column-only select like the fleet snapshot; only extensions with a known
+    # footprint and score qualify (exposure is NULL otherwise).
+    exposure_rows = (
+        await session.exec(
+            select(
+                Extension.id,
+                Extension.name,
+                Extension.store,
+                Extension.risk_score,
+                Extension.install_footprint,
+            )
+            .where(
+                Extension.user_id == current_user.id,
+                Extension.install_footprint.is_not(None),
+                Extension.install_footprint > 0,
+                Extension.risk_score.is_not(None),
+            )
+            .order_by(_EXPOSURE_EXPR.desc())
+            .limit(5)
+        )
+    ).all()
+    top_exposure = [
+        {
+            "id": r.id,
+            "name": r.name,
+            "store": r.store,
+            "risk_score": r.risk_score,
+            "install_footprint": r.install_footprint,
+            "exposure": r.risk_score * r.install_footprint,
+        }
+        for r in exposure_rows
+    ]
+
     # Filtered + sorted + paginated page of full rows for the table. Same filter
     # object the API endpoints use (built from coerced params rather than via the
     # 422-ing dependency) — the dashboard doesn't filter by publisher.
@@ -415,6 +450,7 @@ async def dashboard(
             "export_csv_url": export_url("csv"),
             "export_json_url": export_url("json"),
             "extensions": ext_dicts,
+            "top_exposure": top_exposure,
             "extensions_count": extensions_count,
             "high_risk_count": high_risk,
             "watchlist_count": watchlist_count,
@@ -522,11 +558,32 @@ async def extension_detail(
         if log.success and log.risk_score_after is not None
     ]
 
+    # Org footprint (#29): SOAR-reported installs grouped by department. The
+    # headline count reuses the cached install_footprint (distinct assets); the
+    # breakdown is queried live.
+    dept_rows = (
+        await session.exec(
+            select(
+                InstallObservation.department,
+                func.count(func.distinct(InstallObservation.asset_id)).label("n"),
+            )
+            .where(InstallObservation.extension_id == ext_id)
+            .group_by(InstallObservation.department)
+            .order_by(func.count(func.distinct(InstallObservation.asset_id)).desc())
+        )
+    ).all()
+    footprint_assets = ext.install_footprint or 0
+    footprint_departments = [{"department": d.department or "Unassigned", "count": d.n} for d in dept_rows]
+    exposure = ext.risk_score * footprint_assets if (ext.risk_score is not None and footprint_assets) else None
+
     return _render(
         request,
         "extension_detail.html",
         {
             "ext": ext,
+            "footprint_assets": footprint_assets,
+            "footprint_departments": footprint_departments,
+            "exposure": exposure,
             "permissions": permissions,
             "host_permissions": host_permissions,
             "risk_detail": risk_detail,

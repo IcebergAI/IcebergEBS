@@ -1,0 +1,232 @@
+"""SOAR-fed inventory + exposure — POST /api/inventory (#29)."""
+
+from unittest.mock import AsyncMock, patch
+
+from sqlmodel import select
+from sqlmodel.ext.asyncio.session import AsyncSession
+
+from app.auth import hash_password
+from app.models import Extension, InstallObservation, User
+from tests.test_api import _fake_metadata, _fake_vsix
+
+
+def _mock_vscode():
+    p = patch("app.fetchers.VSCodeFetcher")
+    MockFetcher = p.start()
+    MockFetcher.return_value.fetch = AsyncMock(return_value=(_fake_metadata(), _fake_vsix()))
+    return p
+
+
+async def test_inventory_autoenrolls_unknown(client, test_db):
+    """Acceptance: a SOAR batch with an unknown extension auto-enrolls + scores it,
+    stores the observation, sets the footprint, and exposure is derivable."""
+    p = _mock_vscode()
+    try:
+        r = await client.post(
+            "/api/inventory",
+            json={
+                "source": "crowdstrike",
+                "observations": [
+                    {
+                        "store": "vscode",
+                        "extension_id": "newpub.new-ext",
+                        "asset_id": "LAPTOP-01",
+                        "asset_type": "workstation",
+                        "department": "Finance",
+                    }
+                ],
+            },
+        )
+    finally:
+        p.stop()
+
+    assert r.status_code == 200
+    body = r.json()
+    assert body["enrolled"] == 1
+    assert body["observations"] == 1
+    assert body["duplicates"] == 0
+    assert body["results"][0]["status"] == "enrolled"
+    ext_id = body["results"][0]["id"]
+
+    # Extension exists with footprint 1, and exposure = risk × footprint on read.
+    detail = (await client.get(f"/api/extensions/{ext_id}")).json()
+    assert detail["install_footprint"] == 1
+    assert detail["risk_score"] is not None
+    assert detail["exposure"] == detail["risk_score"] * 1
+
+    async with AsyncSession(test_db) as s:
+        obs = (await s.exec(select(InstallObservation).where(InstallObservation.extension_id == ext_id))).all()
+        assert len(obs) == 1
+        assert obs[0].asset_id == "LAPTOP-01"
+        assert obs[0].department == "Finance"
+        assert obs[0].source == "crowdstrike"
+
+
+async def test_inventory_idempotent_upsert(client, test_db):
+    """Re-pushing the same (extension, asset) updates last_seen — no dup rows,
+    footprint unchanged."""
+    payload = {
+        "observations": [{"store": "vscode", "extension_id": "idem.ext", "asset_id": "HOST-1", "department": "Eng"}]
+    }
+    p = _mock_vscode()
+    try:
+        first = (await client.post("/api/inventory", json=payload)).json()
+        second = (await client.post("/api/inventory", json=payload)).json()
+    finally:
+        p.stop()
+
+    assert first["enrolled"] == 1
+    # Second push: extension already tracked → observed, not enrolled.
+    assert second["enrolled"] == 0
+    assert second["duplicates"] == 1
+    ext_id = first["results"][0]["id"]
+
+    async with AsyncSession(test_db) as s:
+        obs = (await s.exec(select(InstallObservation).where(InstallObservation.extension_id == ext_id))).all()
+        assert len(obs) == 1  # upserted, not duplicated
+        ext = await s.get(Extension, ext_id)
+        assert ext.install_footprint == 1
+        assert obs[0].last_seen >= obs[0].first_seen
+
+
+async def test_inventory_two_assets_two_departments(client, test_db):
+    p = _mock_vscode()
+    try:
+        body = (
+            await client.post(
+                "/api/inventory",
+                json={
+                    "observations": [
+                        {"store": "vscode", "extension_id": "multi.ext", "asset_id": "A", "department": "Finance"},
+                        {"store": "vscode", "extension_id": "multi.ext", "asset_id": "B", "department": "Eng"},
+                    ]
+                },
+            )
+        ).json()
+    finally:
+        p.stop()
+
+    assert body["observations"] == 2
+    assert body["enrolled"] == 1  # one new extension, both observations land on it
+    ext_id = body["results"][0]["id"]
+    async with AsyncSession(test_db) as s:
+        ext = await s.get(Extension, ext_id)
+        assert ext.install_footprint == 2
+        depts = {
+            o.department
+            for o in (await s.exec(select(InstallObservation).where(InstallObservation.extension_id == ext_id))).all()
+        }
+        assert depts == {"Finance", "Eng"}
+
+
+async def test_inventory_invalid_id_skipped(client, test_db):
+    p = _mock_vscode()
+    try:
+        body = (
+            await client.post(
+                "/api/inventory",
+                json={
+                    "observations": [
+                        {"store": "vscode", "extension_id": "not a valid id", "asset_id": "X"},
+                    ]
+                },
+            )
+        ).json()
+    finally:
+        p.stop()
+
+    assert body["invalid"] == 1
+    assert body["observations"] == 0
+    assert body["results"][0]["status"] == "invalid"
+    async with AsyncSession(test_db) as s:
+        assert (await s.exec(select(InstallObservation))).all() == []
+
+
+async def test_inventory_too_many_rejected(client):
+    obs = [{"store": "vscode", "extension_id": f"pub.ext{i}", "asset_id": "A"} for i in range(1001)]
+    r = await client.post("/api/inventory", json={"observations": obs})
+    assert r.status_code == 422
+
+
+async def test_inventory_empty_rejected(client):
+    assert (await client.post("/api/inventory", json={"observations": []})).status_code == 422
+
+
+async def test_inventory_requires_auth(anon_client):
+    r = await anon_client.post(
+        "/api/inventory",
+        json={"observations": [{"store": "vscode", "extension_id": "pub.ext", "asset_id": "A"}]},
+    )
+    assert r.status_code == 401
+
+
+async def test_inventory_is_user_scoped(client, test_db, admin_user):
+    """Inventory enrolls under the caller. An identically-named extension owned by
+    another user keeps its own (untouched) footprint."""
+    async with AsyncSession(test_db) as s:
+        other = User(username="other", password_hash=await hash_password("x"))
+        s.add(other)
+        await s.commit()
+        await s.refresh(other)
+        other_id = other.id  # capture before commit re-expires the detached instance
+        s.add(
+            Extension(
+                user_id=other_id,
+                store="vscode",
+                extension_id="shared.ext",
+                name="Shared",
+                publisher="p",
+                version="1.0",
+                store_url="https://example.com",
+            )
+        )
+        await s.commit()
+
+    p = _mock_vscode()
+    try:
+        body = (
+            await client.post(
+                "/api/inventory",
+                json={"observations": [{"store": "vscode", "extension_id": "shared.ext", "asset_id": "A"}]},
+            )
+        ).json()
+    finally:
+        p.stop()
+
+    assert body["enrolled"] == 1  # a NEW extension owned by the caller, not the other user's
+    admin_ext_id = body["results"][0]["id"]
+    async with AsyncSession(test_db) as s:
+        rows = (await s.exec(select(Extension).where(Extension.extension_id == "shared.ext"))).all()
+        assert len(rows) == 2  # one per user
+        by_user = {e.user_id: e for e in rows}
+        assert by_user[admin_user.id].id == admin_ext_id
+        assert by_user[admin_user.id].install_footprint == 1
+        assert by_user[other_id].install_footprint is None  # untouched
+
+
+async def test_exposure_sort(client, test_db):
+    """sort=exposure orders by risk × footprint via build_extension_query."""
+    p = _mock_vscode()
+    try:
+        # Same risk score for both (deterministic mock); footprints differ → exposure differs.
+        await client.post(
+            "/api/inventory",
+            json={
+                "observations": [
+                    {"store": "vscode", "extension_id": "low.ext", "asset_id": "A"},
+                    {"store": "vscode", "extension_id": "high.ext", "asset_id": "A"},
+                    {"store": "vscode", "extension_id": "high.ext", "asset_id": "B"},
+                    {"store": "vscode", "extension_id": "high.ext", "asset_id": "C"},
+                ]
+            },
+        )
+    finally:
+        p.stop()
+
+    body = (await client.get("/api/extensions?sort=exposure&order=desc")).json()
+    ids = [(i["extension_id"], i["exposure"]) for i in body["items"]]
+    # high.ext (footprint 3) ranks above low.ext (footprint 1).
+    high = next(e for x, e in ids if x == "high.ext")
+    low = next(e for x, e in ids if x == "low.ext")
+    assert high > low
+    assert [x for x, _ in ids][:2] == ["high.ext", "low.ext"]

@@ -4,7 +4,7 @@ import json
 import logging
 import re
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Annotated, Literal
 from urllib.parse import parse_qs, urlparse
 
@@ -19,7 +19,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 from app.database import engine
 from app.deps import CurrentUser, SessionDep
 from app.fetchers.base import FetchError
-from app.models import Extension, FetchLog, InstallCountHistory
+from app.models import Extension, FetchLog, InstallCountHistory, InstallObservation
 from app.scoring import risk_level
 from app.services import fetch_and_store, fire_pending_alerts
 from app.threat_intel import build_threat_intel_indicators
@@ -30,8 +30,13 @@ router = APIRouter(prefix="/api", tags=["extensions"])
 
 StoreType = Literal["chrome", "vscode", "edge"]
 RiskLevel = Literal["low", "medium", "high", "critical"]
-SortField = Literal["name", "risk_score", "publisher", "install_count", "last_updated", "added_at"]
+SortField = Literal["name", "risk_score", "publisher", "install_count", "last_updated", "added_at", "exposure"]
 SortOrder = Literal["asc", "desc"]
+
+# Exposure ("blast radius", #29) is risk × org footprint — derived, never stored.
+# A SQL expression lets it be ORDER BY'd without a denormalised column; NULL when
+# either factor is NULL, so the existing nullslast/nullsfirst handling applies.
+_EXPOSURE_EXPR = Extension.risk_score * Extension.install_footprint
 
 # Risk band → score range [low, high) used to filter by risk level. Mirrors the
 # thresholds in app.scoring.risk_level (75/50/25) — the single source of truth.
@@ -49,6 +54,7 @@ _SORT_COLUMNS = {
     "install_count": Extension.install_count,
     "last_updated": Extension.last_updated,
     "added_at": Extension.added_at,
+    "exposure": _EXPOSURE_EXPR,
 }
 
 DEFAULT_PAGE_LIMIT = 50
@@ -59,6 +65,14 @@ def _escape_like(term: str) -> str:
     """Escape LIKE wildcards so a literal % / _ in a search term isn't treated
     as a pattern (escape char is backslash, passed via escape="\\")."""
     return term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+def _exposure(risk_score: int | None, install_footprint: int | None) -> int | None:
+    """Exposure / "blast radius" = risk_score × org footprint (#29). None unless
+    both factors are known. Mirrors the SQL ``_EXPOSURE_EXPR`` used for sorting."""
+    if risk_score is None or install_footprint is None:
+        return None
+    return risk_score * install_footprint
 
 
 @dataclass(frozen=True)
@@ -194,6 +208,8 @@ class ExtensionOut(BaseModel):
     risk_score: int | None
     risk_detail: dict | None
     risk_level: str | None
+    install_footprint: int | None
+    exposure: int | None  # risk_score × install_footprint, or None if either is unset
     findings: list[PackageFindingOut]
     threat_intel_indicators: list[ThreatIntelIndicatorOut]
 
@@ -232,6 +248,8 @@ class ExtensionOut(BaseModel):
             risk_score=ext.risk_score,
             risk_detail=detail,
             risk_level=risk_level(ext.risk_score),
+            install_footprint=ext.install_footprint,
+            exposure=_exposure(ext.risk_score, ext.install_footprint),
             findings=[PackageFindingOut(**finding) for finding in findings],
             threat_intel_indicators=[ThreatIntelIndicatorOut(**indicator) for indicator in threat_intel_indicators],
         )
@@ -271,6 +289,41 @@ class BulkResult(BaseModel):
     invalid: int
     errors: int
     results: list[BulkResultItem]
+
+
+class InventoryItem(BaseModel):
+    # One SOAR-reported install: which extension, on which asset, plus optional
+    # asset metadata. ``extension_id`` may be a raw id or a store URL (normalised
+    # downstream, like the add/bulk endpoints).
+    store: StoreType
+    extension_id: str
+    asset_id: str
+    asset_type: str | None = None
+    department: str | None = None
+    source: str | None = None  # overrides the batch-level source for this row
+
+
+class InventoryBatch(BaseModel):
+    source: str | None = None  # batch-level default feed name (e.g. "crowdstrike")
+    observations: list[InventoryItem]
+
+
+class InventoryResultItem(BaseModel):
+    store: str | None
+    extension_id: str | None
+    asset_id: str | None
+    status: str  # enrolled | observed | invalid | error
+    id: int | None = None  # resolved extension id
+    detail: str | None = None
+
+
+class InventoryResult(BaseModel):
+    observations: int  # observation rows written (enrolled + observed)
+    enrolled: int  # extensions auto-enrolled by this batch
+    duplicates: int  # observations for already-tracked extensions
+    invalid: int
+    errors: int
+    results: list[InventoryResultItem]
 
 
 class WatchlistPatch(BaseModel):
@@ -475,6 +528,47 @@ async def _enroll_extension(
     return {"store": store, "extension_id": extension_id, "status": "added", "id": scored.id}
 
 
+async def _upsert_observation(
+    session: AsyncSession,
+    extension_id: int,
+    item: InventoryItem,
+    default_source: str | None,
+    now: datetime,
+) -> None:
+    """Insert or refresh one (extension, asset) install observation.
+
+    Keyed on the schema's ``(extension_id, asset_id)`` unique pair: a re-push
+    bumps ``last_seen`` and refreshes the asset metadata; a first sighting sets
+    ``first_seen``. Caller commits and recomputes ``install_footprint``."""
+    source = item.source or default_source or "soar"
+    existing = (
+        await session.exec(
+            select(InstallObservation).where(
+                InstallObservation.extension_id == extension_id,
+                InstallObservation.asset_id == item.asset_id,
+            )
+        )
+    ).first()
+    if existing is not None:
+        existing.last_seen = now
+        existing.asset_type = item.asset_type
+        existing.department = item.department
+        existing.source = source
+        session.add(existing)
+    else:
+        session.add(
+            InstallObservation(
+                extension_id=extension_id,
+                asset_id=item.asset_id,
+                asset_type=item.asset_type,
+                department=item.department,
+                source=source,
+                first_seen=now,
+                last_seen=now,
+            )
+        )
+
+
 # ---------------------------------------------------------------------------
 # Routes
 # ---------------------------------------------------------------------------
@@ -515,6 +609,8 @@ EXPORT_FIELDS = [
     "last_updated",
     "risk_score",
     "risk_level",
+    "install_footprint",
+    "exposure",
     "permissions",
     "watchlist",
     "added_at",
@@ -535,6 +631,8 @@ def _export_row(ext: Extension) -> dict:
         "last_updated": ext.last_updated.isoformat() if ext.last_updated else None,
         "risk_score": ext.risk_score,
         "risk_level": risk_level(ext.risk_score),
+        "install_footprint": ext.install_footprint,
+        "exposure": _exposure(ext.risk_score, ext.install_footprint),
         "permissions": ";".join(perms) if isinstance(perms, list) else "",
         "watchlist": ext.watchlist,
         "added_at": ext.added_at.isoformat() if ext.added_at else None,
@@ -643,6 +741,94 @@ async def bulk_add_extensions(
         invalid=tally["invalid"],
         errors=tally["error"],
         results=[BulkResultItem(**r) for r in results],
+    )
+
+
+MAX_INVENTORY_ITEMS = 1000
+
+
+@router.post("/inventory")
+async def ingest_inventory(
+    body: InventoryBatch,
+    request: Request,
+    current_user: CurrentUser,
+    session: SessionDep,
+) -> InventoryResult:
+    """Bulk-upsert org install inventory from the SOAR (#29).
+
+    Each observation resolves its extension through the shared enrollment
+    primitive — so an **unknown** extension is auto-enrolled + scored, expanding
+    the watchlist as inventory is pushed — then upserts an `InstallObservation`
+    keyed on (extension, asset). After the batch, each touched extension's cached
+    `install_footprint` (distinct asset count) is recomputed; exposure
+    (= risk_score × footprint) is derived on read."""
+    if not body.observations:
+        raise HTTPException(status_code=422, detail="No observations provided")
+    if len(body.observations) > MAX_INVENTORY_ITEMS:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Too many observations in one request (max {MAX_INVENTORY_ITEMS})",
+        )
+
+    # Capture the id up front: each _enroll_extension commits, expiring the
+    # current_user ORM attributes (same caveat as the bulk endpoint).
+    user_id = current_user.id
+    client: httpx.AsyncClient = request.app.state.http_client
+    now = datetime.now(timezone.utc)
+
+    results: list[dict] = []
+    affected: set[int] = set()
+    tally = {"enrolled": 0, "observed": 0, "invalid": 0, "error": 0}
+    for item in body.observations:
+        enroll = await _enroll_extension(item.store, item.extension_id, session, client, user_id)
+        norm_id = enroll.get("extension_id", item.extension_id)
+        if enroll["status"] in ("invalid", "error"):
+            tally[enroll["status"]] += 1
+            results.append(
+                {
+                    "store": item.store,
+                    "extension_id": norm_id,
+                    "asset_id": item.asset_id,
+                    "status": enroll["status"],
+                    "detail": enroll.get("detail"),
+                }
+            )
+            continue
+        ext_id = enroll["id"]
+        await _upsert_observation(session, ext_id, item, body.source, now)
+        affected.add(ext_id)
+        status = "enrolled" if enroll["status"] == "added" else "observed"
+        tally[status] += 1
+        results.append(
+            {
+                "store": item.store,
+                "extension_id": norm_id,
+                "asset_id": item.asset_id,
+                "status": status,
+                "id": ext_id,
+            }
+        )
+
+    # Recompute the cached footprint (distinct assets) for every touched extension.
+    for ext_id in affected:
+        count = await session.scalar(
+            select(func.count(func.distinct(InstallObservation.asset_id))).where(
+                InstallObservation.extension_id == ext_id
+            )
+        )
+        ext = await session.get(Extension, ext_id)
+        if ext is not None:
+            ext.install_footprint = int(count or 0)
+            session.add(ext)
+    await session.commit()
+
+    return InventoryResult(
+        observations=tally["enrolled"] + tally["observed"],
+        enrolled=tally["enrolled"],
+        duplicates=tally["observed"],
+        invalid=tally["invalid"],
+        errors=tally["error"],
+        results=[InventoryResultItem(**r) for r in results],
     )
 
 

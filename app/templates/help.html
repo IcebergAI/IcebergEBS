@@ -74,6 +74,24 @@
   </div>
 
   <div class="surface p-6 mb-4">
+    <h2 class="section-title">Inventory &amp; exposure</h2>
+    <p class="text-[13.5px] leading-relaxed mb-3" style="color:var(--ink-6)">
+      Risk alone doesn't tell you blast radius. Push your org's real install footprint from your
+      SOAR (Marvin doesn't build EDR/Intune connectors itself) to <span class="mono">POST /api/inventory</span>
+      — a batch of <span class="mono">{store, extension_id, asset_id, asset_type?, department?}</span>
+      observations. Each observation is upserted per <span class="mono">(extension, asset)</span>, and any
+      extension Marvin isn't already tracking is <strong>auto-enrolled and scored</strong>, so pushing
+      inventory grows the watchlist automatically.
+    </p>
+    <p class="text-[13.5px] leading-relaxed" style="color:var(--ink-6)">
+      <strong>Exposure</strong> ("blast radius") = <span class="mono">risk score × assets installed</span>.
+      The dashboard ranks your highest-exposure extensions, and each extension's detail page shows how
+      many assets it's on and a per-department breakdown. Sort any list/export by
+      <span class="mono">sort=exposure</span>.
+    </p>
+  </div>
+
+  <div class="surface p-6 mb-4">
     <h2 class="section-title">Detection findings</h2>
     <p class="text-[13.5px] leading-relaxed mb-3" style="color:var(--ink-6)">
       Marvin records structured findings while inspecting the downloaded package. Findings are
