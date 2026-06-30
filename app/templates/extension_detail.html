@@ -192,6 +192,40 @@
     {% endif %}
   </div>
 
+  {# Org footprint (SOAR-fed inventory + exposure, #29) #}
+  <div class="surface p-5">
+    <div class="flex items-center justify-between mb-3">
+      <h2 class="section-title" style="margin:0">Org footprint</h2>
+      <span class="text-[11.5px]" style="color:var(--ink-5)">from SOAR inventory</span>
+    </div>
+    {% if footprint_assets %}
+    <div class="flex flex-wrap gap-8 mb-4">
+      <div>
+        <dt class="label-cap">Installed on</dt>
+        <dd class="text-[19px] font-semibold tabular-nums mt-0.5" style="color:var(--ink-8)">{{ '{:,}'.format(footprint_assets) }} <span class="text-[13px] font-normal" style="color:var(--ink-5)">asset{{ '' if footprint_assets == 1 else 's' }}</span></dd>
+      </div>
+      <div>
+        <dt class="label-cap">Exposure</dt>
+        <dd class="text-[19px] font-semibold tabular-nums mt-0.5" style="color:var(--ink-8)">{{ '{:,}'.format(exposure) if exposure is not none else '—' }} <span class="text-[13px] font-normal" style="color:var(--ink-5)">risk × assets</span></dd>
+      </div>
+      <div>
+        <dt class="label-cap">Departments</dt>
+        <dd class="text-[19px] font-semibold tabular-nums mt-0.5" style="color:var(--ink-8)">{{ footprint_departments|length }}</dd>
+      </div>
+    </div>
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-x-6">
+      {% for d in footprint_departments %}
+      <div class="flex items-center justify-between text-[12.5px] py-1.5" style="border-bottom: 1px solid var(--ink-2)">
+        <span style="color:var(--ink-7)">{{ d.department }}</span>
+        <span class="mono tabular-nums" style="color:var(--ink-8)">{{ '{:,}'.format(d.count) }}</span>
+      </div>
+      {% endfor %}
+    </div>
+    {% else %}
+    <div class="text-[13px]" style="color:var(--ink-5)">No inventory reported. Push installs via <span class="mono">POST /api/inventory</span> from your SOAR.</div>
+    {% endif %}
+  </div>
+
   {# Permissions #}
   {% if permissions or host_permissions %}
   <div class="surface p-5">

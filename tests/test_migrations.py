@@ -112,6 +112,9 @@ async def test_fresh_db_has_all_current_columns(temp_db):
     assert "password_changed_at" in _columns(temp_db, "user")  # M1
     assert {"user_id", "destination_id"} <= _columns(temp_db, "alertlog")
     assert {"key_prefix", "key_suffix"} <= _columns(temp_db, "apikey")
+    assert "install_footprint" in _columns(temp_db, "extension")  # #29
+    assert "installobservation" in _tables(temp_db)  # #29
+    assert {"extension_id", "asset_id", "first_seen", "last_seen"} <= _columns(temp_db, "installobservation")
 
 
 async def test_migration_is_idempotent(temp_db):
