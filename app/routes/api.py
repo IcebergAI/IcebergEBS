@@ -314,14 +314,14 @@ class InventoryResultItem(BaseModel):
     store: str | None
     extension_id: str | None
     asset_id: str | None
-    status: str  # enrolled | observed | invalid | error
+    status: str  # deferred | observed | invalid | error
     id: int | None = None  # resolved extension id
     detail: str | None = None
 
 
 class InventoryResult(BaseModel):
-    observations: int  # observation rows written (enrolled + observed)
-    enrolled: int  # extensions auto-enrolled by this batch
+    observations: int  # observation rows written (deferred + observed)
+    deferred: int  # extensions auto-enrolled by this batch, scoring deferred to the scheduler (#78)
     duplicates: int  # observations for already-tracked extensions
     invalid: int
     errors: int
@@ -490,13 +490,20 @@ async def _enroll_extension(
     session: AsyncSession,
     client: httpx.AsyncClient,
     user_id: int,
+    *,
+    score: bool = True,
 ) -> dict:
-    """Validate, dedupe, then create + fetch-and-score one extension.
+    """Validate, dedupe, then create one extension.
 
-    The single enrollment primitive behind both the add and bulk endpoints.
-    Returns a result dict with ``status`` in {added, duplicate, invalid, error}.
-    On a failed first fetch it discards the placeholder row (and any failure
-    FetchLog) so the user isn't left with an unanalysed extension."""
+    The single enrollment primitive behind the add, bulk and inventory endpoints.
+    Returns a result dict with ``status`` in {added, deferred, duplicate, invalid,
+    error}. When ``score`` is True (add/bulk) the extension is fetched + scored
+    inline, and a failed first fetch discards the placeholder row (so the user
+    isn't left with an unanalysed extension). When ``score`` is False (inventory,
+    #78) the placeholder is created but **not** fetched — it stays ``watchlist=True``
+    and unscored, so the scheduler scores it on its next run; the status is
+    ``deferred``. This keeps a large SOAR batch of unknown extensions from doing
+    hundreds of sequential store fetches inside one request."""
     extension_id = normalise_extension_id(store, raw_id)
     try:
         _validate_extension_id(store, extension_id)
@@ -530,6 +537,12 @@ async def _enroll_extension(
         raise
     await session.refresh(ext)
     ext_id = ext.id
+
+    if not score:
+        # Defer scoring to the scheduler (#78): the placeholder is watchlist=True and
+        # unscored, so refresh_watchlist scores it on its next run. detect_changes
+        # returns [] on that first fetch (last_fetched_at is None), so no alerts fire.
+        return {"store": store, "extension_id": extension_id, "status": "deferred", "id": ext_id}
 
     try:
         scored = await _fetch_and_score(ext, session, client)
@@ -790,11 +803,13 @@ async def ingest_inventory(
     """Bulk-upsert org install inventory from the SOAR (#29).
 
     Each observation resolves its extension through the shared enrollment
-    primitive — so an **unknown** extension is auto-enrolled + scored, expanding
-    the watchlist as inventory is pushed — then upserts an `InstallObservation`
+    primitive with ``score=False`` — so an **unknown** extension is auto-enrolled
+    onto the watchlist but its scoring is **deferred to the scheduler** (#78),
+    keeping a large batch of unknown extensions from doing hundreds of sequential
+    store fetches inside one request. Each row then upserts an `InstallObservation`
     keyed on (extension, asset). After the batch, each touched extension's cached
     `install_footprint` (distinct asset count) is recomputed; exposure
-    (= risk_score × footprint) is derived on read."""
+    (= risk_score × footprint) is derived on read once the scheduler has scored it."""
     if not body.observations:
         raise HTTPException(status_code=422, detail="No observations provided")
     if len(body.observations) > MAX_INVENTORY_ITEMS:
@@ -811,9 +826,9 @@ async def ingest_inventory(
 
     results: list[dict] = []
     affected: set[int] = set()
-    tally = {"enrolled": 0, "observed": 0, "invalid": 0, "error": 0}
+    tally = {"deferred": 0, "observed": 0, "invalid": 0, "error": 0}
     for item in body.observations:
-        enroll = await _enroll_extension(item.store, item.extension_id, session, client, user_id)
+        enroll = await _enroll_extension(item.store, item.extension_id, session, client, user_id, score=False)
         norm_id = enroll.get("extension_id", item.extension_id)
         if enroll["status"] in ("invalid", "error"):
             tally[enroll["status"]] += 1
@@ -830,7 +845,9 @@ async def ingest_inventory(
         ext_id = enroll["id"]
         await _upsert_observation(session, ext_id, item, body.source, now)
         affected.add(ext_id)
-        status = "enrolled" if enroll["status"] == "added" else "observed"
+        # A freshly-created placeholder is "deferred" (scheduler will score it);
+        # an already-tracked extension is "observed".
+        status = "deferred" if enroll["status"] == "deferred" else "observed"
         tally[status] += 1
         results.append(
             {
@@ -856,8 +873,8 @@ async def ingest_inventory(
     await session.commit()
 
     return InventoryResult(
-        observations=tally["enrolled"] + tally["observed"],
-        enrolled=tally["enrolled"],
+        observations=tally["deferred"] + tally["observed"],
+        deferred=tally["deferred"],
         duplicates=tally["observed"],
         invalid=tally["invalid"],
         errors=tally["error"],

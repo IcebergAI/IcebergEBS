@@ -80,8 +80,9 @@
       SOAR (Marvin doesn't build EDR/Intune connectors itself) to <span class="mono">POST /api/inventory</span>
       — a batch of <span class="mono">{store, extension_id, asset_id, asset_type?, department?}</span>
       observations. Each observation is upserted per <span class="mono">(extension, asset)</span>, and any
-      extension Marvin isn't already tracking is <strong>auto-enrolled and scored</strong>, so pushing
-      inventory grows the watchlist automatically.
+      extension Marvin isn't already tracking is <strong>auto-enrolled onto the watchlist</strong> and
+      <strong>scored on the next scheduled refresh</strong>, so pushing inventory grows the watchlist
+      automatically without stalling large batches on live store fetches.
     </p>
     <p class="text-[13.5px] leading-relaxed" style="color:var(--ink-6)">
       <strong>Exposure</strong> ("blast radius") = <span class="mono">risk score × assets installed</span>.
