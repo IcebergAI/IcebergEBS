@@ -103,6 +103,7 @@ async def fetch_and_store(
     ext.name = metadata.name
     ext.publisher = metadata.publisher
     ext.description = metadata.description
+    ext.store_url = metadata.store_url
     # Only update version when the store returns a non-empty value; keeping
     # the stored version avoids spurious new_version alerts when Chrome HTML
     # scraping temporarily fails and returns an empty string.

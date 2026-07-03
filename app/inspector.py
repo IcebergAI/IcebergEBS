@@ -507,9 +507,13 @@ def _obfuscation_score(source: str) -> int:
     single = sum(1 for i in identifiers if len(i) == 1)
 
     if total > 50:
-        if short / total > 0.6:
+        # Check the stronger single-char signal first: every single-char identifier
+        # is also a <=2-char (short) one, so `short >= single` always. Testing short
+        # first made the single-char branch unreachable (#74); order them so the
+        # heavier obfuscation (mostly one-letter names) scores highest.
+        if single / total > 0.6:
             score += 4
-        elif single / total > 0.6:
+        elif short / total > 0.6:
             score += 3
 
     # High ratio of escaped unicode or hex sequences

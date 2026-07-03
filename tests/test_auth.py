@@ -3,6 +3,7 @@ from unittest.mock import MagicMock
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.auth import create_session_cookie, get_current_user, verify_credentials
+from app.models import User
 
 
 async def test_verify_credentials_correct(test_db, admin_user):
@@ -100,3 +101,52 @@ async def test_logout(client):
     from app.config import settings
 
     assert settings.session_cookie_name not in r.cookies or r.cookies[settings.session_cookie_name] == ""
+
+
+async def test_login_page_valid_cookie_redirects_home(anon_client, admin_user):
+    # A genuinely valid session cookie should skip the login form and go to "/".
+    from app.config import settings
+
+    anon_client.cookies.set(settings.session_cookie_name, create_session_cookie("testadmin"))
+    r = await anon_client.get("/login", follow_redirects=False)
+    assert r.status_code == 303
+    assert r.headers["location"] == "/"
+
+
+async def test_login_page_stale_cookie_renders_form(anon_client, admin_user, test_db):
+    # Regression (#73): a signature-valid cookie issued before the user's last
+    # password change must render the login form (200), NOT redirect to "/".
+    # require_auth rejects such a cookie, so redirecting here would loop forever.
+    from datetime import datetime, timedelta, timezone
+
+    from app.config import settings
+
+    anon_client.cookies.set(settings.session_cookie_name, create_session_cookie("testadmin"))
+    # Bump password_changed_at past the cookie's issued-at (beyond the 1s tolerance).
+    async with AsyncSession(test_db) as s:
+        user = await s.get(User, admin_user.id)
+        user.password_changed_at = datetime.now(timezone.utc) + timedelta(seconds=30)
+        s.add(user)
+        await s.commit()
+
+    r = await anon_client.get("/login", follow_redirects=False)
+    assert r.status_code == 200
+    assert b"Sign in" in r.content
+    # The stale cookie is cleared so it can't keep failing require_auth.
+    assert settings.session_cookie_name in r.headers.get("set-cookie", "")
+
+
+async def test_login_page_deleted_user_cookie_renders_form(anon_client, admin_user, test_db):
+    # Regression (#73): a valid cookie for a since-deleted user must render the
+    # form (200), not redirect to "/" (which require_auth would bounce back).
+    from app.config import settings
+
+    anon_client.cookies.set(settings.session_cookie_name, create_session_cookie("testadmin"))
+    async with AsyncSession(test_db) as s:
+        user = await s.get(User, admin_user.id)
+        await s.delete(user)
+        await s.commit()
+
+    r = await anon_client.get("/login", follow_redirects=False)
+    assert r.status_code == 200
+    assert b"Sign in" in r.content
