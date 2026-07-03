@@ -60,36 +60,7 @@ API-first design. All data flows through FastAPI endpoints; the UI consumes them
 6. The caller **commits**, `session.refresh(ext)`, then calls `fire_pending_alerts(events, ext, engine, client)` → `fire_alerts()` POSTs webhooks and commits `AlertLog` rows in its own session, decoupled from the caller's transaction. This ordering is mandatory: `fire_alerts`' second session must not run inside the caller's open write transaction
 
 ## Store-specific fetcher notes
-
-### Chrome Web Store (`app/fetchers/chrome.py`)
-- Scrapes `https://chromewebstore.google.com/detail/{extension_id}` with BeautifulSoup4
-- Publisher extracted via `_find_detail_value(soup, "offered by")` — finds text node then reads next sibling element
-- Last updated extracted via `_find_detail_value(soup, "updated")` then `_parse_date()`
-- Downloads CRX from `clients2.google.com/service/update2/crx`
-- CRX3 format: a binary header precedes the zip payload. The fetchers download the raw CRX as-is; the header is stripped downstream by `inspector._zip_payload()`, which seeks the `PK\x03\x04` zip magic before reading the archive (the fetchers do **not** pre-strip it)
-
-### VS Code Marketplace (`app/fetchers/vscode.py`)
-- Uses the public gallery REST API: `POST https://marketplace.visualstudio.com/_apis/public/gallery/extensionquery` with flags `914`
-- Extension ID format: `publisher.extensionName`
-- `fetch()` is overridden to make a single API call for both metadata and the VSIX download URL (the base class would otherwise call the API twice)
-- Downloads `.vsix` (plain zip, no header stripping needed)
-
-### Edge Add-ons (`app/fetchers/edge.py`)
-- The store frontend is a React SPA — static HTML has almost no useful data
-- Uses the undocumented product details API discovered via browser XHR inspection:
-  `GET https://microsoftedge.microsoft.com/addons/getproductdetailsbycrxid/{extension_id}?hl=en-US`
-- Response fields used: `name`, `developer` (publisher), `version`, `activeInstallCount`, `lastUpdateDate` (Unix timestamp), `description`
-- The response also includes the full `manifest` JSON string (with `permissions`, `host_permissions`) and `averageRating`/`ratingCount` (not currently used)
-- `fetch()` is overridden to use a two-stage package strategy:
-  1. **Guaranteed baseline**: the `manifest` string from the API response is wrapped in a minimal in-memory zip and passed to the inspector — permissions are always available
-  2. **Upgrade attempt**: the CRX download is tried (`edge.microsoft.com/extensionwebstorebase/v1/crx`) for full JS static analysis; if it succeeds, the full package replaces the baseline
-- CRX download URL format: `?x=id%3D{id}%26installsource%3Dondemand&response=redirect` — the `installsource=ondemand` parameter (URL-encoded within the `x` value) is required; other formats (`%26uc`, `installsource=webstore`) return HTTP 500
-
-### Package inspection (`app/inspector.py`)
-- Handles both CRX (header already stripped by fetcher) and VSIX (plain zip)
-- Extracts: permissions, host_permissions, eval usage, remote fetch calls, obfuscation score, external domains, minification
-- Extracts `author` and `version` from the manifest; only `author` is used as a publisher fallback in `services.py` when the store page returns nothing; `version` from the manifest is intentionally not used — updating `ext.version` only from store metadata avoids spurious `new_version` alerts when Chrome HTML scraping is unreliable
-- `_SAFE_DOMAINS` filters out well-known CDNs from the external domain list
+Per-store scraping/API details (Chrome/VS Code/Edge) + package inspection notes live in the path-scoped rule `.claude/rules/fetchers.md` (auto-loads when editing `app/fetchers/**` or `app/inspector.py`).
 
 ## Testing
 
@@ -136,38 +107,7 @@ MARVIN_TEST_DATABASE_URL=postgresql+asyncpg://marvin:marvin@localhost:5432/marvi
 - Scoring functions handle naive datetimes from external sources by attaching UTC tzinfo before comparison
 
 ## Styling, Theming and Design
-Light/dark UI with a toggle in the user dropdown. Theme preference is stored in `localStorage` under `marvin-theme` (`'light'` or `'dark'`) and applied to `<html data-theme="...">` via an inline script in `<head>` before first paint (anti-flash).
-
-CSS custom properties in `static/css/app.css`:
-- `--ink-0` (page background, lightest) → `--ink-8` (near-black text, darkest) in light mode; the scale inverts in `[data-theme="dark"]`
-- `--surface` replaces hardcoded `white` on all card/panel backgrounds
-- `--risk-*` semantic colours for severity levels (low/medium/high/critical)
-- `--badge-*-color` and `--perm-*-color` for text inside badges (need separate dark-mode values)
-
-Tailwind CSS utility classes via CDN for layout; component classes (`surface`, `btn`, `badge`, `label-cap`, `page-title`, `section-title`) defined in `app.css`.
-
-The `tailwind.config` object (font families) is in `static/js/tailwind-config.js` loaded via `<script src>` — do not inline it in `base.html` as that would require `unsafe-inline` in the CSP. The anti-flash inline script in `<head>` is the only inline script; it is byte-identical in `base.html` and `login.html`, so one CSP hash covers both. Its SHA-256 is `WkYC1Fvwnyf6D8gj+0BrUmYBPS4kqMNic5PfT5ccqEw=` and is included in `nginx/security_headers.conf`. If you change that script (in either template), keep both copies identical and recompute the hash.
-
-### Branding (Aperture mark)
-The brand mark is the **Aperture** logo — two broken concentric rings + a center pupil — authored in a 240×240 viewBox. Brand assets live under `static/img/`: `aperture.svg` (primary, `currentColor`), `favicon.svg` (thicker small-size variant), and the rasterized `favicon-32.png` / `apple-touch-icon.png` (white mark on a `#2D5ED4` rounded tile). In templates the mark is **inlined** so it follows the theme — the rail (`base.html`) and login lockup wrap it in `.brand-tile` (`--accent`), and the login brand panel uses `.brand-tile--ondark`. Favicon `<link>`s are in both `base.html` and `login.html` heads. `login.html` is the "Branded split (Option B)" layout (`.login-split` / `.login-brand*` / `.login-form-col` in `app.css`), collapsing to a single column below 720px.
-
-### Alpine.js x-data pattern
-**Never embed `{{ data | tojson }}` directly inside an `x-data="{ ... }"` HTML attribute.** JSON contains `"` which terminates the HTML attribute, breaking the component silently. Always use the function pattern instead:
-
-```html
-<div x-data="myComponent()">
-...
-<script>
-function myComponent() {
-  return {
-    items: {{ items | tojson }},  {# safe — inside <script>, not an HTML attribute #}
-    ...
-  };
-}
-</script>
-```
-
-This is already the pattern used by `account.html` (accountPrefs) and `dashboard.html` (dashboardData).
+The design system (light/dark CSS custom properties, Tailwind CDN + component classes, the CSP script hash in `nginx/security_headers.conf`, Aperture branding, and the mandatory Alpine.js `x-data` function pattern) lives in the path-scoped rule `.claude/rules/frontend.md` (auto-loads when editing `static/**` or `app/templates/**`).
 
 ## Deployment
 

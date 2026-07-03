@@ -66,4 +66,6 @@ app/_version
 
 # Skills
 .agents/
-.claude/
+# Ignore personal Claude config but track shared path-scoped rules
+.claude/*
+!.claude/rules/
