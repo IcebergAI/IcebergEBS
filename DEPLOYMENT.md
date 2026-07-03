@@ -122,6 +122,7 @@ CMD ["uvicorn", "app.main:app", \
 
 Notes:
 - `--proxy-headers` makes uvicorn trust `X-Forwarded-For` / `X-Forwarded-Proto` from nginx
+- **nginx must _overwrite_ `X-Forwarded-For` with `$remote_addr`, not append** (`$proxy_add_x_forwarded_for`). With `--forwarded-allow-ips=*` uvicorn trusts the last hop, so an appended chain lets a client spoof its IP via an inbound XFF header and evade the app-level login rate limiter (#77). See the `proxy_set_header` block below.
 - Single worker only — APScheduler runs per-process; multiple workers would each schedule independent watchlist refreshes, causing duplicate fetches and duplicate `AlertLog` entries
 
 ---
@@ -324,7 +325,9 @@ http {
         proxy_http_version 1.1;
         proxy_set_header Host              $host;
         proxy_set_header X-Real-IP         $remote_addr;
-        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+        # Overwrite, don't append ($proxy_add_x_forwarded_for): a client-supplied
+        # XFF header must not be trusted by the app (#77).
+        proxy_set_header X-Forwarded-For   $remote_addr;
         proxy_set_header X-Forwarded-Proto $scheme;
         proxy_connect_timeout 10s;
         proxy_send_timeout    10s;

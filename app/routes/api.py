@@ -13,6 +13,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel
 from sqlalchemy import func, or_
+from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.exc import IntegrityError
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
@@ -469,6 +471,19 @@ async def _fetch_and_score(
     return ext
 
 
+async def _find_extension(session: AsyncSession, user_id: int, store: str, extension_id: str) -> Extension | None:
+    """Look up a user's extension by its (store, extension_id) identity."""
+    return (
+        await session.exec(
+            select(Extension).where(
+                Extension.user_id == user_id,
+                Extension.store == store,
+                Extension.extension_id == extension_id,
+            )
+        )
+    ).first()
+
+
 async def _enroll_extension(
     store: str,
     raw_id: str,
@@ -488,15 +503,7 @@ async def _enroll_extension(
     except HTTPException as exc:
         return {"store": store, "extension_id": extension_id, "status": "invalid", "detail": exc.detail}
 
-    existing = (
-        await session.exec(
-            select(Extension).where(
-                Extension.user_id == user_id,
-                Extension.store == store,
-                Extension.extension_id == extension_id,
-            )
-        )
-    ).first()
+    existing = await _find_extension(session, user_id, store, extension_id)
     if existing:
         return {"store": store, "extension_id": extension_id, "status": "duplicate", "id": existing.id}
 
@@ -510,7 +517,17 @@ async def _enroll_extension(
         store_url="",
     )
     session.add(ext)
-    await session.commit()
+    try:
+        await session.commit()
+    except IntegrityError:
+        # A concurrent request inserted the same (user, store, extension_id) between
+        # the dedupe SELECT above and this commit — the unique constraint fired.
+        # Treat it as a duplicate instead of surfacing a 500 (#76).
+        await session.rollback()
+        existing = await _find_extension(session, user_id, store, extension_id)
+        if existing:
+            return {"store": store, "extension_id": extension_id, "status": "duplicate", "id": existing.id}
+        raise
     await session.refresh(ext)
     ext_id = ext.id
 
@@ -558,34 +575,31 @@ async def _upsert_observation(
 
     Keyed on the schema's ``(extension_id, asset_id)`` unique pair: a re-push
     bumps ``last_seen`` and refreshes the asset metadata; a first sighting sets
-    ``first_seen``. Caller commits and recomputes ``install_footprint``."""
+    ``first_seen``. Caller commits and recomputes ``install_footprint``.
+
+    Implemented as a single Postgres ``INSERT … ON CONFLICT DO UPDATE`` so
+    concurrent/retried pushes of the same (extension, asset) can't race a
+    select-then-insert into an IntegrityError 500 (#76)."""
     source = item.source or default_source or "soar"
-    existing = (
-        await session.exec(
-            select(InstallObservation).where(
-                InstallObservation.extension_id == extension_id,
-                InstallObservation.asset_id == item.asset_id,
-            )
-        )
-    ).first()
-    if existing is not None:
-        existing.last_seen = now
-        existing.asset_type = item.asset_type
-        existing.department = item.department
-        existing.source = source
-        session.add(existing)
-    else:
-        session.add(
-            InstallObservation(
-                extension_id=extension_id,
-                asset_id=item.asset_id,
-                asset_type=item.asset_type,
-                department=item.department,
-                source=source,
-                first_seen=now,
-                last_seen=now,
-            )
-        )
+    stmt = pg_insert(InstallObservation).values(
+        extension_id=extension_id,
+        asset_id=item.asset_id,
+        asset_type=item.asset_type,
+        department=item.department,
+        source=source,
+        first_seen=now,
+        last_seen=now,
+    )
+    stmt = stmt.on_conflict_do_update(
+        index_elements=["extension_id", "asset_id"],
+        set_={
+            "last_seen": now,
+            "asset_type": item.asset_type,
+            "department": item.department,
+            "source": source,
+        },
+    )
+    await session.execute(stmt)
 
 
 # ---------------------------------------------------------------------------

@@ -230,3 +230,78 @@ async def test_exposure_sort(client, test_db):
     low = next(e for x, e in ids if x == "low.ext")
     assert high > low
     assert [x for x, _ in ids][:2] == ["high.ext", "low.ext"]
+
+
+async def test_inventory_upsert_refreshes_metadata(client, test_db):
+    """Regression (#76): the ON CONFLICT upsert refreshes asset metadata and
+    bumps last_seen on a re-push, without creating a second row."""
+    p = _mock_vscode()
+    try:
+        first = (
+            await client.post(
+                "/api/inventory",
+                json={
+                    "observations": [
+                        {"store": "vscode", "extension_id": "up.ext", "asset_id": "H1", "department": "Eng"}
+                    ]
+                },
+            )
+        ).json()
+        # Re-push the same (extension, asset) with a different department.
+        await client.post(
+            "/api/inventory",
+            json={
+                "observations": [{"store": "vscode", "extension_id": "up.ext", "asset_id": "H1", "department": "Sales"}]
+            },
+        )
+    finally:
+        p.stop()
+
+    ext_id = first["results"][0]["id"]
+    async with AsyncSession(test_db) as s:
+        obs = (await s.exec(select(InstallObservation).where(InstallObservation.extension_id == ext_id))).all()
+    assert len(obs) == 1  # upserted, not duplicated
+    assert obs[0].department == "Sales"  # ON CONFLICT DO UPDATE refreshed the metadata
+    assert obs[0].last_seen >= obs[0].first_seen
+
+
+async def test_enroll_extension_insert_race_returns_duplicate(test_db, admin_user):
+    """Regression (#76): if a concurrent insert wins the (user, store, id) unique
+    constraint between the dedupe SELECT and our commit, _enroll_extension returns
+    a duplicate result instead of surfacing the IntegrityError as a 500."""
+    from unittest.mock import MagicMock
+
+    import app.routes.api as api
+
+    async with AsyncSession(test_db) as session:
+        # The "winner" of the race already exists in the DB.
+        winner = Extension(
+            user_id=admin_user.id,
+            store="vscode",
+            extension_id="race.ext",
+            name="race.ext",
+            publisher="",
+            version="",
+            store_url="",
+        )
+        session.add(winner)
+        await session.commit()
+        await session.refresh(winner)
+        winner_id = winner.id  # capture before the conflicting commit re-expires it
+
+        # Force the dedupe SELECT to miss on the first call (simulating the race
+        # window) and hit the real lookup afterwards, so the insert conflicts.
+        real_find = api._find_extension
+        state = {"n": 0}
+
+        async def flaky_find(*args, **kwargs):
+            state["n"] += 1
+            if state["n"] == 1:
+                return None
+            return await real_find(*args, **kwargs)
+
+        with patch.object(api, "_find_extension", flaky_find):
+            result = await api._enroll_extension("vscode", "race.ext", session, MagicMock(), user_id=admin_user.id)
+
+    assert result["status"] == "duplicate"
+    assert result["id"] == winner_id
