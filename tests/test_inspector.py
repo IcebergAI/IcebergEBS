@@ -265,6 +265,29 @@ def test_minified_and_obfuscated_findings():
     assert "obfuscated_javascript" in codes
 
 
+def test_obfuscation_score_single_char_tier():
+    # Regression (#74): a body dominated by single-char identifiers must score the
+    # top +4 tier. Previously the single-char branch was unreachable (short >= single
+    # meant the <=2-char branch always won first).
+    from app.inspector import _obfuscation_score
+
+    letters = list("abcdefghijklmnopqrstuvwxyz")
+    # ~156 identifiers, all single-character (separated so tokens can't merge).
+    source = "; ".join(f"{c}={c}" for c in letters * 3)
+    assert _obfuscation_score(source) >= 4
+
+
+def test_obfuscation_score_two_char_tier():
+    # Regression (#74): a body dominated by 2-char (not single-char) identifiers
+    # scores the +3 tier, not the +4 single-char tier.
+    from app.inspector import _obfuscation_score
+
+    pairs = [f"{a}{b}" for a in "abcdefgh" for b in "ijklmnop"]  # 64 distinct 2-char names
+    source = "; ".join(f"{name}={name}" for name in pairs)
+    score = _obfuscation_score(source)
+    assert score == 3
+
+
 def test_oversized_manifest_is_skipped():
     data = make_zip(
         {

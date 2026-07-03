@@ -517,15 +517,34 @@ async def _enroll_extension(
     try:
         scored = await _fetch_and_score(ext, session, client)
     except HTTPException as exc:
+        await _discard_placeholder(session, ext_id)
+        return {"store": store, "extension_id": extension_id, "status": "error", "detail": exc.detail}
+    except Exception:
+        # An unexpected failure (inspector bug, DB error, …) must not leave an
+        # unscored placeholder on the watchlist — the exact state the FetchError
+        # cleanup above prevents (#75). Roll back the poisoned transaction, drop
+        # the orphan, then re-raise so a genuine bug still surfaces as a 500.
+        await session.rollback()
+        await _discard_placeholder(session, ext_id)
+        raise
+
+    return {"store": store, "extension_id": extension_id, "status": "added", "id": scored.id}
+
+
+async def _discard_placeholder(session: AsyncSession, ext_id: int) -> None:
+    """Delete a placeholder Extension and its FetchLog rows after a failed first
+    fetch, committing the cleanup. Best-effort: a cleanup failure is swallowed so it
+    can't mask the original error."""
+    try:
         for fl in (await session.exec(select(FetchLog).where(FetchLog.extension_id == ext_id))).all():
             await session.delete(fl)
         orphan = await session.get(Extension, ext_id)
         if orphan is not None:
             await session.delete(orphan)
         await session.commit()
-        return {"store": store, "extension_id": extension_id, "status": "error", "detail": exc.detail}
-
-    return {"store": store, "extension_id": extension_id, "status": "added", "id": scored.id}
+    except Exception:
+        logger.exception("Failed to discard placeholder extension %d after a failed first fetch", ext_id)
+        await session.rollback()
 
 
 async def _upsert_observation(

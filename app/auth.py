@@ -112,17 +112,33 @@ async def verify_credentials(username: str, password: str, session: AsyncSession
     return user if (user and valid) else None
 
 
+async def authenticate_session(request: Request, session: AsyncSession) -> User | None:
+    """Resolve the User for a request's session cookie, or None if not authenticated.
+
+    Validates the cookie signature/age (via ``get_session_claims``), loads the
+    user, and rejects cookies issued before the user's last password change
+    (``_session_after_password_change``). Shared by ``require_auth`` and the login
+    page so both agree on what a valid session is — a signature-valid but
+    DB-stale cookie must not pass one gate and fail the other (that produces the
+    /login ⇄ / redirect loop, #73).
+    """
+    claims = get_session_claims(request)
+    if claims is None:
+        return None
+    username, issued_at = claims
+    user = (await session.exec(select(User).where(User.username == username))).first()
+    if user is None or not _session_after_password_change(user, issued_at):
+        return None
+    return user
+
+
 async def require_auth(
     request: Request,
     session: Annotated[AsyncSession, Depends(get_session)],
 ):
     """FastAPI dependency — returns the authenticated User or redirects to /login."""
-    claims = get_session_claims(request)
-    if claims is None:
-        raise HTTPException(status_code=303, headers={"Location": "/login"})
-    username, issued_at = claims
-    user = (await session.exec(select(User).where(User.username == username))).first()
-    if user is None or not _session_after_password_change(user, issued_at):
+    user = await authenticate_session(request, session)
+    if user is None:
         raise HTTPException(status_code=303, headers={"Location": "/login"})
     return user
 
@@ -164,12 +180,9 @@ async def require_api_auth(
         return user
 
     # Fall back to session cookie
-    claims = get_session_claims(request)
-    if claims is not None:
-        username, issued_at = claims
-        user = (await session.exec(select(User).where(User.username == username))).first()
-        if user is not None and _session_after_password_change(user, issued_at):
-            return user
+    user = await authenticate_session(request, session)
+    if user is not None:
+        return user
 
     raise HTTPException(status_code=401, detail="Authentication required")
 

@@ -3,6 +3,8 @@ import json
 import zipfile
 from unittest.mock import AsyncMock, patch
 
+import pytest
+from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.fetchers.base import ExtensionMetadata, FetchError
@@ -95,6 +97,43 @@ async def test_add_extension(client):
     assert data["extension_id"] == "testpub.test-ext"
     assert data["risk_score"] is not None
     return data["id"]
+
+
+async def test_add_extension_persists_store_url(client):
+    # Regression (#72): fetch_and_store must copy metadata.store_url onto the
+    # record — enrolled rows are created with store_url="" and previously stayed
+    # empty, breaking the "View in store" link and webhook payloads.
+    metadata = _fake_metadata()
+    metadata.store_url = "https://store.example/detail/testpub.store-url-ext"
+    with patch("app.fetchers.VSCodeFetcher") as MockFetcher:
+        instance = MockFetcher.return_value
+        instance.fetch = AsyncMock(return_value=(metadata, _fake_vsix()))
+
+        r = await client.post(
+            "/api/extensions",
+            json={"store": "vscode", "extension_id": "testpub.store-url-ext"},
+        )
+
+    assert r.status_code == 201
+    assert r.json()["store_url"] == "https://store.example/detail/testpub.store-url-ext"
+
+
+async def test_add_extension_unexpected_error_discards_placeholder(client, test_db):
+    # Regression (#75): an unexpected (non-FetchError) failure during the first
+    # fetch/inspect/score must not leave an unscored placeholder on the watchlist.
+    with patch("app.fetchers.VSCodeFetcher") as MockFetcher:
+        instance = MockFetcher.return_value
+        instance.fetch = AsyncMock(side_effect=RuntimeError("boom in inspector"))
+
+        with pytest.raises(RuntimeError):
+            await client.post(
+                "/api/extensions",
+                json={"store": "vscode", "extension_id": "testpub.boom-ext"},
+            )
+
+    async with AsyncSession(test_db) as session:
+        rows = (await session.exec(select(Extension).where(Extension.extension_id == "testpub.boom-ext"))).all()
+    assert rows == []
 
 
 async def test_add_extension_returns_and_persists_findings(client):

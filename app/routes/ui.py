@@ -10,7 +10,7 @@ from sqlalchemy import and_, func
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from app.auth import clear_session, get_current_user, set_session, verify_credentials
+from app.auth import authenticate_session, clear_session, get_current_user, set_session, verify_credentials
 from app.config import settings
 from app.deps import AdminUserUI, SessionDep, WebUser
 from app.models import AlertDestination, AlertRule, ApiKey, Extension, FetchLog, InstallObservation, User
@@ -95,10 +95,17 @@ def _render(request: Request, template: str, ctx: dict, user: User | None = None
 
 
 @router.get("/login", response_class=HTMLResponse)
-async def login_page(request: Request):
-    if get_current_user(request):
+async def login_page(request: Request, session: SessionDep):
+    # DB-backed validation, matching require_auth — a signature-valid cookie whose
+    # user was deleted or whose password changed on another device must NOT redirect
+    # to "/" (require_auth would bounce it straight back here → infinite loop, #73).
+    if await authenticate_session(request, session):
         return RedirectResponse("/", status_code=303)
-    return _render(request, "login.html", {"error": None})
+    # Clear any stale-but-signed cookie so it can't keep failing require_auth.
+    response = _render(request, "login.html", {"error": None})
+    if get_current_user(request):
+        clear_session(response)
+    return response
 
 
 @router.post("/login")
