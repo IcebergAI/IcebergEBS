@@ -17,42 +17,42 @@ def _mock_vscode():
     return p
 
 
-async def test_inventory_autoenrolls_unknown(client, test_db):
-    """Acceptance: a SOAR batch with an unknown extension auto-enrolls + scores it,
-    stores the observation, sets the footprint, and exposure is derivable."""
-    p = _mock_vscode()
-    try:
-        r = await client.post(
-            "/api/inventory",
-            json={
-                "source": "crowdstrike",
-                "observations": [
-                    {
-                        "store": "vscode",
-                        "extension_id": "newpub.new-ext",
-                        "asset_id": "LAPTOP-01",
-                        "asset_type": "workstation",
-                        "department": "Finance",
-                    }
-                ],
-            },
-        )
-    finally:
-        p.stop()
+async def test_inventory_autoenrolls_unknown_deferred(client, test_db):
+    """Acceptance (#78): a SOAR batch with an unknown extension auto-enrolls it onto
+    the watchlist with scoring DEFERRED to the scheduler — the request never touches
+    the store — while the observation + footprint are recorded immediately. The
+    extension stays unscored (risk/exposure None) until a scheduler run."""
+    # No fetcher mock: deferral means the request must not perform a store fetch.
+    r = await client.post(
+        "/api/inventory",
+        json={
+            "source": "crowdstrike",
+            "observations": [
+                {
+                    "store": "vscode",
+                    "extension_id": "newpub.new-ext",
+                    "asset_id": "LAPTOP-01",
+                    "asset_type": "workstation",
+                    "department": "Finance",
+                }
+            ],
+        },
+    )
 
     assert r.status_code == 200
     body = r.json()
-    assert body["enrolled"] == 1
+    assert body["deferred"] == 1
     assert body["observations"] == 1
     assert body["duplicates"] == 0
-    assert body["results"][0]["status"] == "enrolled"
+    assert body["results"][0]["status"] == "deferred"
     ext_id = body["results"][0]["id"]
 
-    # Extension exists with footprint 1, and exposure = risk × footprint on read.
+    # Enrolled onto the watchlist, footprint set, but not yet scored.
     detail = (await client.get(f"/api/extensions/{ext_id}")).json()
     assert detail["install_footprint"] == 1
-    assert detail["risk_score"] is not None
-    assert detail["exposure"] == detail["risk_score"] * 1
+    assert detail["watchlist"] is True  # scheduler will pick it up
+    assert detail["risk_score"] is None  # deferred
+    assert detail["exposure"] is None  # risk unknown → exposure unknown
 
     async with AsyncSession(test_db) as s:
         obs = (await s.exec(select(InstallObservation).where(InstallObservation.extension_id == ext_id))).all()
@@ -62,22 +62,43 @@ async def test_inventory_autoenrolls_unknown(client, test_db):
         assert obs[0].source == "crowdstrike"
 
 
+async def test_inventory_deferred_enrollment_scored_on_refresh(client):
+    """A deferred inventory enrollment is scored on the next scheduler run.
+    Simulated here via the refresh path (same fetch_and_store scoring pipeline the
+    scheduler uses), after which exposure = risk × footprint is derivable."""
+    r = await client.post(
+        "/api/inventory",
+        json={"observations": [{"store": "vscode", "extension_id": "def.ext", "asset_id": "A"}]},
+    )
+    ext_id = r.json()["results"][0]["id"]
+    assert (await client.get(f"/api/extensions/{ext_id}")).json()["risk_score"] is None
+
+    p = _mock_vscode()
+    try:
+        refreshed = await client.post(f"/api/extensions/{ext_id}/refresh")
+    finally:
+        p.stop()
+
+    assert refreshed.status_code == 200
+    detail = refreshed.json()
+    assert detail["risk_score"] is not None
+    assert detail["install_footprint"] == 1
+    assert detail["exposure"] == detail["risk_score"] * 1
+
+
 async def test_inventory_idempotent_upsert(client, test_db):
     """Re-pushing the same (extension, asset) updates last_seen — no dup rows,
     footprint unchanged."""
     payload = {
         "observations": [{"store": "vscode", "extension_id": "idem.ext", "asset_id": "HOST-1", "department": "Eng"}]
     }
-    p = _mock_vscode()
-    try:
-        first = (await client.post("/api/inventory", json=payload)).json()
-        second = (await client.post("/api/inventory", json=payload)).json()
-    finally:
-        p.stop()
+    # No fetcher mock needed — inventory defers scoring (#78).
+    first = (await client.post("/api/inventory", json=payload)).json()
+    second = (await client.post("/api/inventory", json=payload)).json()
 
-    assert first["enrolled"] == 1
-    # Second push: extension already tracked → observed, not enrolled.
-    assert second["enrolled"] == 0
+    assert first["deferred"] == 1
+    # Second push: extension already tracked → observed, not deferred.
+    assert second["deferred"] == 0
     assert second["duplicates"] == 1
     ext_id = first["results"][0]["id"]
 
@@ -90,24 +111,20 @@ async def test_inventory_idempotent_upsert(client, test_db):
 
 
 async def test_inventory_two_assets_two_departments(client, test_db):
-    p = _mock_vscode()
-    try:
-        body = (
-            await client.post(
-                "/api/inventory",
-                json={
-                    "observations": [
-                        {"store": "vscode", "extension_id": "multi.ext", "asset_id": "A", "department": "Finance"},
-                        {"store": "vscode", "extension_id": "multi.ext", "asset_id": "B", "department": "Eng"},
-                    ]
-                },
-            )
-        ).json()
-    finally:
-        p.stop()
+    body = (
+        await client.post(
+            "/api/inventory",
+            json={
+                "observations": [
+                    {"store": "vscode", "extension_id": "multi.ext", "asset_id": "A", "department": "Finance"},
+                    {"store": "vscode", "extension_id": "multi.ext", "asset_id": "B", "department": "Eng"},
+                ]
+            },
+        )
+    ).json()
 
     assert body["observations"] == 2
-    assert body["enrolled"] == 1  # one new extension, both observations land on it
+    assert body["deferred"] == 1  # one new extension, both observations land on it
     ext_id = body["results"][0]["id"]
     async with AsyncSession(test_db) as s:
         ext = await s.get(Extension, ext_id)
@@ -120,20 +137,16 @@ async def test_inventory_two_assets_two_departments(client, test_db):
 
 
 async def test_inventory_invalid_id_skipped(client, test_db):
-    p = _mock_vscode()
-    try:
-        body = (
-            await client.post(
-                "/api/inventory",
-                json={
-                    "observations": [
-                        {"store": "vscode", "extension_id": "not a valid id", "asset_id": "X"},
-                    ]
-                },
-            )
-        ).json()
-    finally:
-        p.stop()
+    body = (
+        await client.post(
+            "/api/inventory",
+            json={
+                "observations": [
+                    {"store": "vscode", "extension_id": "not a valid id", "asset_id": "X"},
+                ]
+            },
+        )
+    ).json()
 
     assert body["invalid"] == 1
     assert body["observations"] == 0
@@ -182,18 +195,14 @@ async def test_inventory_is_user_scoped(client, test_db, admin_user):
         )
         await s.commit()
 
-    p = _mock_vscode()
-    try:
-        body = (
-            await client.post(
-                "/api/inventory",
-                json={"observations": [{"store": "vscode", "extension_id": "shared.ext", "asset_id": "A"}]},
-            )
-        ).json()
-    finally:
-        p.stop()
+    body = (
+        await client.post(
+            "/api/inventory",
+            json={"observations": [{"store": "vscode", "extension_id": "shared.ext", "asset_id": "A"}]},
+        )
+    ).json()
 
-    assert body["enrolled"] == 1  # a NEW extension owned by the caller, not the other user's
+    assert body["deferred"] == 1  # a NEW extension owned by the caller, not the other user's
     admin_ext_id = body["results"][0]["id"]
     async with AsyncSession(test_db) as s:
         rows = (await s.exec(select(Extension).where(Extension.extension_id == "shared.ext"))).all()
@@ -206,9 +215,9 @@ async def test_inventory_is_user_scoped(client, test_db, admin_user):
 
 async def test_exposure_sort(client, test_db):
     """sort=exposure orders by risk × footprint via build_extension_query."""
-    p = _mock_vscode()
-    try:
-        # Same risk score for both (deterministic mock); footprints differ → exposure differs.
+    # Inventory defers scoring (#78); push the footprints, then score via refresh
+    # (the scheduler's pipeline) so exposure = risk × footprint is populated.
+    inv = (
         await client.post(
             "/api/inventory",
             json={
@@ -220,6 +229,13 @@ async def test_exposure_sort(client, test_db):
                 ]
             },
         )
+    ).json()
+
+    p = _mock_vscode()
+    try:
+        # Same risk score for both (deterministic mock); footprints differ → exposure differs.
+        for ext_id in {r["id"] for r in inv["results"]}:
+            await client.post(f"/api/extensions/{ext_id}/refresh")
     finally:
         p.stop()
 
