@@ -73,6 +73,9 @@ Then, depending on what you changed:
 - **Docs** — keep [CLAUDE.md](CLAUDE.md) in step when you change structure or
   architecture, and update the in-app help page (`app/templates/help.html`) when you
   change user-facing behaviour.
+- **Anything an operator would notice** — add an entry to [CHANGELOG.md](CHANGELOG.md)
+  under the current unreleased section (Added / Changed / Fixed / Security). Releases and
+  the PEP 440 ↔ SemVer tag mapping are documented in [docs/RELEASING.md](docs/RELEASING.md).
 
 ## Pull request expectations
 
