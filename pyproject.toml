@@ -1,5 +1,57 @@
-# Static-analysis config for the CI gates (ruff, mypy, bandit). See
-# .github/workflows/ci.yml. Dev tooling is pinned loosely in requirements-dev.txt.
+# Dependency manifest + static-analysis config for the CI gates (ruff, mypy,
+# bandit). See .github/workflows/ci.yml. `uv.lock` is the authoritative,
+# committed resolution of everything below — refresh it with `uv lock` after any
+# dependency change, or CI's `uv lock --check` / `uv sync --locked` will fail.
+
+[project]
+name = "marvin"
+version = "0.1.0"
+description = "Risk scoring for Chromium and VS Code browser extensions"
+requires-python = ">=3.14"
+readme = "README.md"
+dependencies = [
+    "fastapi",
+    "uvicorn[standard]",
+    "sqlmodel",
+    "greenlet",
+    "asyncpg",
+    "httpx",
+    "pydantic-settings",
+    "itsdangerous",
+    "jinja2",
+    "python-multipart",
+    "beautifulsoup4",
+    "apscheduler",
+    "bcrypt",
+    "alembic",
+]
+
+[project.urls]
+Repository = "https://github.com/IcebergAI/marvin"
+
+[dependency-groups]
+# Test + static-analysis tooling. NOT runtime dependencies: the Dockerfile builds
+# the runtime venv with `uv sync --no-dev`, which is what physically keeps pytest
+# and respx out of the production image. psycopg2-binary backs the sync Alembic
+# CLI / tests/test_migrations.py only — production migrates over the async
+# connection at startup and never needs it.
+dev = [
+    "pytest",
+    "pytest-asyncio",
+    "respx",
+    "psycopg2-binary",
+    "ruff",
+    "mypy",
+    "bandit[toml]",
+    "pip-audit",
+]
+
+[tool.uv]
+# Marvin is deployed as source + uvicorn, never built into or installed as a
+# wheel, so uv treats it as a virtual project: `uv sync` resolves the
+# dependencies without needing the source tree, which is what lets the Dockerfile
+# install them from pyproject.toml + uv.lock alone in a cacheable layer.
+package = false
 
 [tool.ruff]
 target-version = "py313"  # ruff has no py314 target yet; 3.13 rules are a safe superset

@@ -3,9 +3,13 @@
 
 COMPOSE := docker compose -f docker-compose.yml -f docker-compose.dev.yml
 TEST_DATABASE_URL ?= postgresql+asyncpg://marvin:marvin@localhost:5432/marvin
-PYTHON ?= venv/bin/python
+PYTHON ?= uv run python
 
-.PHONY: db dev test test-up down logs
+.PHONY: db dev sync test test-up down logs
+
+# Install the locked dependency set (runtime + the `dev` group) into .venv/.
+sync:
+	uv sync
 
 # Start just Postgres (published on localhost:5432) for host-side tests / uvicorn.
 db:

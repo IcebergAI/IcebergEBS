@@ -27,7 +27,7 @@ Marvin runs on PostgreSQL (dev, test, and production — SQLite is not supported
 |------|---------|
 | `Dockerfile` | App image |
 | `docker-compose.yml` | Three-service stack (postgres, app, nginx) |
-| `.dockerignore` | Exclude secrets, venv, DB files |
+| `.dockerignore` | Exclude secrets, venvs, DB files |
 | `.env.example` | Template for required env vars |
 | `nginx/nginx.conf` | Full nginx config |
 | `nginx/security_headers.conf` | Shared header include (avoids duplication across location blocks) |
@@ -38,15 +38,17 @@ Marvin runs on PostgreSQL (dev, test, and production — SQLite is not supported
 
 | Path | Change |
 |------|--------|
-| `requirements.txt` | `asyncpg` (async Postgres driver) |
+| `pyproject.toml` / `uv.lock` | `asyncpg` (async Postgres driver) in the locked runtime set |
 | `app/database.py` | Postgres engine + tuned connection pool |
 | `app/templates/base.html` | Replace inline `tailwind.config` script with `<script src="/static/js/tailwind-config.js">` |
 
 ---
 
-## 1. `requirements.txt`
+## 1. Dependencies (`pyproject.toml` + `uv.lock`)
 
-`asyncpg` is the async Postgres driver used at runtime. `psycopg2-binary` (in `requirements-dev.txt`) backs the sync Alembic CLI / migration tests only — production migrates via the async startup connection and does not need it.
+Dependencies are declared in `pyproject.toml` and pinned in the committed `uv.lock`; there is no `requirements.txt`. Runtime packages live in `[project.dependencies]`, test and static-analysis tooling in the `[dependency-groups] dev` group. Refresh the lock with `uv lock` after any change — CI's `uv sync --locked` rejects a stale one.
+
+`asyncpg` is the async Postgres driver used at runtime. `psycopg2-binary` is in the `dev` group because it only backs the sync Alembic CLI / migration tests — production migrates via the async startup connection and does not need it. The image builds its venv with `uv sync --frozen --no-dev`, so nothing in the `dev` group (pytest, respx, ruff, …) is installed into the deployed container.
 
 ---
 
@@ -101,18 +103,31 @@ sha256-<hash-of-exact-script-bytes>
 ## 4. `Dockerfile`
 
 ```dockerfile
+FROM python:3.14-slim AS builder
+
+COPY --from=ghcr.io/astral-sh/uv:0.11.23 /uv /bin/uv
+
+ENV UV_PROJECT_ENVIRONMENT=/opt/venv \
+    UV_COMPILE_BYTECODE=1 \
+    UV_LINK_MODE=copy
+
+WORKDIR /app
+
+COPY pyproject.toml uv.lock ./
+RUN uv sync --frozen --no-dev
+
+
 FROM python:3.14-slim
 
 WORKDIR /app
 
 RUN adduser --disabled-password --gecos '' appuser
 
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+COPY --from=builder --chown=appuser:appuser /opt/venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
 
-COPY . .
+COPY --chown=appuser:appuser . .
 
-RUN chown -R appuser:appuser /app
 USER appuser
 
 CMD ["uvicorn", "app.main:app", \
@@ -120,7 +135,12 @@ CMD ["uvicorn", "app.main:app", \
      "--proxy-headers", "--forwarded-allow-ips=*"]
 ```
 
+(The real `Dockerfile` also carries the `MARVIN_VERSION` build-arg — see the Versioning section of `CLAUDE.md`.)
+
 Notes:
+- **Two stages on purpose.** The builder resolves the venv from `pyproject.toml` + `uv.lock` alone (Marvin is a virtual project, so no source is needed), and the runtime stage copies only that venv — so `uv`, the pip cache, and the whole `dev` group are absent from the deployed image. `--frozen` consumes the lockfile as-is and never re-resolves, so a rebuild cannot silently pick up a newer FastAPI.
+- **The venv lives at `/opt/venv`, not `/app/.venv`** (`UV_PROJECT_ENVIRONMENT`). `docker-compose.dev.yml` bind-mounts the source tree over `/app`, which would shadow an in-tree venv — and on a host with no `.venv/`, leave the container with no interpreter at all.
+- Copying only the manifests before the source keeps the dependency layer cached across source-only changes.
 - `--proxy-headers` makes uvicorn trust `X-Forwarded-For` / `X-Forwarded-Proto` from nginx
 - **nginx must _overwrite_ `X-Forwarded-For` with `$remote_addr`, not append** (`$proxy_add_x_forwarded_for`). With `--forwarded-allow-ips=*` uvicorn trusts the last hop, so an appended chain lets a client spoof its IP via an inbound XFF header and evade the app-level login rate limiter (#77). See the `proxy_set_header` block below.
 - Single worker only — APScheduler runs per-process; multiple workers would each schedule independent watchlist refreshes, causing duplicate fetches and duplicate `AlertLog` entries
@@ -133,12 +153,15 @@ Notes:
 .env
 *.db
 venv/
+.venv/
 __pycache__/
 .git/
 tests/
 *.pyc
 nginx/certs/
 ```
+
+`.venv/` matters: the builder stage produces `/app/.venv`, and a host `.venv` copied in by `COPY . .` would shadow it with the wrong interpreter.
 
 ---
 
@@ -380,7 +403,7 @@ Substitute the result as `'sha256-<base64>'` in `security_headers.conf`. This is
 
 ## Build order
 
-1. `requirements.txt` — add `asyncpg`
+1. `pyproject.toml` — add `asyncpg`, then `uv lock`
 2. `app/database.py` — Postgres engine + pool settings
 3. `static/js/tailwind-config.js` — new file
 4. `app/templates/base.html` — replace inline script block with `<script src>` tag
@@ -416,7 +439,10 @@ curl -sI https://localhost/static/css/app.css | grep -E "Cache-Control|Server"
 
 # Tests pass against a containerized Postgres (start one with `make db` first)
 MARVIN_TEST_DATABASE_URL=postgresql+asyncpg://marvin:marvin@localhost:5432/marvin \
-  venv/bin/python -m pytest tests/ -v
+  uv run pytest tests/ -v
+
+# The deployed image carries the runtime set only — this must fail
+docker compose run --rm --no-deps app python -c "import pytest"
 ```
 
 For production: replace `nginx/certs/` with a real certificate, uncomment OCSP stapling, and set `MARVIN_APP_BASE_URL` to your public domain.

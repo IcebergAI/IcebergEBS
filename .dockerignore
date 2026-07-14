@@ -1,6 +1,9 @@
 .env
 *.db
 venv/
+# The builder stage produces /app/.venv; a host .venv copied in by `COPY . .`
+# would shadow it with the wrong (dev-including, host-platform) interpreter.
+.venv/
 __pycache__/
 .git/
 tests/

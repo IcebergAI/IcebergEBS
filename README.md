@@ -10,6 +10,7 @@ Multi-user. Each user maintains an independent list of monitored extensions. A b
 ## Requirements
 
 - Python 3.14+
+- [uv](https://docs.astral.sh/uv/) — dependencies are declared in `pyproject.toml` and pinned in the committed `uv.lock`. `uv sync` (or `make sync`) installs the locked set into `.venv/`.
 
 ## Quick start (local dev, containers)
 
@@ -31,7 +32,7 @@ make db   # docker compose ... up -d postgres  (published on localhost:5432)
 MARVIN_DATABASE_URL=postgresql+asyncpg://marvin:marvin@localhost:5432/marvin \
   MARVIN_ADMIN_USERNAME=admin MARVIN_ADMIN_PASSWORD=admin \
   MARVIN_SECRET_KEY=$(python -c "import secrets; print(secrets.token_hex(32))") \
-  MARVIN_SECURE_COOKIES=false venv/bin/uvicorn app.main:app --reload
+  MARVIN_SECURE_COOKIES=false uv run uvicorn app.main:app --reload
 ```
 
 ### Tests
@@ -40,7 +41,7 @@ The suite runs against a real Postgres (the dev stack above provides one):
 
 ```bash
 make test
-# or: MARVIN_TEST_DATABASE_URL=postgresql+asyncpg://marvin:marvin@localhost:5432/marvin venv/bin/python -m pytest tests/ -v
+# or: MARVIN_TEST_DATABASE_URL=postgresql+asyncpg://marvin:marvin@localhost:5432/marvin uv run pytest tests/ -v
 ```
 
 ## Production deployment (Docker + PostgreSQL + nginx)
@@ -114,14 +115,22 @@ Example payload:
 ## Tests & CI
 
 ```bash
-venv/bin/python -m pytest tests/ -v
+uv run pytest tests/ -v
 ```
 
-CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs four blocking gates on every PR and push to `main`: **pytest**, **Ruff** (`ruff check` + `ruff format --check`), **mypy** (type-checks the pure logic/contract modules; ORM-query modules are excluded — see `pyproject.toml`), and **security** (**Bandit** + **pip-audit**). Install the tooling and run the same checks locally with:
+CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs four blocking gates on every PR and push to `main`: **pytest**, **Ruff** (`ruff check` + `ruff format --check`), **mypy** (type-checks the pure logic/contract modules; ORM-query modules are excluded — see `pyproject.toml`), and **security** (**Bandit** + **pip-audit**). Every job installs with `uv sync --locked`, which fails if `uv.lock` has drifted from `pyproject.toml` — so a dependency change without a lock refresh cannot merge. Run the same checks locally with:
 
 ```bash
-venv/bin/pip install -r requirements-dev.txt
-venv/bin/ruff check app tests && venv/bin/ruff format --check app tests alembic
-venv/bin/mypy app
-venv/bin/bandit -c pyproject.toml -r app && venv/bin/pip-audit -r requirements.txt
+uv sync
+uv run ruff check app tests && uv run ruff format --check app tests alembic
+uv run mypy app
+uv run bandit -c pyproject.toml -r app
+# pip-audit runs against the exact runtime set the production image installs:
+# the lockfile exported without the dev group.
+uv export --frozen --no-dev --no-hashes --format requirements-txt -o /tmp/requirements-prod.txt
+uv run pip-audit -r /tmp/requirements-prod.txt
 ```
+
+### Dependencies
+
+`pyproject.toml` is the only dependency manifest: runtime packages in `[project.dependencies]`, test and static-analysis tooling in the `[dependency-groups] dev` group. After changing either, run **`uv lock`** and commit the updated `uv.lock`. The production image builds its venv with `uv sync --frozen --no-dev`, so the `dev` group physically cannot reach it — anything a runtime import needs must be a real runtime dependency.

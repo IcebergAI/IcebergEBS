@@ -18,6 +18,9 @@ App will always run on Python 3.14 or later.
 - beautifulsoup4 (Chrome HTML scraping only)
 - apscheduler (3.x stable — 4.x is alpha-only, do not use)
 
+### Dependency management (uv)
+`pyproject.toml` is the **only** dependency manifest — there is no `requirements.txt`. Runtime packages go in `[project.dependencies]`; test + static-analysis tooling goes in the **`[dependency-groups] dev`** group (PEP 735). After changing either, run **`uv lock`** and commit the updated `uv.lock`: CI installs with `uv sync --locked`, which fails on a stale lock, and the `lint` job runs an explicit `uv lock --check`. Marvin is a **virtual project** (`[tool.uv] package = false`) — it is deployed as source + uvicorn, never built into a wheel, which is what lets the Dockerfile install the dependency layer from `pyproject.toml` + `uv.lock` alone. The production image builds its venv with `uv sync --frozen --no-dev`, so the `dev` group **cannot** reach the container: anything a runtime import needs must be a real runtime dependency, not a dev one.
+
 ### UI / Front end
 - AlpineJS (via CDN)
 - Tailwind CSS (via CDN in dev; build output at `static/css/app.css`)
@@ -67,10 +70,10 @@ Per-store scraping/API details (Chrome/VS Code/Edge) + package inspection notes 
 Ensure tests are added for major functionality changes and regression tests are added where bugs are identified.
 
 ### Running Tests
-The suite runs against a **real Postgres** (no SQLite). Start the dev Postgres, then run pytest pointed at it:
+The suite runs against a **real Postgres** (no SQLite). Install the locked dependency set (`uv sync`, or `make sync`), start the dev Postgres, then run pytest pointed at it:
 ```bash
 make db   # docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d postgres
-MARVIN_TEST_DATABASE_URL=postgresql+asyncpg://marvin:marvin@localhost:5432/marvin venv/bin/python -m pytest tests/ -v
+MARVIN_TEST_DATABASE_URL=postgresql+asyncpg://marvin:marvin@localhost:5432/marvin uv run pytest tests/ -v
 # or simply: make test
 ```
 `MARVIN_TEST_DATABASE_URL` selects the test database (falls back to `MARVIN_DATABASE_URL`).
@@ -78,10 +81,11 @@ MARVIN_TEST_DATABASE_URL=postgresql+asyncpg://marvin:marvin@localhost:5432/marvi
 `pytest.ini` sets `asyncio_mode = auto` so async tests run without extra decoration. It also pins `asyncio_default_fixture_loop_scope`/`asyncio_default_test_loop_scope` to `session` because the test DB is a single **session-scoped** Postgres engine (`tests/conftest.py`) shared by all tests — fixtures and tests must run on one event loop or asyncpg raises "attached to a different loop". Per-test isolation is the autouse `_clean_tables` fixture, which `TRUNCATE … RESTART IDENTITY CASCADE`s every table after each test.
 
 ### CI gates
-`.github/workflows/ci.yml` runs four **blocking** jobs on every PR + push to main: **test** (pytest, with a `postgres:16-alpine` service container + `MARVIN_TEST_DATABASE_URL`), **lint** (`ruff check` + `ruff format --check`), **types** (`mypy app`), **security** (`bandit -c pyproject.toml -r app` + `pip-audit -r requirements.txt`). All tool config is in `pyproject.toml`; dev tooling is in `requirements-dev.txt`. Notes:
+`.github/workflows/ci.yml` runs four **blocking** jobs on every PR + push to main: **test** (pytest, with a `postgres:16-alpine` service container + `MARVIN_TEST_DATABASE_URL`), **lint** (`uv lock --check` + `ruff check` + `ruff format --check`), **types** (`mypy app`), **security** (`bandit -c pyproject.toml -r app` + `pip-audit`). Every job installs with `astral-sh/setup-uv` + `uv sync --locked` and runs the tool via `uv run`. Tool config and dependencies both live in `pyproject.toml` (see Dependency management above). Notes:
 - **Ruff** selects `E,F,W,I,B` (ignores `E501`, `B008` — the FastAPI `Depends`/`Query` default idiom). Deliberately **no `UP`** (pyupgrade) to preserve the documented `timezone.utc` / `Optional[...]` conventions.
 - **mypy** uses `pydantic.mypy` and enforces types only on the **pure logic / contract modules**; the ORM-query modules (`app.routes.*`, `services`, `scheduler`, `notifications`, `retention`, `database`, `fetchers.*`) are excluded via `ignore_errors` because mypy can't see through SQLModel's declarative column attributes (it reads `Extension.last_updated` as a plain `datetime`). When adding a pure-logic module, keep it type-clean rather than excluding it.
 - **Bandit** benign findings are annotated inline with justified `# nosec` (git subprocess in `version.py`, best-effort file-skip loops in `inspector.py`) — keep the gate at full strictness rather than lowering severity.
+- **pip-audit** runs against `uv export --no-dev` — the exact locked runtime set the production image installs, not a floating resolution. If an unfixable upstream advisory blocks CI, add `--ignore-vuln <ID>` with a justifying comment.
 - The separate `build.yml` (Docker image on push to main) is unchanged.
 
 ### Test structure
