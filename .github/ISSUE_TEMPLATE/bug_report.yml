@@ -1,0 +1,65 @@
+name: Bug report
+description: Something in IcebergEBS behaves incorrectly
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Do not report security vulnerabilities here.** Use
+        [private vulnerability reporting](https://github.com/IcebergAI/IcebergEBS/security/advisories/new)
+        instead — a public issue discloses the bug to everyone the moment you file it.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What you did, and what IcebergEBS actually did.
+      placeholder: I enrolled a VS Code extension and the risk score stayed empty.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect to happen?
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: >-
+        The string at the bottom of the left rail, e.g. `v0.1.0b1 · build 74 · 8823e7a`.
+        The build number and sha identify your exact build, so please include the whole string.
+      placeholder: "v0.1.0b1 · build 74 · 8823e7a"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: deployment
+    attributes:
+      label: How is it deployed?
+      options:
+        - Docker Compose
+        - Kubernetes (Helm)
+        - Bare uvicorn
+        - Local dev (make dev)
+    validations:
+      required: true
+
+  - type: input
+    id: extension
+    attributes:
+      label: Store and extension ID (if the bug involves a specific extension)
+      description: Which store, and the extension's ID — so we can reproduce against the same package.
+      placeholder: "chrome / cjpalhdlnbpafiamejdnhcphjbkeiagm"
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      description: >-
+        Application logs around the failure. **Redact secrets** — no session cookies, API
+        keys, webhook URLs, or `ICEBERG_EBS_SECRET_KEY`.
+      render: shell
