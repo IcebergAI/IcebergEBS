@@ -2,8 +2,10 @@ name: CI
 
 # Correctness + static-analysis gates. Runs on every PR and on pushes to main.
 # All four jobs are required to pass (configure as required checks in branch
-# protection). Tooling config lives in pyproject.toml; dev deps in
-# requirements-dev.txt.
+# protection). Tooling config and the dependency manifest both live in
+# pyproject.toml; dev/test tooling is the `dev` dependency-group. `uv sync
+# --locked` fails if uv.lock has drifted from pyproject.toml, so a dependency
+# change without a lock refresh cannot merge.
 
 on:
   pull_request:
@@ -34,48 +36,51 @@ jobs:
       MARVIN_TEST_DATABASE_URL: postgresql+asyncpg://marvin:marvin@localhost:5432/marvin
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: astral-sh/setup-uv@v6
         with:
-          python-version: "3.14"
-          cache: pip
-      - run: pip install -r requirements-dev.txt
-      - run: python -m pytest -q
+          enable-cache: true
+      - run: uv sync --locked
+      - run: uv run pytest -q
 
   lint:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: astral-sh/setup-uv@v6
         with:
-          python-version: "3.14"
-          cache: pip
-      - run: pip install ruff
-      - run: ruff check app tests
-      - run: ruff format --check app tests alembic
+          enable-cache: true
+      # Named check so a stale lockfile fails with an obvious signal rather than
+      # surfacing as a confusing sync error further down.
+      - run: uv lock --check
+      - run: uv sync --locked
+      - run: uv run ruff check app tests
+      - run: uv run ruff format --check app tests alembic
 
   types:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: astral-sh/setup-uv@v6
         with:
-          python-version: "3.14"
-          cache: pip
+          enable-cache: true
       # mypy needs the app's deps importable (and the pydantic plugin).
-      - run: pip install -r requirements-dev.txt
-      - run: mypy app
+      - run: uv sync --locked
+      - run: uv run mypy app
 
   security:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: astral-sh/setup-uv@v6
         with:
-          python-version: "3.14"
-          cache: pip
-      - run: pip install "bandit[toml]" pip-audit
-      - run: bandit -c pyproject.toml -r app
-      # Audit the production dependency set (unpinned → latest patched). If an
-      # unfixable upstream advisory ever blocks CI, add `--ignore-vuln <ID>` here
-      # with a comment explaining why.
-      - run: pip-audit -r requirements.txt
+          enable-cache: true
+      - run: uv sync --locked
+      - run: uv run bandit -c pyproject.toml -r app
+      # Audit the exact runtime set the production image installs: the lockfile
+      # exported without the dev group. If an unfixable upstream advisory ever
+      # blocks CI, add `--ignore-vuln <ID>` here with a comment explaining why.
+      - name: Audit the locked production dependency set
+        run: |
+          uv export --frozen --no-dev --no-emit-project --no-hashes \
+            --format requirements-txt -o "${RUNNER_TEMP}/requirements-prod.txt"
+          uv run pip-audit -r "${RUNNER_TEMP}/requirements-prod.txt"

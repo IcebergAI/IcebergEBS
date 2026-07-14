@@ -29,7 +29,9 @@ services:
     restart: unless-stopped
 
   nginx:
-    image: nginx:alpine
+    # Pinned to a minor: `nginx:alpine` floats, so the TLS-terminating proxy
+    # would silently change version on every `docker compose pull`.
+    image: nginx:1.29-alpine
     ports:
       - "80:80"
       - "443:443"
