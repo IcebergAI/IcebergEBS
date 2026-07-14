@@ -2,9 +2,15 @@
 # set: no uv, no pip cache, and none of the `dev` dependency-group (pytest,
 # respx, ruff, …). uv.lock is authoritative — `--frozen` consumes it as-is and
 # never re-resolves, so an image build cannot silently pick up a newer FastAPI.
+# uv is pulled as a named stage rather than a bare `COPY --from=ghcr.io/astral-sh/uv:…`
+# because Dependabot's Docker parser reads `FROM` lines only — an image referenced
+# straight from a COPY is invisible to it, so the pin would silently never be updated.
+# Same layers, same image; do not "simplify" this back into the COPY form.
+FROM ghcr.io/astral-sh/uv:0.11.23 AS uv
+
 FROM python:3.14-slim AS builder
 
-COPY --from=ghcr.io/astral-sh/uv:0.11.23 /uv /bin/uv
+COPY --from=uv /uv /bin/uv
 
 # The venv lives OUTSIDE /app on purpose: docker-compose.dev.yml bind-mounts the
 # source tree over /app, which would shadow (or, with no host venv, erase) an

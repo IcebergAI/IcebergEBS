@@ -1,0 +1,56 @@
+version: 2
+
+# Weekly dependency updates. #90 pinned everything (uv.lock + explicit image tags),
+# which makes builds reproducible — but a pin with no update mechanism just trades
+# "silently drifting" for "silently stale". This is the other half of that change.
+#
+# Updates are grouped per ecosystem so a weekly run opens a handful of PRs rather
+# than one per package.
+
+updates:
+  # Python: pyproject.toml + uv.lock (#90). The "uv" ecosystem updates the lockfile
+  # alongside the manifest, so CI's `uv sync --locked` keeps passing.
+  - package-ecosystem: "uv"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 10
+    groups:
+      python-dependencies:
+        patterns:
+          - "*"
+
+  # Actions used by ci.yml and build.yml.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    groups:
+      github-actions:
+        patterns:
+          - "*"
+
+  # Base images in the Dockerfile. NOTE: Dependabot's Docker parser only reads
+  # `FROM` lines — a `COPY --from=<image>` pin is invisible to it. That is why the
+  # uv binary is pulled via a named `FROM ... AS uv` stage; do not "simplify" it
+  # back into a bare `COPY --from=ghcr.io/astral-sh/uv:<ver>` or its version silently
+  # stops being updated.
+  - package-ecosystem: "docker"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    groups:
+      docker-images:
+        patterns:
+          - "*"
+
+  # The `docker` ecosystem reads the Dockerfile only; the postgres and nginx pins in
+  # docker-compose.yml need this separate ecosystem or they stay frozen.
+  - package-ecosystem: "docker-compose"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    groups:
+      compose-images:
+        patterns:
+          - "*"

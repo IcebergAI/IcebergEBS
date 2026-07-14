@@ -64,7 +64,9 @@ Then, depending on what you changed:
   `[dependency-groups] dev` group for tooling), then run **`uv lock`** and commit the
   updated `uv.lock`. CI runs `uv lock --check` and will fail on a stale lock. The
   production image installs with `--no-dev`, so anything a runtime import needs must
-  be a real runtime dependency.
+  be a real runtime dependency. Routine version bumps you can leave alone —
+  **Dependabot** opens weekly grouped PRs for Python packages, GitHub Actions, and
+  container images.
 - **Schema** — edit the models in `app/models.py`, then generate a migration with
   `alembic revision --autogenerate -m "describe change"` and commit the file under
   `alembic/versions/`.
