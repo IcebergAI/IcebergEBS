@@ -702,7 +702,7 @@ async def export_extensions(
     if format == "json":
         return JSONResponse(
             rows,
-            headers={"Content-Disposition": 'attachment; filename="marvin-extensions.json"'},
+            headers={"Content-Disposition": 'attachment; filename="icebergebs-extensions.json"'},
         )
 
     buf = io.StringIO()
@@ -712,7 +712,7 @@ async def export_extensions(
     return Response(
         content=buf.getvalue(),
         media_type="text/csv",
-        headers={"Content-Disposition": 'attachment; filename="marvin-extensions.csv"'},
+        headers={"Content-Disposition": 'attachment; filename="icebergebs-extensions.csv"'},
     )
 
 

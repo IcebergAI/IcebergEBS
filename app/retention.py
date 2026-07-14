@@ -2,7 +2,7 @@
 
 `FetchLog`, `InstallCountHistory` and `AlertLog` grow on every refresh and every
 alert. A real watchlist would bloat the DB indefinitely, so the scheduler runs a
-daily prune (when `MARVIN_RETENTION_DAYS` is set) that deletes rows older than the
+daily prune (when `ICEBERG_EBS_RETENTION_DAYS` is set) that deletes rows older than the
 window. The `Extension` rows themselves are never touched — only their history."""
 
 import logging

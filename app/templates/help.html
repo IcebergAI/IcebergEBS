@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Marvin — Help{% endblock %}
+{% block title %}IcebergEBS — Help{% endblock %}
 {% block nav_help %}active{% endblock %}
 
 {% block content %}
@@ -8,9 +8,9 @@
   <p class="page-sub mb-6">A quick reference for the risk model, ID formats, and webhook payloads.</p>
 
   <div class="surface p-6 mb-4">
-    <h2 class="section-title">What is Marvin?</h2>
+    <h2 class="section-title">What is IcebergEBS?</h2>
     <p class="text-[13.5px] leading-relaxed" style="color:var(--ink-6)">
-      Marvin tracks browser and editor extensions and scores them for risk. It downloads the
+      IcebergEBS tracks browser and editor extensions and scores them for risk. It downloads the
       actual extension package and inspects the code, combined with store metadata, to produce
       a 0–100 risk score across six signals.
     </p>
@@ -77,10 +77,10 @@
     <h2 class="section-title">Inventory &amp; exposure</h2>
     <p class="text-[13.5px] leading-relaxed mb-3" style="color:var(--ink-6)">
       Risk alone doesn't tell you blast radius. Push your org's real install footprint from your
-      SOAR (Marvin doesn't build EDR/Intune connectors itself) to <span class="mono">POST /api/inventory</span>
+      SOAR (IcebergEBS doesn't build EDR/Intune connectors itself) to <span class="mono">POST /api/inventory</span>
       — a batch of <span class="mono">{store, extension_id, asset_id, asset_type?, department?}</span>
       observations. Each observation is upserted per <span class="mono">(extension, asset)</span>, and any
-      extension Marvin isn't already tracking is <strong>auto-enrolled onto the watchlist</strong> and
+      extension IcebergEBS isn't already tracking is <strong>auto-enrolled onto the watchlist</strong> and
       <strong>scored on the next scheduled refresh</strong>, so pushing inventory grows the watchlist
       automatically without stalling large batches on live store fetches.
     </p>
@@ -95,7 +95,7 @@
   <div class="surface p-6 mb-4">
     <h2 class="section-title">Detection findings</h2>
     <p class="text-[13.5px] leading-relaxed mb-3" style="color:var(--ink-6)">
-      Marvin records structured findings while inspecting the downloaded package. Findings are
+      IcebergEBS records structured findings while inspecting the downloaded package. Findings are
       deterministic static heuristics — they do not call external reputation services or require
       third-party API keys.
     </p>
@@ -115,14 +115,14 @@
   <div class="surface p-6 mb-4">
     <h2 class="section-title">Threat Intelligence</h2>
     <p class="text-[13.5px] leading-relaxed mb-3" style="color:var(--ink-6)">
-      Marvin extracts observable indicators from the inspected package, including package
+      IcebergEBS extracts observable indicators from the inspected package, including package
       hashes, external domains, and JavaScript network callouts. Referenced URLs that are
       only found as literal strings are kept separate from callouts. The Threat Intelligence
       panel provides copy controls and manual lookup links for external tools such as
       VirusTotal and AlienVault OTX.
     </p>
     <p class="text-[12px] leading-relaxed" style="color:var(--ink-5)">
-      Lookups are manual and privacy-preserving by default. Marvin does not call external
+      Lookups are manual and privacy-preserving by default. IcebergEBS does not call external
       threat-intelligence APIs or submit packages; clicking an external lookup link sends the
       selected indicator to that service.
     </p>
@@ -131,7 +131,7 @@
   <div class="surface p-6 mb-4">
     <h2 class="section-title">Users &amp; accounts</h2>
     <p class="text-[13.5px] leading-relaxed mb-2" style="color:var(--ink-6)">
-      Marvin is multi-user. Each user maintains their own isolated list of monitored
+      IcebergEBS is multi-user. Each user maintains their own isolated list of monitored
       extensions — adding for one user has no effect on another.
     </p>
     <ul class="text-[13.5px] leading-relaxed pl-5 list-disc" style="color:var(--ink-6)">
@@ -145,7 +145,7 @@
     <h2 class="section-title">Alerts &amp; webhooks</h2>
     <p class="text-[13.5px] mb-3" style="color:var(--ink-6)">
       Configure webhook destinations and alert rules under <a href="/account">account / alerts</a>.
-      Marvin POSTs a JSON payload to your webhook URL whenever a monitored extension changes.
+      IcebergEBS POSTs a JSON payload to your webhook URL whenever a monitored extension changes.
     </p>
     <div style="overflow-x:auto;border:1px solid var(--ink-3);border-radius:8px">
     <table>
@@ -161,20 +161,20 @@
 
     <div class="label-cap mt-5 mb-2">Example payload</div>
 <pre class="mono text-[12px] p-3 rounded-lg overflow-x-auto" style="background:var(--ink-1);color:var(--ink-7);border:1px solid var(--ink-3)">{
-  "text": "Marvin: uBlock Origin risk level changed medium → high",
+  "text": "IcebergEBS: uBlock Origin risk level changed medium → high",
   "event": "risk_level_change",
   "extension": {
     "id": 42,
     "name": "uBlock Origin",
     "store": "chrome",
     "store_url": "https://chromewebstore.google.com/detail/...",
-    "marvin_url": "https://your-instance/extensions/42"
+    "iceberg_ebs_url": "https://your-instance/extensions/42"
   },
   "change": { "old": "medium", "new": "high" },
   "risk_score": 55
 }</pre>
     <p class="text-[12px] mt-2" style="color:var(--ink-5)">
-      <code class="mono">marvin_url</code> is only included when <code class="mono">MARVIN_APP_BASE_URL</code> is set.
+      <code class="mono">iceberg_ebs_url</code> is only included when <code class="mono">ICEBERG_EBS_APP_BASE_URL</code> is set.
     </p>
   </div>
 
@@ -182,7 +182,7 @@
     <h2 class="section-title">Background refresh</h2>
     <p class="text-[13.5px] leading-relaxed" style="color:var(--ink-6)">
       Extensions on the watchlist are automatically re-fetched every
-      <code class="mono">MARVIN_FETCH_INTERVAL_MINUTES</code> minutes (default: 60). Re-scoring
+      <code class="mono">ICEBERG_EBS_FETCH_INTERVAL_MINUTES</code> minutes (default: 60). Re-scoring
       detects publisher changes, install count drops, and new code patterns. Toggle watchlist
       per extension on the detail page.
     </p>
@@ -190,7 +190,7 @@
       The dashboard <strong>Fetch health</strong> tile counts watchlist extensions that are
       <em>failing</em> (last fetch errored) or <em>stale</em> (no successful refresh recently),
       and the extension row flags each one. Set
-      <code class="mono">MARVIN_RETENTION_DAYS</code> to prune fetch/install/alert history older
+      <code class="mono">ICEBERG_EBS_RETENTION_DAYS</code> to prune fetch/install/alert history older
       than the window. Ops probes: <code class="mono">/healthz</code> (liveness) and
       <code class="mono">/readyz</code> (readiness — checks the database).
     </p>
@@ -203,52 +203,52 @@
       <thead><tr><th>Env var</th><th>Default</th><th>Description</th></tr></thead>
       <tbody>
         <tr>
-          <td class="mono" style="white-space:nowrap">MARVIN_ADMIN_USERNAME</td>
+          <td class="mono" style="white-space:nowrap">ICEBERG_EBS_ADMIN_USERNAME</td>
           <td style="color:var(--ink-5)">—</td>
           <td style="color:var(--ink-5)">required</td>
         </tr>
         <tr>
-          <td class="mono" style="white-space:nowrap">MARVIN_ADMIN_PASSWORD</td>
+          <td class="mono" style="white-space:nowrap">ICEBERG_EBS_ADMIN_PASSWORD</td>
           <td style="color:var(--ink-5)">—</td>
           <td style="color:var(--ink-5)">required</td>
         </tr>
         <tr>
-          <td class="mono" style="white-space:nowrap">MARVIN_SECRET_KEY</td>
+          <td class="mono" style="white-space:nowrap">ICEBERG_EBS_SECRET_KEY</td>
           <td style="color:var(--ink-5)">—</td>
           <td style="color:var(--ink-5)">required — generate with<br><code class="mono text-[11.5px]">python -c "import secrets; print(secrets.token_hex(32))"</code></td>
         </tr>
         <tr>
-          <td class="mono" style="white-space:nowrap">MARVIN_DATABASE_URL</td>
-          <td class="mono text-[11.5px]" style="color:var(--ink-5);white-space:nowrap">postgresql+asyncpg://marvin:marvin@localhost:5432/marvin</td>
+          <td class="mono" style="white-space:nowrap">ICEBERG_EBS_DATABASE_URL</td>
+          <td class="mono text-[11.5px]" style="color:var(--ink-5);white-space:nowrap">postgresql+asyncpg://iceberg_ebs:iceberg_ebs@localhost:5432/iceberg_ebs</td>
           <td style="color:var(--ink-5)"></td>
         </tr>
         <tr>
-          <td class="mono" style="white-space:nowrap">MARVIN_SESSION_MAX_AGE</td>
+          <td class="mono" style="white-space:nowrap">ICEBERG_EBS_SESSION_MAX_AGE</td>
           <td style="color:var(--ink-5)">86400</td>
           <td style="color:var(--ink-5)">session lifetime in seconds</td>
         </tr>
         <tr>
-          <td class="mono" style="white-space:nowrap">MARVIN_FETCH_INTERVAL_MINUTES</td>
+          <td class="mono" style="white-space:nowrap">ICEBERG_EBS_FETCH_INTERVAL_MINUTES</td>
           <td style="color:var(--ink-5)">60</td>
           <td style="color:var(--ink-5)">background refresh cadence</td>
         </tr>
         <tr>
-          <td class="mono" style="white-space:nowrap">MARVIN_RETENTION_DAYS</td>
+          <td class="mono" style="white-space:nowrap">ICEBERG_EBS_RETENTION_DAYS</td>
           <td style="color:var(--ink-5)">0</td>
           <td style="color:var(--ink-5)">prune fetch/install/alert history older than N days (0 = disabled)</td>
         </tr>
         <tr>
-          <td class="mono" style="white-space:nowrap">MARVIN_APP_BASE_URL</td>
+          <td class="mono" style="white-space:nowrap">ICEBERG_EBS_APP_BASE_URL</td>
           <td style="color:var(--ink-5)">—</td>
-          <td style="color:var(--ink-5)">public URL of your instance, included as <code class="mono">marvin_url</code> in payloads</td>
+          <td style="color:var(--ink-5)">public URL of your instance, included as <code class="mono">iceberg_ebs_url</code> in payloads</td>
         </tr>
         <tr>
-          <td class="mono" style="white-space:nowrap">MARVIN_HTTPX_TIMEOUT</td>
+          <td class="mono" style="white-space:nowrap">ICEBERG_EBS_HTTPX_TIMEOUT</td>
           <td style="color:var(--ink-5)">15.0</td>
           <td style="color:var(--ink-5)">outbound HTTP timeout in seconds</td>
         </tr>
         <tr>
-          <td class="mono" style="white-space:nowrap">MARVIN_SECURE_COOKIES</td>
+          <td class="mono" style="white-space:nowrap">ICEBERG_EBS_SECURE_COOKIES</td>
           <td style="color:var(--ink-5)">true</td>
           <td style="color:var(--ink-5)">set <code class="mono">Secure</code> flag on session cookies — disable for plain HTTP dev</td>
         </tr>

@@ -1,7 +1,7 @@
-# Marvin
+# IcebergEBS
 
-[![CI](https://github.com/TheSlopBucket/marvin/actions/workflows/ci.yml/badge.svg)](https://github.com/TheSlopBucket/marvin/actions/workflows/ci.yml)
-[![build](https://github.com/TheSlopBucket/marvin/actions/workflows/build.yml/badge.svg)](https://github.com/TheSlopBucket/marvin/actions/workflows/build.yml)
+[![CI](https://github.com/IcebergAI/IcebergEBS/actions/workflows/ci.yml/badge.svg)](https://github.com/IcebergAI/IcebergEBS/actions/workflows/ci.yml)
+[![build](https://github.com/IcebergAI/IcebergEBS/actions/workflows/build.yml/badge.svg)](https://github.com/IcebergAI/IcebergEBS/actions/workflows/build.yml)
 
 Extension-watch tool for Chrome, Edge, and VS Code. Tracks browser and editor extensions, downloads the actual packages, inspects the code, and produces a 0–100 risk score across six signals: permissions, popularity, publisher identity, staleness, code behaviour (eval/obfuscation/remote fetches), and external domains.
 
@@ -14,7 +14,7 @@ Multi-user. Each user maintains an independent list of monitored extensions. A b
 
 ## Quick start (local dev, containers)
 
-Marvin runs on PostgreSQL — dev included. The dev stack runs the app with live
+IcebergEBS runs on PostgreSQL — dev included. The dev stack runs the app with live
 reload against a containerized Postgres (no nginx):
 
 ```bash
@@ -29,10 +29,10 @@ To run a host-side uvicorn instead, start just Postgres and point the app at it:
 
 ```bash
 make db   # docker compose ... up -d postgres  (published on localhost:5432)
-MARVIN_DATABASE_URL=postgresql+asyncpg://marvin:marvin@localhost:5432/marvin \
-  MARVIN_ADMIN_USERNAME=admin MARVIN_ADMIN_PASSWORD=admin \
-  MARVIN_SECRET_KEY=$(python -c "import secrets; print(secrets.token_hex(32))") \
-  MARVIN_SECURE_COOKIES=false uv run uvicorn app.main:app --reload
+ICEBERG_EBS_DATABASE_URL=postgresql+asyncpg://iceberg_ebs:iceberg_ebs@localhost:5432/iceberg_ebs \
+  ICEBERG_EBS_ADMIN_USERNAME=admin ICEBERG_EBS_ADMIN_PASSWORD=admin \
+  ICEBERG_EBS_SECRET_KEY=$(python -c "import secrets; print(secrets.token_hex(32))") \
+  ICEBERG_EBS_SECURE_COOKIES=false uv run uvicorn app.main:app --reload
 ```
 
 ### Tests
@@ -41,7 +41,7 @@ The suite runs against a real Postgres (the dev stack above provides one):
 
 ```bash
 make test
-# or: MARVIN_TEST_DATABASE_URL=postgresql+asyncpg://marvin:marvin@localhost:5432/marvin uv run pytest tests/ -v
+# or: ICEBERG_EBS_TEST_DATABASE_URL=postgresql+asyncpg://iceberg_ebs:iceberg_ebs@localhost:5432/iceberg_ebs uv run pytest tests/ -v
 ```
 
 ## Production deployment (Docker + PostgreSQL + nginx)
@@ -55,28 +55,28 @@ $EDITOR .env                      # fill in passwords and secret key
 docker compose up --build
 ```
 
-This starts three containers: PostgreSQL, the Marvin app, and nginx as a TLS-terminating reverse proxy. For production, replace `nginx/certs/` with a real certificate (Let's Encrypt via Certbot or similar) and set `MARVIN_APP_BASE_URL` to your public domain.
+This starts three containers: PostgreSQL, the IcebergEBS app, and nginx as a TLS-terminating reverse proxy. For production, replace `nginx/certs/` with a real certificate (Let's Encrypt via Certbot or similar) and set `ICEBERG_EBS_APP_BASE_URL` to your public domain.
 
-> **Database:** Marvin runs on **PostgreSQL only** — in development, test, and production. The Compose and Helm stacks provision it for you. See [DEPLOYMENT.md → Database choice](DEPLOYMENT.md#database-choice--use-postgresql-for-any-soc-scale-deployment).
+> **Database:** IcebergEBS runs on **PostgreSQL only** — in development, test, and production. The Compose and Helm stacks provision it for you. See [DEPLOYMENT.md → Database choice](DEPLOYMENT.md#database-choice--use-postgresql-for-any-soc-scale-deployment).
 
-A Kubernetes/Helm chart is also provided under `helm/marvin/` — see DEPLOYMENT.md for details.
+A Kubernetes/Helm chart is also provided under `helm/iceberg-ebs/` — see DEPLOYMENT.md for details.
 
 ## Configuration
 
-All settings use the `MARVIN_` prefix and can be set via `.env` or environment variables.
+All settings use the `ICEBERG_EBS_` prefix and can be set via `.env` or environment variables.
 
 | Variable | Default | Description |
 |---|---|---|
-| `MARVIN_ADMIN_USERNAME` | — | **required** — seeded admin username |
-| `MARVIN_ADMIN_PASSWORD` | — | **required** — seeded admin password |
-| `MARVIN_SECRET_KEY` | — | **required** — signs session cookies |
-| `MARVIN_DATABASE_URL` | `postgresql+asyncpg://marvin:marvin@localhost:5432/marvin` | SQLAlchemy async Postgres URL |
-| `MARVIN_SESSION_MAX_AGE` | `86400` | Session lifetime in seconds |
-| `MARVIN_FETCH_INTERVAL_MINUTES` | `60` | Background watchlist refresh cadence |
-| `MARVIN_RETENTION_DAYS` | `0` | Prune `FetchLog`/`InstallCountHistory`/`AlertLog` rows older than N days (`0` = disabled) |
-| `MARVIN_APP_BASE_URL` | — | Public URL of your instance; included as `marvin_url` in webhook payloads |
-| `MARVIN_HTTPX_TIMEOUT` | `15.0` | Outbound HTTP timeout in seconds |
-| `MARVIN_SECURE_COOKIES` | `true` | Set `Secure` flag on session cookies — set to `false` for plain HTTP dev |
+| `ICEBERG_EBS_ADMIN_USERNAME` | — | **required** — seeded admin username |
+| `ICEBERG_EBS_ADMIN_PASSWORD` | — | **required** — seeded admin password |
+| `ICEBERG_EBS_SECRET_KEY` | — | **required** — signs session cookies |
+| `ICEBERG_EBS_DATABASE_URL` | `postgresql+asyncpg://iceberg_ebs:iceberg_ebs@localhost:5432/iceberg_ebs` | SQLAlchemy async Postgres URL |
+| `ICEBERG_EBS_SESSION_MAX_AGE` | `86400` | Session lifetime in seconds |
+| `ICEBERG_EBS_FETCH_INTERVAL_MINUTES` | `60` | Background watchlist refresh cadence |
+| `ICEBERG_EBS_RETENTION_DAYS` | `0` | Prune `FetchLog`/`InstallCountHistory`/`AlertLog` rows older than N days (`0` = disabled) |
+| `ICEBERG_EBS_APP_BASE_URL` | — | Public URL of your instance; included as `iceberg_ebs_url` in webhook payloads |
+| `ICEBERG_EBS_HTTPX_TIMEOUT` | `15.0` | Outbound HTTP timeout in seconds |
+| `ICEBERG_EBS_SECURE_COOKIES` | `true` | Set `Secure` flag on session cookies — set to `false` for plain HTTP dev |
 
 ## Supported stores
 
@@ -96,21 +96,21 @@ Example payload:
 
 ```json
 {
-  "text": "Marvin: uBlock Origin risk level changed medium → high",
+  "text": "IcebergEBS: uBlock Origin risk level changed medium → high",
   "event": "risk_level_change",
   "extension": {
     "id": 42,
     "name": "uBlock Origin",
     "store": "chrome",
     "store_url": "https://chromewebstore.google.com/detail/...",
-    "marvin_url": "https://your-instance/extensions/42"
+    "iceberg_ebs_url": "https://your-instance/extensions/42"
   },
   "change": { "old": "medium", "new": "high" },
   "risk_score": 55
 }
 ```
 
-`marvin_url` is only included when `MARVIN_APP_BASE_URL` is set.
+`iceberg_ebs_url` is only included when `ICEBERG_EBS_APP_BASE_URL` is set.
 
 ## Tests & CI
 
@@ -141,7 +141,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for setup, the CI gates a PR must pass, a
 
 ## Security
 
-Please **do not** report vulnerabilities in a public issue — see [SECURITY.md](SECURITY.md) for the private reporting path and for the **scope** of what counts as a vulnerability (Marvin documents its trust boundaries explicitly, including the things that are shared by design).
+Please **do not** report vulnerabilities in a public issue — see [SECURITY.md](SECURITY.md) for the private reporting path and for the **scope** of what counts as a vulnerability (IcebergEBS documents its trust boundaries explicitly, including the things that are shared by design).
 
 ## License
 

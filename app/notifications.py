@@ -80,14 +80,14 @@ def detect_changes(old: Extension, new: Extension) -> list[ChangeEvent]:
 
 def _alert_text(event_type: str, name: str, old: object, new: object) -> str:
     if event_type == "risk_level_change":
-        return f"Marvin: {name} risk level changed {old} → {new}"
+        return f"IcebergEBS: {name} risk level changed {old} → {new}"
     if event_type == "publisher_change":
-        return f'Marvin: {name} publisher changed from "{old}" to "{new}"'
+        return f'IcebergEBS: {name} publisher changed from "{old}" to "{new}"'
     if event_type == "permission_change":
-        return f"Marvin: {name} permissions changed"
+        return f"IcebergEBS: {name} permissions changed"
     if event_type == "new_version":
-        return f"Marvin: {name} updated to version {new}"
-    return f"Marvin: {name} — {event_type}"
+        return f"IcebergEBS: {name} updated to version {new}"
+    return f"IcebergEBS: {name} — {event_type}"
 
 
 async def fire_alerts(
@@ -134,7 +134,7 @@ async def fire_alerts(
             "store_url": extension.store_url,
         }
         if settings.app_base_url:
-            ext_payload["marvin_url"] = f"{settings.app_base_url.rstrip('/')}/extensions/{extension.id}"
+            ext_payload["iceberg_ebs_url"] = f"{settings.app_base_url.rstrip('/')}/extensions/{extension.id}"
 
         for rule in rules:
             dest = dest_map.get(rule.destination_id)

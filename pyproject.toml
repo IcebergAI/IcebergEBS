@@ -4,7 +4,7 @@
 # dependency change, or CI's `uv lock --check` / `uv sync --locked` will fail.
 
 [project]
-name = "marvin"
+name = "iceberg-ebs"
 # SemVer, PEP 440 spelling. The git tag uses the SemVer spelling instead
 # (0.1.0b1 here == tag v0.1.0-beta.1) — see docs/RELEASING.md. Bumping this
 # requires a `uv lock` refresh: uv.lock records the project's own version, so CI's
@@ -34,7 +34,7 @@ dependencies = [
 ]
 
 [project.urls]
-Repository = "https://github.com/IcebergAI/marvin"
+Repository = "https://github.com/IcebergAI/IcebergEBS"
 
 [dependency-groups]
 # Test + static-analysis tooling. NOT runtime dependencies: the Dockerfile builds
@@ -54,7 +54,7 @@ dev = [
 ]
 
 [tool.uv]
-# Marvin is deployed as source + uvicorn, never built into or installed as a
+# IcebergEBS is deployed as source + uvicorn, never built into or installed as a
 # wheel, so uv treats it as a virtual project: `uv sync` resolves the
 # dependencies without needing the source tree, which is what lets the Dockerfile
 # install them from pyproject.toml + uv.lock alone in a cacheable layer.

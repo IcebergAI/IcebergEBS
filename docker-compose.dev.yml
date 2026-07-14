@@ -11,9 +11,9 @@ services:
     ports:
       - "5432:5432"
     environment:
-      POSTGRES_DB: marvin
-      POSTGRES_USER: marvin
-      POSTGRES_PASSWORD: marvin
+      POSTGRES_DB: iceberg_ebs
+      POSTGRES_USER: iceberg_ebs
+      POSTGRES_PASSWORD: iceberg_ebs
 
   app:
     build: .
@@ -30,8 +30,8 @@ services:
     ports:
       - "8000:8000"
     environment:
-      MARVIN_DATABASE_URL: postgresql+asyncpg://marvin:marvin@postgres:5432/marvin
-      MARVIN_ADMIN_USERNAME: ${MARVIN_ADMIN_USERNAME:-admin}
-      MARVIN_ADMIN_PASSWORD: ${MARVIN_ADMIN_PASSWORD:-admin}
-      MARVIN_SECRET_KEY: ${MARVIN_SECRET_KEY:-dev-secret-key-not-for-production-use-only}
-      MARVIN_SECURE_COOKIES: "false"
+      ICEBERG_EBS_DATABASE_URL: postgresql+asyncpg://iceberg_ebs:iceberg_ebs@postgres:5432/iceberg_ebs
+      ICEBERG_EBS_ADMIN_USERNAME: ${ICEBERG_EBS_ADMIN_USERNAME:-admin}
+      ICEBERG_EBS_ADMIN_PASSWORD: ${ICEBERG_EBS_ADMIN_PASSWORD:-admin}
+      ICEBERG_EBS_SECRET_KEY: ${ICEBERG_EBS_SECRET_KEY:-dev-secret-key-not-for-production-use-only}
+      ICEBERG_EBS_SECURE_COOKIES: "false"

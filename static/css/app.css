@@ -1,5 +1,5 @@
 /* ─────────────────────────────────────────────────────────────
-   Marvin · Refined Operator theme
+   IcebergEBS · Refined Operator theme
    Modern, light/dark, professional. Designed to pair with Tailwind
    utilities, so this file only carries tokens + components that
    are awkward to express as utility classes.
@@ -374,7 +374,7 @@ tbody tr:hover td { background: var(--ink-1); }
 }
 
 /* ─────────────────────────────────────────────────────────────
-   Marvin · Redesign additions
+   IcebergEBS · Redesign additions
    New patterns introduced by the UI review — built on the existing
    token system (app.css). Tabs, sub-nav, trend chart, switches,
    review-document helpers. Nothing here overrides base tokens.
@@ -575,7 +575,7 @@ tbody tr:hover td { background: var(--ink-1); }
 .screen-link:hover { border-color: var(--accent); transform: translateY(-2px); box-shadow: 0 8px 24px oklch(0.05 0.01 240 / 0.10); text-decoration: none; }
 
 /* ─────────────────────────────────────────────────────────────
-   Marvin · Branding additions  →  append to static/css/app.css
+   IcebergEBS · Branding additions  →  append to static/css/app.css
    Login "Branded split" (Option B) + the aperture watermark.
    All colors are existing tokens; nothing here overrides base.
    ───────────────────────────────────────────────────────────── */

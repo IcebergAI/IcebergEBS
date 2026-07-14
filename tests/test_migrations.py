@@ -24,7 +24,7 @@ import app.models  # noqa: F401 — register tables on SQLModel.metadata
 from app.config import settings
 from app.database import _run_migrations
 
-TEST_DATABASE_URL = os.environ.get("MARVIN_TEST_DATABASE_URL", settings.database_url)
+TEST_DATABASE_URL = os.environ.get("ICEBERG_EBS_TEST_DATABASE_URL", settings.database_url)
 
 
 def _async_url(db_name: str) -> str:
@@ -50,7 +50,7 @@ def _admin_engine():
 @pytest.fixture
 def temp_db():
     """Create a uniquely-named throwaway Postgres database; drop it afterwards."""
-    name = f"marvin_test_{uuid.uuid4().hex}"
+    name = f"iceberg_ebs_test_{uuid.uuid4().hex}"
     admin = _admin_engine()
     with admin.connect() as conn:
         conn.execute(text(f'CREATE DATABASE "{name}"'))

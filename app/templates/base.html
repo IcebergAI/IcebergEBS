@@ -3,8 +3,8 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{% block title %}Marvin{% endblock %}</title>
-  <script>(function(){var t=localStorage.getItem('marvin-theme')||'light';document.documentElement.setAttribute('data-theme',t);})();</script>
+  <title>{% block title %}IcebergEBS{% endblock %}</title>
+  <script>(function(){var t=localStorage.getItem('icebergebs-theme')||'light';document.documentElement.setAttribute('data-theme',t);})();</script>
 
   <link rel="icon" type="image/svg+xml" href="/static/img/favicon.svg">
   <link rel="icon" type="image/png" sizes="32x32" href="/static/img/favicon-32.png">
@@ -39,7 +39,7 @@
         </svg>
       </span>
       <span>
-        <span class="block text-[14.5px] font-semibold tracking-tight" style="color:var(--ink-8)">Marvin</span>
+        <span class="block text-[14.5px] font-semibold tracking-tight" style="color:var(--ink-8)">IcebergEBS</span>
         <span class="block text-[10.5px]" style="color:var(--ink-5)">Paranoid about extensions</span>
       </span>
     </a>
@@ -94,7 +94,7 @@
         <input type="text" placeholder="Search extensions, permissions, publishers…">
       </div>
 
-      <div class="flex items-center gap-3" x-data="{open:false, dark: localStorage.getItem('marvin-theme')==='dark'}">
+      <div class="flex items-center gap-3" x-data="{open:false, dark: localStorage.getItem('icebergebs-theme')==='dark'}">
         <button @click="open=!open" class="flex items-center gap-2 px-1.5 py-1 rounded-md hover:bg-[var(--ink-1)] transition">
           <span class="avatar">{{ username[0]|upper }}</span>
           <span class="hidden md:flex flex-col items-start">
@@ -110,7 +110,7 @@
           <a href="/account/keys" class="block px-3 py-2 text-[13px] hover:bg-[var(--ink-1)]" style="color:var(--ink-7)" @click="open=false">API keys</a>
           <a href="/account/password" class="block px-3 py-2 text-[13px] hover:bg-[var(--ink-1)]" style="color:var(--ink-7)" @click="open=false">Change password</a>
           <div class="my-1 mx-3 border-t" style="border-color:var(--ink-3)"></div>
-          <button @click="dark=!dark; document.documentElement.setAttribute('data-theme', dark?'dark':'light'); localStorage.setItem('marvin-theme', dark?'dark':'light'); open=false"
+          <button @click="dark=!dark; document.documentElement.setAttribute('data-theme', dark?'dark':'light'); localStorage.setItem('icebergebs-theme', dark?'dark':'light'); open=false"
                   class="w-full flex items-center gap-2.5 px-3 py-2 text-[13px] hover:bg-[var(--ink-1)]" style="color:var(--ink-7)">
             <svg x-show="!dark" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
             <svg x-show="dark" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>

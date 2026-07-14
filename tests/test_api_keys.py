@@ -22,7 +22,7 @@ async def test_create_key_returns_raw_key_once(client):
     assert r.status_code == 201
     data = r.json()
     assert data["label"] == "soar-key"
-    assert data["raw_key"].startswith("marvin_")
+    assert data["raw_key"].startswith("ebs_")
     assert len(data["raw_key"]) > 20
     assert data["readonly"] is False
     assert "key_hash" not in data
@@ -33,7 +33,7 @@ async def test_create_readonly_key(client):
     assert r.status_code == 201
     data = r.json()
     assert data["readonly"] is True
-    assert data["raw_key"].startswith("marvin_")
+    assert data["raw_key"].startswith("ebs_")
 
 
 async def test_list_keys_after_create_shows_metadata_only(client):
@@ -109,7 +109,7 @@ async def test_bearer_auth_allows_alerts_access(api_key_client):
 async def test_invalid_bearer_token_returns_401_json(anon_client):
     r = await anon_client.get(
         "/api/extensions",
-        headers={"Authorization": "Bearer marvin_thisisnotavalidkey"},
+        headers={"Authorization": "Bearer ebs_thisisnotavalidkey"},
         follow_redirects=False,
     )
     assert r.status_code == 401

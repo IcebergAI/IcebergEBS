@@ -1,18 +1,18 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ include "marvin.fullname" . }}
+  name: {{ include "iceberg-ebs.fullname" . }}
   labels:
-    {{- include "marvin.labels" . | nindent 4 }}
+    {{- include "iceberg-ebs.labels" . | nindent 4 }}
 spec:
   replicas: {{ .Values.replicaCount }}
   selector:
     matchLabels:
-      {{- include "marvin.selectorLabels" . | nindent 6 }}
+      {{- include "iceberg-ebs.selectorLabels" . | nindent 6 }}
   template:
     metadata:
       labels:
-        {{- include "marvin.selectorLabels" . | nindent 8 }}
+        {{- include "iceberg-ebs.selectorLabels" . | nindent 8 }}
     spec:
       securityContext:
         runAsNonRoot: true
@@ -22,31 +22,31 @@ spec:
         - name: tmp
           emptyDir: {}
       containers:
-        - name: marvin
+        - name: iceberg-ebs
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           ports:
             - containerPort: 8000
           envFrom:
             - configMapRef:
-                name: {{ include "marvin.fullname" . }}
+                name: {{ include "iceberg-ebs.fullname" . }}
           env:
             - name: POSTGRES_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: {{ include "marvin.fullname" . }}-postgresql
+                  name: {{ include "iceberg-ebs.fullname" . }}-postgresql
                   key: password
-            - name: MARVIN_DATABASE_URL
-              value: "postgresql+asyncpg://{{ .Values.postgresql.auth.username }}:$(POSTGRES_PASSWORD)@{{ include "marvin.fullname" . }}-postgresql/{{ .Values.postgresql.auth.database }}"
-            - name: MARVIN_ADMIN_PASSWORD
+            - name: ICEBERG_EBS_DATABASE_URL
+              value: "postgresql+asyncpg://{{ .Values.postgresql.auth.username }}:$(POSTGRES_PASSWORD)@{{ include "iceberg-ebs.fullname" . }}-postgresql/{{ .Values.postgresql.auth.database }}"
+            - name: ICEBERG_EBS_ADMIN_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: {{ include "marvin.fullname" . }}
+                  name: {{ include "iceberg-ebs.fullname" . }}
                   key: admin-password
-            - name: MARVIN_SECRET_KEY
+            - name: ICEBERG_EBS_SECRET_KEY
               valueFrom:
                 secretKeyRef:
-                  name: {{ include "marvin.fullname" . }}
+                  name: {{ include "iceberg-ebs.fullname" . }}
                   key: secret-key
           securityContext:
             allowPrivilegeEscalation: false

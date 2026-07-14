@@ -14,9 +14,9 @@ from sqlalchemy.ext.asyncio import create_async_engine
 from sqlmodel import SQLModel
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-os.environ.setdefault("MARVIN_ADMIN_USERNAME", "testadmin")
-os.environ.setdefault("MARVIN_ADMIN_PASSWORD", "testpass")
-os.environ.setdefault("MARVIN_SECRET_KEY", "test-secret-key-for-testing-only-32chars")
+os.environ.setdefault("ICEBERG_EBS_ADMIN_USERNAME", "testadmin")
+os.environ.setdefault("ICEBERG_EBS_ADMIN_PASSWORD", "testpass")
+os.environ.setdefault("ICEBERG_EBS_SECRET_KEY", "test-secret-key-for-testing-only-32chars")
 
 from app.auth import create_session_cookie, generate_api_key, hash_api_key, hash_password
 from app.config import settings
@@ -25,8 +25,8 @@ from app.main import app
 from app.models import ApiKey, User
 
 # The suite runs against a real Postgres (dev compose service / CI service container).
-# Point it via MARVIN_TEST_DATABASE_URL; otherwise fall back to the app's configured URL.
-TEST_DATABASE_URL = os.environ.get("MARVIN_TEST_DATABASE_URL", settings.database_url)
+# Point it via ICEBERG_EBS_TEST_DATABASE_URL; otherwise fall back to the app's configured URL.
+TEST_DATABASE_URL = os.environ.get("ICEBERG_EBS_TEST_DATABASE_URL", settings.database_url)
 
 
 def make_fake_vsix(manifest: dict | None = None) -> bytes:

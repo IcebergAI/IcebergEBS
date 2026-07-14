@@ -31,7 +31,7 @@ from app.version import get_version
 router = APIRouter()
 templates = Jinja2Templates(directory="app/templates")
 
-_FLASH_COOKIE = "marvin_flash"
+_FLASH_COOKIE = "iceberg_ebs_flash"
 
 
 def _ago(dt) -> str:

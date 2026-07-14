@@ -21,7 +21,7 @@ ENV UV_PROJECT_ENVIRONMENT=/opt/venv \
 
 WORKDIR /app
 
-# Manifests only, so the venv layer caches across source-only changes. Marvin is
+# Manifests only, so the venv layer caches across source-only changes. IcebergEBS is
 # a virtual project (`[tool.uv] package = false`), so its dependencies resolve
 # without the source tree being present yet.
 COPY pyproject.toml uv.lock ./
@@ -40,9 +40,9 @@ ENV PATH="/opt/venv/bin:$PATH"
 COPY --chown=appuser:appuser . .
 
 # Build version is stamped in (the image has no .git for runtime resolution).
-# Pass with: docker build --build-arg MARVIN_VERSION="build 142 · 8ebe5f8" .
-ARG MARVIN_VERSION=""
-ENV MARVIN_VERSION=$MARVIN_VERSION
+# Pass with: docker build --build-arg ICEBERG_EBS_VERSION="build 142 · 8ebe5f8" .
+ARG ICEBERG_EBS_VERSION=""
+ENV ICEBERG_EBS_VERSION=$ICEBERG_EBS_VERSION
 
 USER appuser
 

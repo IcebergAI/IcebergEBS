@@ -1,4 +1,4 @@
-"""Alembic environment for Marvin.
+"""Alembic environment for IcebergEBS.
 
 Reads the database URL from ``app.config.settings``. Supports three callers:
 

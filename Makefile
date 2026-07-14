@@ -2,7 +2,7 @@
 # (see docker-compose.dev.yml); SQLite is no longer supported.
 
 COMPOSE := docker compose -f docker-compose.yml -f docker-compose.dev.yml
-TEST_DATABASE_URL ?= postgresql+asyncpg://marvin:marvin@localhost:5432/marvin
+TEST_DATABASE_URL ?= postgresql+asyncpg://iceberg_ebs:iceberg_ebs@localhost:5432/iceberg_ebs
 PYTHON ?= uv run python
 
 .PHONY: db dev sync test test-up down logs
@@ -21,7 +21,7 @@ dev:
 
 # Run the test suite against the dev Postgres. Brings Postgres up first.
 test: db
-	MARVIN_TEST_DATABASE_URL=$(TEST_DATABASE_URL) $(PYTHON) -m pytest tests/ -v
+	ICEBERG_EBS_TEST_DATABASE_URL=$(TEST_DATABASE_URL) $(PYTHON) -m pytest tests/ -v
 
 down:
 	$(COMPOSE) down

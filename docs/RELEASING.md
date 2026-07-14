@@ -1,12 +1,12 @@
-# Releasing Marvin
+# Releasing IcebergEBS
 
-Marvin carries **two** version identifiers, on purpose. They answer different questions,
+IcebergEBS carries **two** version identifiers, on purpose. They answer different questions,
 and conflating them is the mistake this document exists to prevent.
 
 | | What it is | Where it comes from | Who needs it |
 |---|---|---|---|
 | **SemVer** — `0.1.0b1` | The **release** version. The only thing that can say "this release contains a breaking change" | `[project].version` in `pyproject.toml` | Humans, and API consumers (a SOAR integration pins this) |
-| **`build N · sha`** | The **build** identifier: `N` = first-parent commit count on `main` (+1 per merge), `sha` = short commit | Runtime git, or the `MARVIN_VERSION` env var baked into the image | Support — "exactly which build is this?" |
+| **`build N · sha`** | The **build** identifier: `N` = first-parent commit count on `main` (+1 per merge), `sha` = short commit | Runtime git, or the `ICEBERG_EBS_VERSION` env var baked into the image | Support — "exactly which build is this?" |
 
 They are shown together in the rail footer: **`v0.1.0b1 · build 74 · 8823e7a`**.
 
@@ -59,7 +59,7 @@ so the same version has two forms and you must use the right one in the right pl
   the bare-uvicorn droplet. Both read the SemVer from `pyproject.toml`; neither hardcodes it.
 - The bare-uvicorn deployment resolves the version from git at runtime, so a `git pull` of
   `main` is all it needs. The Docker/Helm images have no `.git`, so `build.yml` bakes
-  `MARVIN_VERSION` in at build time.
+  `ICEBERG_EBS_VERSION` in at build time.
 
 **Not yet automated:** a tag-triggered release workflow that *verifies the git tag matches
 the `pyproject.toml` version* and cuts the GitHub Release automatically. That is tracked in

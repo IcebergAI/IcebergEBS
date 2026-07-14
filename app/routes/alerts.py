@@ -343,9 +343,9 @@ async def test_destination(
         "store_url": "https://chromewebstore.google.com/detail/example",
     }
     if settings.app_base_url:
-        ext_payload["marvin_url"] = f"{settings.app_base_url.rstrip('/')}/extensions/0"
+        ext_payload["iceberg_ebs_url"] = f"{settings.app_base_url.rstrip('/')}/extensions/0"
     payload = {
-        "text": f'Marvin test alert from destination "{dest.label}"',
+        "text": f'IcebergEBS test alert from destination "{dest.label}"',
         "event": "test",
         "extension": ext_payload,
         "change": {"old": "low", "new": "high"},

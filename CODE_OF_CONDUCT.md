@@ -60,7 +60,7 @@ representative at an online or offline event.
 
 Instances of abusive, harassing, or otherwise unacceptable behavior may be
 reported to the project maintainers privately through GitHub's [private
-vulnerability reporting](https://github.com/IcebergAI/marvin/security/advisories/new)
+vulnerability reporting](https://github.com/IcebergAI/IcebergEBS/security/advisories/new)
 channel (under the repository's **Security** tab), which reaches the maintainers
 confidentially. All complaints will be reviewed and investigated promptly and
 fairly.

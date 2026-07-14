@@ -2,7 +2,7 @@
 
 ## Supported Versions
 
-Marvin is pre-1.0 and under active development. Security fixes are applied to the
+IcebergEBS is pre-1.0 and under active development. Security fixes are applied to the
 `main` branch only; there are no separately maintained release branches yet.
 
 ## Reporting a Vulnerability
@@ -10,7 +10,7 @@ Marvin is pre-1.0 and under active development. Security fixes are applied to th
 Please **do not** open a public GitHub issue for security vulnerabilities.
 
 Instead, report privately via GitHub's [private vulnerability
-reporting](https://github.com/IcebergAI/marvin/security/advisories/new)
+reporting](https://github.com/IcebergAI/IcebergEBS/security/advisories/new)
 ("Report a vulnerability" under the repository's **Security** tab).
 
 Please include:
@@ -25,7 +25,7 @@ before any public disclosure.
 
 ## Scope
 
-**Access model.** Marvin is **per-user isolated**, not a shared fleet. Every
+**Access model.** IcebergEBS is **per-user isolated**, not a shared fleet. Every
 extension, alert destination, alert rule, and API key is owned by a single user; all
 list queries filter on `user_id` ([app/routes/api.py](app/routes/api.py),
 [app/routes/alerts.py](app/routes/alerts.py)) and every single-object handler
@@ -71,8 +71,8 @@ The following are **intentional, by-design** and are not vulnerabilities on thei
   [app/auth.py](app/auth.py) and [CLAUDE.md](CLAUDE.md).
 - **The session cookie is signed, not encrypted.** Its integrity is protected; the
   username inside it is readable by design.
-- **Admin accounts are seeded out-of-band** (`MARVIN_ADMIN_USERNAME` /
-  `MARVIN_ADMIN_PASSWORD`, on first boot only). There is **no self-registration**,
+- **Admin accounts are seeded out-of-band** (`ICEBERG_EBS_ADMIN_USERNAME` /
+  `ICEBERG_EBS_ADMIN_PASSWORD`, on first boot only). There is **no self-registration**,
   and `is_admin` can only be set through the admin-gated `POST /api/users`. Admin is
   a **user-management** role: it does *not* grant access to other users' extensions
   or alerts. An admin's API key inherits their admin rights and can therefore create
@@ -81,7 +81,7 @@ The following are **intentional, by-design** and are not vulnerabilities on thei
   per-process and the login rate limiter holds process-local state
   ([app/ratelimit.py](app/ratelimit.py)). Running multiple workers is an operator
   misconfiguration — it causes duplicate alerts and weakens login throttling — not a
-  vulnerability in Marvin.
+  vulnerability in IcebergEBS.
 - **Extension metadata is fetched from the public stores** (Chrome Web Store, VS Code
   Marketplace, Edge Add-ons). It is public data by nature.
 

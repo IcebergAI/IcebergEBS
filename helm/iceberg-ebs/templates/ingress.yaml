@@ -1,9 +1,9 @@
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: {{ include "marvin.fullname" . }}
+  name: {{ include "iceberg-ebs.fullname" . }}
   labels:
-    {{- include "marvin.labels" . | nindent 4 }}
+    {{- include "iceberg-ebs.labels" . | nindent 4 }}
   annotations:
     nginx.ingress.kubernetes.io/ssl-redirect: "true"
     nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
@@ -22,7 +22,7 @@ spec:
   tls:
     - hosts:
         - {{ .Values.ingress.host }}
-      secretName: {{ include "marvin.fullname" . }}-tls
+      secretName: {{ include "iceberg-ebs.fullname" . }}-tls
   rules:
     - host: {{ .Values.ingress.host }}
       http:
@@ -31,6 +31,6 @@ spec:
             pathType: Prefix
             backend:
               service:
-                name: {{ include "marvin.fullname" . }}
+                name: {{ include "iceberg-ebs.fullname" . }}
                 port:
                   number: 8000

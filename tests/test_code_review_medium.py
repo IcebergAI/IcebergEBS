@@ -1,6 +1,6 @@
 """Regression tests for the medium-priority code-review fixes (M1–M5, D2).
 
-Each test maps to a GitHub issue in the "Marvin — Code Review Remediation" project:
+Each test maps to a GitHub issue in the "IcebergEBS — Code Review Remediation" project:
 M1 #6, M2 #7, M3 #8, M4 #9, M5 #10, D2 #12.
 """
 
