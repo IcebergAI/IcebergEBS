@@ -19,6 +19,8 @@ App will always run on Python 3.14 or later.
 - apscheduler (3.x stable — 4.x is alpha-only, do not use)
 
 ### Dependency management (uv)
+**Dependabot** (`.github/dependabot.yml`) opens weekly **grouped** update PRs across four ecosystems: `uv` (Python), `github-actions`, `docker` (Dockerfile base images), and `docker-compose` (the postgres/nginx pins). A Python PR updates `pyproject.toml` **and** `uv.lock` together, so `uv sync --locked` stays green. One trap worth knowing: Dependabot's Docker parser reads **`FROM` lines only** — an image referenced via `COPY --from=<image>` is invisible to it, which is why the uv binary is pulled through a named `FROM … AS uv` stage in the Dockerfile.
+
 `pyproject.toml` is the **only** dependency manifest — there is no `requirements.txt`. Runtime packages go in `[project.dependencies]`; test + static-analysis tooling goes in the **`[dependency-groups] dev`** group (PEP 735). After changing either, run **`uv lock`** and commit the updated `uv.lock`: CI installs with `uv sync --locked`, which fails on a stale lock, and the `lint` job runs an explicit `uv lock --check`. Marvin is a **virtual project** (`[tool.uv] package = false`) — it is deployed as source + uvicorn, never built into a wheel, which is what lets the Dockerfile install the dependency layer from `pyproject.toml` + `uv.lock` alone. The production image builds its venv with `uv sync --frozen --no-dev`, so the `dev` group **cannot** reach the container: anything a runtime import needs must be a real runtime dependency, not a dev one.
 
 ### UI / Front end
