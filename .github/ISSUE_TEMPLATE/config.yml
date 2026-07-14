@@ -1,0 +1,10 @@
+# blank_issues_enabled: false forces the chooser, which is what surfaces the security
+# contact link below. With blank issues allowed, a reporter can bypass the chooser and
+# file a vulnerability in the public tracker without ever seeing it.
+blank_issues_enabled: false
+contact_links:
+  - name: Report a security vulnerability (private)
+    url: https://github.com/IcebergAI/IcebergEBS/security/advisories/new
+    about: >-
+      Do not open a public issue for a vulnerability. Report it privately here — see
+      SECURITY.md for scope and response targets.
