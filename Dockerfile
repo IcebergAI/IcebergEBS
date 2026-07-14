@@ -6,7 +6,7 @@
 # because Dependabot's Docker parser reads `FROM` lines only — an image referenced
 # straight from a COPY is invisible to it, so the pin would silently never be updated.
 # Same layers, same image; do not "simplify" this back into the COPY form.
-FROM ghcr.io/astral-sh/uv:0.11.23 AS uv
+FROM ghcr.io/astral-sh/uv:0.11.28 AS uv
 
 FROM python:3.14-slim AS builder
 
