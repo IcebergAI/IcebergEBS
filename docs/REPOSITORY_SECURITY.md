@@ -24,26 +24,26 @@ Verified from `GET /repos/IcebergAI/IcebergEBS/branches/main/protection`:
   commits are pushed.
 - **Review conversations must be resolved** before merge.
 - **Force pushes and branch deletion are disabled.**
+- **The rules apply to administrators** (`enforce_admins: true`). There is no default
+  bypass, including for the repository owner.
 
-### Administrator enforcement is currently OFF — read this
+### Administrator enforcement was tested, not assumed
 
-`enforce_admins` is **`false`**. Administrators can therefore push directly to `main`,
-bypassing the pull-request requirement. This was confirmed, not assumed: a direct push to
-`main` succeeded with
+Both states were exercised against the live repository:
 
-```
-remote: Bypassed rule violations for refs/heads/main:
-remote: - Changes must be made through a pull request.
-```
+| `enforce_admins` | Direct push to `main` by an admin |
+|---|---|
+| `false` | **Succeeded** — `remote: Bypassed rule violations for refs/heads/main: Changes must be made through a pull request.` |
+| `true` (current) | **Rejected** — `! [remote rejected] main -> main (protected branch hook declined)` |
 
-so for an administrator the branch protection is currently **advisory, not binding**.
-(Force-push protection *does* still bind admins — the same test was rejected with `GH006`.)
+With `enforce_admins: false` the protection was *advisory, not binding*: the pull-request
+requirement, the required review, and the CI gates could all be walked past by the one
+person holding admin. That is the state this repository is **not** in.
 
-It is set this way as a deliberate, temporary step: it mirrors the configuration the
-automated reviewer is known to merge under, while we confirm that the reviewer's approval
-satisfies the required-review rule. **The intent is to set `enforce_admins: true`** once
-that is proven, so that the rule binds everyone. Until then, treat "changes go through a
-pull request" as a convention you are trusted to follow, not a control that will stop you.
+One asymmetry worth knowing if you ever have to reason about a partial bypass:
+**force-push protection binds administrators even when `enforce_admins` is `false`** — a
+force push during that test was rejected with `GH006`. A bypassable rule does not imply
+every rule is bypassable; check the specific one.
 
 ## Credential protection
 
@@ -77,8 +77,13 @@ procedure. A "test" secret that is actually valid is an incident, not a test.
 ## Emergency path
 
 An administrator bypass is an **exceptional production-recovery mechanism**, not a normal
-merge path. Because `enforce_admins` is currently `false`, that bypass is available by
-default — which makes the discipline below a matter of habit rather than enforcement.
+merge path. Because `enforce_admins` is `true`, there is no standing bypass: obtaining one
+means an administrator **temporarily disabling the protection rule itself**, which is a
+deliberate, visible act rather than a quiet `git push`.
+
+That is the intended design. Note that changing branch-protection settings is *not* gated
+by branch protection, so the repository cannot lock itself out — but equally, an
+administrator who turns enforcement off is making a decision that must be recorded.
 
 If an emergency change must skip the normal review path, the incident or release record
 must name:
