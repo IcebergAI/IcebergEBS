@@ -6,19 +6,53 @@ from unittest.mock import patch
 import pytest
 
 import app.version as version
-from app.version import _format, get_version
+from app.version import _format, _semver, get_version
 
 
 @pytest.fixture(autouse=True)
 def _clear_version_cache():
-    """get_version() is lru_cached — reset around every test for isolation."""
+    """get_version() and _semver() are lru_cached — reset around every test."""
     get_version.cache_clear()
+    _semver.cache_clear()
     yield
     get_version.cache_clear()
+    _semver.cache_clear()
 
 
-def test_format():
+def test_semver_read_from_pyproject():
+    """The release version comes from [project].version in the real pyproject.toml."""
+    assert _semver() == "0.1.0b1"
+
+
+def test_format_carries_semver_and_build():
+    assert _format("142", "8ebe5f8") == "v0.1.0b1 · build 142 · 8ebe5f8"
+
+
+def test_format_falls_back_when_semver_unavailable(monkeypatch, tmp_path):
+    """A missing/unreadable pyproject.toml must degrade to the bare build identifier.
+
+    This runs on every page render, so it must never be the reason a page 500s.
+    """
+    monkeypatch.setattr(version, "_PYPROJECT", tmp_path / "nonexistent.toml")
+    _semver.cache_clear()
+    assert _semver() is None
     assert _format("142", "8ebe5f8") == "build 142 · 8ebe5f8"
+
+
+def test_semver_none_on_malformed_pyproject(monkeypatch, tmp_path):
+    bad = tmp_path / "pyproject.toml"
+    bad.write_text("this is not = valid toml [[[", encoding="utf-8")
+    monkeypatch.setattr(version, "_PYPROJECT", bad)
+    _semver.cache_clear()
+    assert _semver() is None
+
+
+def test_semver_none_when_version_key_missing(monkeypatch, tmp_path):
+    noversion = tmp_path / "pyproject.toml"
+    noversion.write_text('[project]\nname = "marvin"\n', encoding="utf-8")
+    monkeypatch.setattr(version, "_PYPROJECT", noversion)
+    _semver.cache_clear()
+    assert _semver() is None
 
 
 def test_env_override_wins(monkeypatch):
@@ -44,7 +78,7 @@ def test_runtime_git_path(monkeypatch):
         return subprocess.CompletedProcess(cmd, 0, stdout=out, stderr="")
 
     monkeypatch.setattr(version.subprocess, "run", fake_run)
-    assert get_version() == "build 142 · 8ebe5f8"
+    assert get_version() == "v0.1.0b1 · build 142 · 8ebe5f8"
 
 
 def test_fallback_to_dev_when_git_unavailable(monkeypatch):

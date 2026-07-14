@@ -133,10 +133,16 @@ docker compose up --build
 ```
 
 ## Versioning
-The running build is shown at the bottom of the left rail as `build N · sha` (e.g. `build 142 · 8ebe5f8`), where `N` = `git rev-list --count --first-parent HEAD` (one per merge to main) and `sha` is the short commit. Resolved by `app/version.py:get_version()` (cached once per process) in priority order: `MARVIN_VERSION` env → stamped `app/_version` file (git-ignored) → runtime git → `"dev"`. Injected into every page via `_render()` in `app/routes/ui.py` and rendered in the `rail_footer` block (`.rail-version` in `app.css`).
+Marvin carries **two** identifiers, shown together at the bottom of the left rail as `v{semver} · build N · sha` (e.g. `v0.1.0b1 · build 74 · 8823e7a`). They answer different questions and must not be conflated:
+- **SemVer** (`0.1.0b1`) is the **release** version — the only thing that can express a breaking change, and what an API/SOAR consumer pins. Single source of truth: **`[project].version` in `pyproject.toml`**, read at runtime by `app/version.py:_semver()` via stdlib `tomllib` (never hardcoded, never duplicated). Git tags use the **SemVer spelling** of the same value (`0.1.0b1` ⇄ tag `v0.1.0-beta.1`) — the PEP 440 / SemVer mapping and the release procedure live in **`docs/RELEASING.md`**; changes are recorded in **`CHANGELOG.md`** (Keep a Changelog).
+- **`build N · sha`** is the **build** identifier (`N` = `git rev-list --count --first-parent HEAD`, +1 per merge to main). It advances on every merge and is *not* a release.
+
+Resolved by `app/version.py:get_version()` (cached once per process) in priority order: `MARVIN_VERSION` env → stamped `app/_version` file (git-ignored) → runtime git + pyproject → `"dev"`. The first two carry a complete string and so win **wholesale**. Injected into every page via `_render()` in `app/routes/ui.py`, rendered in the `rail_footer` block (`.rail-version` in `app.css`).
+- **Bumping the version requires `uv lock`.** `uv.lock` records the project's *own* version, so a `pyproject.toml` bump without a lock refresh fails CI's `uv lock --check`. This is the most common way to break the build here.
+- `_semver()` **never raises** — a missing or malformed `pyproject.toml` degrades to the bare `build N · sha`. It runs on every page render, so it must not be able to 500 the UI.
 - **Auto-increment:** on the bare-uvicorn droplet (a git checkout) the number advances on each `git pull` of main — no manual bump.
-- **No `.git` (Docker/Helm):** `.dockerignore` strips `.git`, so the image relies on the `MARVIN_VERSION` env (Dockerfile `ARG`/`ENV`). The `.github/workflows/build.yml` workflow computes the same `build N · sha` string and passes it as `--build-arg MARVIN_VERSION`. It checks out with `fetch-depth: 0` — required, or `rev-list --count` is wrong on Actions' shallow clone.
-- Keep the format string in sync between `app/version.py:_format()` and the workflow's "Compute version" step.
+- **No `.git` (Docker/Helm):** `.dockerignore` strips `.git`, so the image relies on the `MARVIN_VERSION` env (Dockerfile `ARG`/`ENV`). The `.github/workflows/build.yml` workflow computes the same string and passes it as `--build-arg MARVIN_VERSION`. It checks out with `fetch-depth: 0` — required, or `rev-list --count` is wrong on Actions' shallow clone.
+- Keep the format string in sync between `app/version.py:_format()` and the workflow's "Compute version" step — both read the SemVer from `pyproject.toml`. A drift is invisible until a container deploy reports a different version from the droplet.
 
 ## Maintenance
 - Keep this file up to date with decisions around structure, architecture, and function.
