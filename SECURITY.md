@@ -26,12 +26,18 @@ before any public disclosure.
 ## Scope
 
 **Access model.** Marvin is **per-user isolated**, not a shared fleet. Every
-extension, alert destination, alert rule, and API key is owned by exactly one user;
-all list queries filter on `user_id` ([app/routes/api.py](app/routes/api.py),
+extension, alert destination, alert rule, and API key is owned by a single user; all
+list queries filter on `user_id` ([app/routes/api.py](app/routes/api.py),
 [app/routes/alerts.py](app/routes/alerts.py)) and every single-object handler
 re-checks ownership after loading, returning **404 rather than 403** so that ids are
 not enumerable. Any cross-user read or mutation — IDOR, privilege escalation, or a
 bypass of those ownership checks — is **in scope**.
+
+One lifecycle exception, by design: deleting a user account **orphans** that user's
+extensions (`user_id` is set to NULL and they are dropped off the watchlist) so that
+the fetch and alert history survives the deletion. Orphaned rows have no owner, and
+because every user-scoped query matches on a concrete `user_id`, they are reachable
+by nobody through the API or UI.
 
 Also **in scope**:
 
@@ -52,7 +58,8 @@ Also **in scope**:
 The following are **intentional, by-design** and are not vulnerabilities on their own:
 
 - **The unauthenticated surface is exactly**: `GET /healthz`, `GET /readyz`,
-  `GET`/`POST /login`, and `GET /static/*`. The ops probes are deliberately
+  `GET`/`POST /login`, and the static assets under `/static/*` (`GET` and, as
+  Starlette's `StaticFiles` also serves it, `HEAD`). The ops probes are deliberately
   unauthenticated so an orchestrator can reach them; `/readyz` reports only whether
   the database is up or down and never the underlying error. Note that `/docs`,
   `/redoc`, and `/openapi.json` are **not** public — they require an authenticated
