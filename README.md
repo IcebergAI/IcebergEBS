@@ -134,3 +134,15 @@ uv run pip-audit -r /tmp/requirements-prod.txt
 ### Dependencies
 
 `pyproject.toml` is the only dependency manifest: runtime packages in `[project.dependencies]`, test and static-analysis tooling in the `[dependency-groups] dev` group. After changing either, run **`uv lock`** and commit the updated `uv.lock`. The production image builds its venv with `uv sync --frozen --no-dev`, so the `dev` group physically cannot reach it — anything a runtime import needs must be a real runtime dependency.
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for setup, the CI gates a PR must pass, and the conventions for dependency and schema changes. Participation is governed by our [Code of Conduct](CODE_OF_CONDUCT.md).
+
+## Security
+
+Please **do not** report vulnerabilities in a public issue — see [SECURITY.md](SECURITY.md) for the private reporting path and for the **scope** of what counts as a vulnerability (Marvin documents its trust boundaries explicitly, including the things that are shared by design).
+
+## License
+
+[Apache License 2.0](LICENSE) — Copyright 2026 IcebergAI.
