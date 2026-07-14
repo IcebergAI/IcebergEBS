@@ -28,7 +28,7 @@ BCRYPT_ROUNDS = 12
 
 def generate_api_key() -> str:
     """Return a new raw API key. Caller must store only the hash."""
-    return "marvin_" + secrets.token_urlsafe(32)
+    return "ebs_" + secrets.token_urlsafe(32)
 
 
 def hash_api_key(raw_key: str) -> str:

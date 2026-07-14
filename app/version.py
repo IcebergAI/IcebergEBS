@@ -14,7 +14,7 @@ The version is a ``v{semver} · build N · sha`` string that carries both notion
 
 Resolved once per process (cached) in this priority order:
 
-1. ``MARVIN_VERSION`` env var — set by the Docker build / CI where ``.git`` is absent.
+1. ``ICEBERG_EBS_VERSION`` env var — set by the Docker build / CI where ``.git`` is absent.
    It carries a complete string and therefore wins wholesale.
 2. A stamped ``app/_version`` file — for deploy-time stamping (optional, git-ignored).
    Also a complete string.
@@ -56,7 +56,7 @@ def _semver() -> str | None:
 
 def _format(count: str, sha: str) -> str:
     """The single definition of the version string format (kept in sync with the
-    'Compute version' step of the GitHub Actions workflow that stamps MARVIN_VERSION
+    'Compute version' step of the GitHub Actions workflow that stamps ICEBERG_EBS_VERSION
     for image builds — if you change this, change that)."""
     semver = _semver()
     if semver:
@@ -93,7 +93,7 @@ def _from_git() -> str | None:
 @lru_cache(maxsize=1)
 def get_version() -> str:
     """Return the build version string, resolved once and cached for the process."""
-    env = os.getenv("MARVIN_VERSION")
+    env = os.getenv("ICEBERG_EBS_VERSION")
     if env and env.strip():
         return env.strip()
 

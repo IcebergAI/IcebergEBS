@@ -49,20 +49,20 @@ def test_semver_none_on_malformed_pyproject(monkeypatch, tmp_path):
 
 def test_semver_none_when_version_key_missing(monkeypatch, tmp_path):
     noversion = tmp_path / "pyproject.toml"
-    noversion.write_text('[project]\nname = "marvin"\n', encoding="utf-8")
+    noversion.write_text('[project]\nname = "iceberg-ebs"\n', encoding="utf-8")
     monkeypatch.setattr(version, "_PYPROJECT", noversion)
     _semver.cache_clear()
     assert _semver() is None
 
 
 def test_env_override_wins(monkeypatch):
-    monkeypatch.setenv("MARVIN_VERSION", "  build 999 · deadbee  ")
+    monkeypatch.setenv("ICEBERG_EBS_VERSION", "  build 999 · deadbee  ")
     # Even if git/file would resolve, the env var takes priority (and is trimmed).
     assert get_version() == "build 999 · deadbee"
 
 
 def test_stamped_file_used_when_no_env(monkeypatch, tmp_path):
-    monkeypatch.delenv("MARVIN_VERSION", raising=False)
+    monkeypatch.delenv("ICEBERG_EBS_VERSION", raising=False)
     stamp = tmp_path / "_version"
     stamp.write_text("build 200 · cafef00\n", encoding="utf-8")
     monkeypatch.setattr(version, "_VERSION_FILE", stamp)
@@ -70,7 +70,7 @@ def test_stamped_file_used_when_no_env(monkeypatch, tmp_path):
 
 
 def test_runtime_git_path(monkeypatch):
-    monkeypatch.delenv("MARVIN_VERSION", raising=False)
+    monkeypatch.delenv("ICEBERG_EBS_VERSION", raising=False)
     monkeypatch.setattr(version, "_VERSION_FILE", version.Path("/nonexistent/_version"))
 
     def fake_run(cmd, **kwargs):
@@ -82,7 +82,7 @@ def test_runtime_git_path(monkeypatch):
 
 
 def test_fallback_to_dev_when_git_unavailable(monkeypatch):
-    monkeypatch.delenv("MARVIN_VERSION", raising=False)
+    monkeypatch.delenv("ICEBERG_EBS_VERSION", raising=False)
     monkeypatch.setattr(version, "_VERSION_FILE", version.Path("/nonexistent/_version"))
     monkeypatch.setattr(
         version.subprocess,

@@ -1,16 +1,16 @@
-# Marvin — Containerised Deployment (PostgreSQL + Nginx)
+# IcebergEBS — Containerised Deployment (PostgreSQL + Nginx)
 
 ## Context
 
-Marvin runs on PostgreSQL (dev, test, and production — SQLite is not supported) behind nginx as a TLS-terminating reverse proxy following security hardening best practices. Everything is wired together with Docker Compose for a one-command production deployment.
+IcebergEBS runs on PostgreSQL (dev, test, and production — SQLite is not supported) behind nginx as a TLS-terminating reverse proxy following security hardening best practices. Everything is wired together with Docker Compose for a one-command production deployment.
 
 ---
 
 ## Database choice — use PostgreSQL for any SOC-scale deployment
 
-**Marvin runs on PostgreSQL everywhere — dev, test, and production** (set `MARVIN_DATABASE_URL` to a `postgresql+asyncpg://…` URL; the Docker Compose, dev override, and Helm stacks all do this). SQLite is not supported.
+**IcebergEBS runs on PostgreSQL everywhere — dev, test, and production** (set `ICEBERG_EBS_DATABASE_URL` to a `postgresql+asyncpg://…` URL; the Docker Compose, dev override, and Helm stacks all do this). SQLite is not supported.
 
-**Why:** Marvin has three concurrent write sources — the background scheduler refreshing the watchlist, interactive API/UI writes, and bulk ingestion. PostgreSQL's row-level locking and MVCC let these writers proceed concurrently, and it scales the history tables (`FetchLog`, `InstallCountHistory`, `AlertLog`) far better as the watchlist grows. (SQLite's single database-level write lock — which serialized all writes and surfaced as `database is locked` under contention — was the reason it was dropped.)
+**Why:** IcebergEBS has three concurrent write sources — the background scheduler refreshing the watchlist, interactive API/UI writes, and bulk ingestion. PostgreSQL's row-level locking and MVCC let these writers proceed concurrently, and it scales the history tables (`FetchLog`, `InstallCountHistory`, `AlertLog`) far better as the watchlist grows. (SQLite's single database-level write lock — which serialized all writes and surfaced as `database is locked` under contention — was the reason it was dropped.)
 
 **App-side guarantees:**
 - The schema is managed by Alembic; the test suite runs against a real Postgres (containerized), so CI exercises the same database as production.
@@ -135,10 +135,10 @@ CMD ["uvicorn", "app.main:app", \
      "--proxy-headers", "--forwarded-allow-ips=*"]
 ```
 
-(The real `Dockerfile` also carries the `MARVIN_VERSION` build-arg — see the Versioning section of `CLAUDE.md`.)
+(The real `Dockerfile` also carries the `ICEBERG_EBS_VERSION` build-arg — see the Versioning section of `CLAUDE.md`.)
 
 Notes:
-- **Two stages on purpose.** The builder resolves the venv from `pyproject.toml` + `uv.lock` alone (Marvin is a virtual project, so no source is needed), and the runtime stage copies only that venv — so `uv`, the pip cache, and the whole `dev` group are absent from the deployed image. `--frozen` consumes the lockfile as-is and never re-resolves, so a rebuild cannot silently pick up a newer FastAPI.
+- **Two stages on purpose.** The builder resolves the venv from `pyproject.toml` + `uv.lock` alone (IcebergEBS is a virtual project, so no source is needed), and the runtime stage copies only that venv — so `uv`, the pip cache, and the whole `dev` group are absent from the deployed image. `--frozen` consumes the lockfile as-is and never re-resolves, so a rebuild cannot silently pick up a newer FastAPI.
 - **The venv lives at `/opt/venv`, not `/app/.venv`** (`UV_PROJECT_ENVIRONMENT`). `docker-compose.dev.yml` bind-mounts the source tree over `/app`, which would shadow an in-tree venv — and on a host with no `.venv/`, leave the container with no interpreter at all.
 - Copying only the manifests before the source keeps the dependency layer cached across source-only changes.
 - `--proxy-headers` makes uvicorn trust `X-Forwarded-For` / `X-Forwarded-Proto` from nginx
@@ -172,13 +172,13 @@ services:
   postgres:
     image: postgres:16-alpine
     environment:
-      POSTGRES_DB: ${POSTGRES_DB:-marvin}
-      POSTGRES_USER: ${POSTGRES_USER:-marvin}
+      POSTGRES_DB: ${POSTGRES_DB:-iceberg_ebs}
+      POSTGRES_USER: ${POSTGRES_USER:-iceberg_ebs}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-marvin} -d ${POSTGRES_DB:-marvin}"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-iceberg_ebs} -d ${POSTGRES_DB:-iceberg_ebs}"]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -187,12 +187,12 @@ services:
   app:
     build: .
     environment:
-      MARVIN_DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-marvin}:${POSTGRES_PASSWORD}@postgres/${POSTGRES_DB:-marvin}
-      MARVIN_ADMIN_USERNAME: ${MARVIN_ADMIN_USERNAME}
-      MARVIN_ADMIN_PASSWORD: ${MARVIN_ADMIN_PASSWORD}
-      MARVIN_SECRET_KEY: ${MARVIN_SECRET_KEY}
-      MARVIN_APP_BASE_URL: ${MARVIN_APP_BASE_URL:-}
-      MARVIN_SECURE_COOKIES: "true"
+      ICEBERG_EBS_DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-iceberg_ebs}:${POSTGRES_PASSWORD}@postgres/${POSTGRES_DB:-iceberg_ebs}
+      ICEBERG_EBS_ADMIN_USERNAME: ${ICEBERG_EBS_ADMIN_USERNAME}
+      ICEBERG_EBS_ADMIN_PASSWORD: ${ICEBERG_EBS_ADMIN_PASSWORD}
+      ICEBERG_EBS_SECRET_KEY: ${ICEBERG_EBS_SECRET_KEY}
+      ICEBERG_EBS_APP_BASE_URL: ${ICEBERG_EBS_APP_BASE_URL:-}
+      ICEBERG_EBS_SECURE_COOKIES: "true"
     depends_on:
       postgres:
         condition: service_healthy
@@ -222,15 +222,15 @@ volumes:
 
 ```env
 # PostgreSQL
-POSTGRES_DB=marvin
-POSTGRES_USER=marvin
+POSTGRES_DB=iceberg_ebs
+POSTGRES_USER=iceberg_ebs
 POSTGRES_PASSWORD=<generate: openssl rand -hex 32>
 
-# Marvin app
-MARVIN_ADMIN_USERNAME=admin
-MARVIN_ADMIN_PASSWORD=<strong password>
-MARVIN_SECRET_KEY=<generate: python -c "import secrets; print(secrets.token_hex(32))">
-MARVIN_APP_BASE_URL=https://your-domain.example.com
+# IcebergEBS app
+ICEBERG_EBS_ADMIN_USERNAME=admin
+ICEBERG_EBS_ADMIN_PASSWORD=<strong password>
+ICEBERG_EBS_SECRET_KEY=<generate: python -c "import secrets; print(secrets.token_hex(32))">
+ICEBERG_EBS_APP_BASE_URL=https://your-domain.example.com
 ```
 
 ---
@@ -393,9 +393,13 @@ http {
 During implementation, compute the SHA-256 of the anti-flash script (the exact bytes between the `<script>` tags on line 7 of `base.html`):
 
 ```bash
-printf '%s' "(function(){var t=localStorage.getItem('marvin-theme')||'light';document.documentElement.setAttribute('data-theme',t);})()" \
+printf '%s' "(function(){var t=localStorage.getItem('icebergebs-theme')||'light';document.documentElement.setAttribute('data-theme',t);})();" \
   | openssl dgst -sha256 -binary | openssl base64
 ```
+
+Note the **trailing semicolon** — it is part of the script body and therefore part of the
+hashed bytes. Omitting it yields a hash that does not match the script, and the CSP then
+blocks the very script it was meant to allow.
 
 Substitute the result as `'sha256-<base64>'` in `security_headers.conf`. This is the only inline script remaining after the `tailwind-config.js` extraction.
 
@@ -438,14 +442,14 @@ curl -sI http://localhost/ | head -3
 curl -sI https://localhost/static/css/app.css | grep -E "Cache-Control|Server"
 
 # Tests pass against a containerized Postgres (start one with `make db` first)
-MARVIN_TEST_DATABASE_URL=postgresql+asyncpg://marvin:marvin@localhost:5432/marvin \
+ICEBERG_EBS_TEST_DATABASE_URL=postgresql+asyncpg://iceberg_ebs:iceberg_ebs@localhost:5432/iceberg_ebs \
   uv run pytest tests/ -v
 
 # The deployed image carries the runtime set only — this must fail
 docker compose run --rm --no-deps app python -c "import pytest"
 ```
 
-For production: replace `nginx/certs/` with a real certificate, uncomment OCSP stapling, and set `MARVIN_APP_BASE_URL` to your public domain.
+For production: replace `nginx/certs/` with a real certificate, uncomment OCSP stapling, and set `ICEBERG_EBS_APP_BASE_URL` to your public domain.
 
 ---
 
@@ -460,7 +464,7 @@ PostgreSQL is deployed as a Bitnami subchart — no separate StatefulSet to main
 ## Helm chart layout
 
 ```
-helm/marvin/
+helm/iceberg-ebs/
 ├── Chart.yaml
 ├── values.yaml
 └── templates/
@@ -474,11 +478,11 @@ helm/marvin/
 
 ---
 
-## `helm/marvin/Chart.yaml`
+## `helm/iceberg-ebs/Chart.yaml`
 
 ```yaml
 apiVersion: v2
-name: marvin
+name: iceberg-ebs
 description: Extension risk monitor
 type: application
 version: 0.1.0
@@ -491,11 +495,11 @@ dependencies:
 
 ---
 
-## `helm/marvin/values.yaml`
+## `helm/iceberg-ebs/values.yaml`
 
 ```yaml
 image:
-  repository: ghcr.io/yourorg/marvin   # or local registry
+  repository: ghcr.io/yourorg/icebergebs   # or local registry
   tag: latest
   pullPolicy: IfNotPresent
 
@@ -503,22 +507,22 @@ image:
 # each independently refresh watchlisted extensions and write duplicate AlertLog rows.
 replicaCount: 1
 
-marvin:
+icebergEbs:
   adminUsername: admin
   adminPassword: ""        # override with --set or existingSecret
   secretKey: ""            # override with --set or existingSecret
-  appBaseUrl: ""           # e.g. https://marvin.example.com
+  appBaseUrl: ""           # e.g. https://icebergebs.example.com
   fetchIntervalMinutes: 60
   secureCookies: true
 
 postgresql:
   auth:
-    username: marvin
+    username: iceberg_ebs
     password: ""           # override with --set or existingSecret
-    database: marvin
+    database: iceberg_ebs
 
 ingress:
-  host: marvin.example.com
+  host: icebergebs.example.com
   className: nginx
   certManagerIssuer: letsencrypt-prod  # set "" to disable cert-manager annotation
 
@@ -535,84 +539,84 @@ resources:
 
 ---
 
-## `helm/marvin/templates/secret.yaml`
+## `helm/iceberg-ebs/templates/secret.yaml`
 
 ```yaml
 apiVersion: v1
 kind: Secret
 metadata:
-  name: {{ include "marvin.fullname" . }}
+  name: {{ include "iceberg-ebs.fullname" . }}
 type: Opaque
 stringData:
-  admin-password: {{ .Values.marvin.adminPassword | required "marvin.adminPassword is required" | quote }}
-  secret-key:     {{ .Values.marvin.secretKey     | required "marvin.secretKey is required"     | quote }}
+  admin-password: {{ .Values.icebergEbs.adminPassword | required "icebergEbs.adminPassword is required" | quote }}
+  secret-key:     {{ .Values.icebergEbs.secretKey     | required "icebergEbs.secretKey is required"     | quote }}
 ```
 
 ---
 
-## `helm/marvin/templates/configmap.yaml`
+## `helm/iceberg-ebs/templates/configmap.yaml`
 
 ```yaml
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: {{ include "marvin.fullname" . }}
+  name: {{ include "iceberg-ebs.fullname" . }}
 data:
-  MARVIN_ADMIN_USERNAME:        {{ .Values.marvin.adminUsername | quote }}
-  MARVIN_APP_BASE_URL:          {{ .Values.marvin.appBaseUrl | quote }}
-  MARVIN_FETCH_INTERVAL_MINUTES: {{ .Values.marvin.fetchIntervalMinutes | quote }}
-  MARVIN_SECURE_COOKIES:        {{ .Values.marvin.secureCookies | quote }}
+  ICEBERG_EBS_ADMIN_USERNAME:        {{ .Values.icebergEbs.adminUsername | quote }}
+  ICEBERG_EBS_APP_BASE_URL:          {{ .Values.icebergEbs.appBaseUrl | quote }}
+  ICEBERG_EBS_FETCH_INTERVAL_MINUTES: {{ .Values.icebergEbs.fetchIntervalMinutes | quote }}
+  ICEBERG_EBS_SECURE_COOKIES:        {{ .Values.icebergEbs.secureCookies | quote }}
 ```
 
 ---
 
-## `helm/marvin/templates/deployment.yaml`
+## `helm/iceberg-ebs/templates/deployment.yaml`
 
 ```yaml
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ include "marvin.fullname" . }}
+  name: {{ include "iceberg-ebs.fullname" . }}
 spec:
   replicas: {{ .Values.replicaCount }}
   selector:
     matchLabels:
-      app.kubernetes.io/name: {{ include "marvin.name" . }}
+      app.kubernetes.io/name: {{ include "iceberg-ebs.name" . }}
   template:
     metadata:
       labels:
-        app.kubernetes.io/name: {{ include "marvin.name" . }}
+        app.kubernetes.io/name: {{ include "iceberg-ebs.name" . }}
     spec:
       securityContext:
         runAsNonRoot: true
         runAsUser: 1000
         fsGroup: 1000
       containers:
-        - name: marvin
+        - name: iceberg-ebs
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           ports:
             - containerPort: 8000
           envFrom:
             - configMapRef:
-                name: {{ include "marvin.fullname" . }}
+                name: {{ include "iceberg-ebs.fullname" . }}
           env:
-            - name: MARVIN_DATABASE_URL
-              value: "postgresql+asyncpg://{{ .Values.postgresql.auth.username }}:$(POSTGRES_PASSWORD)@{{ include \"marvin.fullname\" . }}-postgresql/{{ .Values.postgresql.auth.database }}"
+            - name: ICEBERG_EBS_DATABASE_URL
+              value: "postgresql+asyncpg://{{ .Values.postgresql.auth.username }}:$(POSTGRES_PASSWORD)@{{ include \"iceberg-ebs.fullname\" . }}-postgresql/{{ .Values.postgresql.auth.database }}"
             - name: POSTGRES_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: {{ include "marvin.fullname" . }}-postgresql
+                  name: {{ include "iceberg-ebs.fullname" . }}-postgresql
                   key: password
-            - name: MARVIN_ADMIN_PASSWORD
+            - name: ICEBERG_EBS_ADMIN_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: {{ include "marvin.fullname" . }}
+                  name: {{ include "iceberg-ebs.fullname" . }}
                   key: admin-password
-            - name: MARVIN_SECRET_KEY
+            - name: ICEBERG_EBS_SECRET_KEY
               valueFrom:
                 secretKeyRef:
-                  name: {{ include "marvin.fullname" . }}
+                  name: {{ include "iceberg-ebs.fullname" . }}
                   key: secret-key
           securityContext:
             allowPrivilegeEscalation: false
@@ -646,25 +650,25 @@ volumes:
 
 ---
 
-## `helm/marvin/templates/service.yaml`
+## `helm/iceberg-ebs/templates/service.yaml`
 
 ```yaml
 apiVersion: v1
 kind: Service
 metadata:
-  name: {{ include "marvin.fullname" . }}
+  name: {{ include "iceberg-ebs.fullname" . }}
 spec:
   type: ClusterIP
   ports:
     - port: 8000
       targetPort: 8000
   selector:
-    app.kubernetes.io/name: {{ include "marvin.name" . }}
+    app.kubernetes.io/name: {{ include "iceberg-ebs.name" . }}
 ```
 
 ---
 
-## `helm/marvin/templates/ingress.yaml`
+## `helm/iceberg-ebs/templates/ingress.yaml`
 
 Security headers are applied via the `configuration-snippet` annotation. This is the nginx-ingress equivalent of the `security_headers.conf` include in the Docker Compose setup.
 
@@ -672,7 +676,7 @@ Security headers are applied via the `configuration-snippet` annotation. This is
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: {{ include "marvin.fullname" . }}
+  name: {{ include "iceberg-ebs.fullname" . }}
   annotations:
     nginx.ingress.kubernetes.io/ssl-redirect: "true"
     nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
@@ -691,7 +695,7 @@ spec:
   tls:
     - hosts:
         - {{ .Values.ingress.host }}
-      secretName: {{ include "marvin.fullname" . }}-tls
+      secretName: {{ include "iceberg-ebs.fullname" . }}-tls
   rules:
     - host: {{ .Values.ingress.host }}
       http:
@@ -700,7 +704,7 @@ spec:
             pathType: Prefix
             backend:
               service:
-                name: {{ include "marvin.fullname" . }}
+                name: {{ include "iceberg-ebs.fullname" . }}
                 port:
                   number: 8000
 ```
@@ -714,19 +718,19 @@ spec:
 ```bash
 # Add Bitnami repo and update deps
 helm repo add bitnami https://charts.bitnami.com/bitnami
-helm dependency update helm/marvin
+helm dependency update helm/iceberg-ebs
 
 # Install (generate strong values; never commit these)
-helm upgrade --install marvin helm/marvin \
-  --namespace marvin --create-namespace \
-  --set marvin.adminPassword="$(openssl rand -hex 16)" \
-  --set marvin.secretKey="$(openssl rand -hex 32)" \
+helm upgrade --install icebergebs helm/iceberg-ebs \
+  --namespace icebergebs --create-namespace \
+  --set icebergEbs.adminPassword="$(openssl rand -hex 16)" \
+  --set icebergEbs.secretKey="$(openssl rand -hex 32)" \
   --set postgresql.auth.password="$(openssl rand -hex 32)" \
-  --set marvin.appBaseUrl="https://marvin.example.com" \
-  --set ingress.host="marvin.example.com"
+  --set icebergEbs.appBaseUrl="https://icebergebs.example.com" \
+  --set ingress.host="icebergebs.example.com"
 
 # Watch rollout
-kubectl rollout status deployment/marvin -n marvin
+kubectl rollout status deployment/icebergebs -n icebergebs
 ```
 
 For GitOps (Flux / ArgoCD): use `SealedSecret` or an ExternalSecrets `ExternalSecret` object to inject passwords from your secrets store rather than `--set`.

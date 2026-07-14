@@ -31,7 +31,7 @@ async def lifespan(app: FastAPI):
 
     client = httpx.AsyncClient(
         timeout=settings.httpx_timeout,
-        headers={"User-Agent": "Mozilla/5.0 (compatible; Marvin/1.0)"},
+        headers={"User-Agent": "Mozilla/5.0 (compatible; IcebergEBS/1.0)"},
         follow_redirects=True,
     )
     app.state.http_client = client
@@ -46,7 +46,9 @@ async def lifespan(app: FastAPI):
     await client.aclose()
 
 
-app = FastAPI(title="Marvin", version=get_version(), lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
+app = FastAPI(
+    title="IcebergEBS", version=get_version(), lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None
+)
 
 
 @app.get("/healthz", include_in_schema=False)
@@ -99,12 +101,12 @@ async def openapi_schema(_: WebUser):
 
 @app.get("/docs", include_in_schema=False, response_class=HTMLResponse)
 async def swagger_ui(_: WebUser):
-    return get_swagger_ui_html(openapi_url="/openapi.json", title="Marvin API docs")
+    return get_swagger_ui_html(openapi_url="/openapi.json", title="IcebergEBS API docs")
 
 
 @app.get("/redoc", include_in_schema=False, response_class=HTMLResponse)
 async def redoc(_: WebUser):
-    return get_redoc_html(openapi_url="/openapi.json", title="Marvin API docs")
+    return get_redoc_html(openapi_url="/openapi.json", title="IcebergEBS API docs")
 
 
 @app.exception_handler(303)

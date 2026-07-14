@@ -1,6 +1,6 @@
-# Contributing to Marvin
+# Contributing to IcebergEBS
 
-Thanks for your interest in contributing! Marvin tracks browser and editor extensions
+Thanks for your interest in contributing! IcebergEBS tracks browser and editor extensions
 (Chrome, Edge, VS Code), inspects the packages, and produces a risk score. This guide
 covers the essentials; the deeper architecture notes live in [CLAUDE.md](CLAUDE.md).
 
@@ -12,13 +12,13 @@ are expected to uphold it. Please report unacceptable behaviour as described the
 ## Reporting bugs & requesting features
 
 - **Bugs** and **feature requests** — open an
-  [issue](https://github.com/IcebergAI/marvin/issues).
+  [issue](https://github.com/IcebergAI/IcebergEBS/issues).
 - **Security vulnerabilities** — do **not** open a public issue. Follow
   [SECURITY.md](SECURITY.md) and use GitHub's private vulnerability reporting.
 
 ## Development setup
 
-Marvin targets **Python 3.14+**, FastAPI (fully async), and **PostgreSQL** via
+IcebergEBS targets **Python 3.14+**, FastAPI (fully async), and **PostgreSQL** via
 `asyncpg` — SQLite is not supported, in dev or anywhere else. Dependencies are managed
 with [uv](https://docs.astral.sh/uv/) against the committed `uv.lock`.
 
@@ -36,7 +36,7 @@ in-memory mode. `make test` brings one up via docker compose and runs against it
 
 ```bash
 make test
-# or: MARVIN_TEST_DATABASE_URL=postgresql+asyncpg://marvin:marvin@localhost:5432/marvin uv run pytest tests/ -v
+# or: ICEBERG_EBS_TEST_DATABASE_URL=postgresql+asyncpg://iceberg_ebs:iceberg_ebs@localhost:5432/iceberg_ebs uv run pytest tests/ -v
 ```
 
 ## Before you open a pull request

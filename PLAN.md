@@ -1,11 +1,11 @@
-# Marvin — Roadmap to "SOC-consumable" (product, not infra)
+# IcebergEBS — Roadmap to "SOC-consumable" (product, not infra)
 
 > This document supersedes the original from-scratch build plan. The app is built; this is the
-> forward-looking roadmap to make Marvin consumable by a mid-size SOC.
+> forward-looking roadmap to make IcebergEBS consumable by a mid-size SOC.
 
 ## Context
 
-Marvin today is a solid **single-team extension risk scanner**: multi-store fetchers (Chrome/Edge/
+IcebergEBS today is a solid **single-team extension risk scanner**: multi-store fetchers (Chrome/Edge/
 VS Code), a genuinely capable static inspector ([app/inspector.py](app/inspector.py) — permissions,
 eval/remote-code, CSP, network callouts, obfuscation, MV2, severity-tagged findings with file:line),
 heuristic 0–100 scoring ([app/scoring.py](app/scoring.py)), webhook alerting with SSRF protection +
@@ -19,8 +19,8 @@ extensions, and **known-bad** extensions). This is a phased roadmap, not a singl
 
 **Scope decisions:**
 - **Consumption:** both an analyst UI *and* a first-class API/integration surface.
-- **Fleet inventory:** ingested **from the SOAR via a Marvin API** (bulk upsert) — Marvin does **not**
-  build direct Chrome Enterprise/Intune/EDR connectors. SOAR owns collection; Marvin owns scoring +
+- **Fleet inventory:** ingested **from the SOAR via a IcebergEBS API** (bulk upsert) — IcebergEBS does **not**
+  build direct Chrome Enterprise/Intune/EDR connectors. SOAR owns collection; IcebergEBS owns scoring +
   exposure.
 - **Identity:** SSO (SAML/OIDC) + roles is a **hard rollout gate**.
 - **Detection priorities:** (1) **update diffing**, (2) **malicious-extension feeds**. Automated
@@ -40,7 +40,7 @@ Reusable seams that most epics build on: `fetch_and_store`/`fire_pending_alerts`
 Make it survive a real watchlist and a real team. Mostly backend, low risk.
 
 - **Data retention / pruning** — `FetchLog`, `InstallCountHistory`, `AlertLog` grow unbounded. Add a
-  scheduled prune job (reuse [app/scheduler.py](app/scheduler.py)) with `MARVIN_RETENTION_DAYS`.
+  scheduled prune job (reuse [app/scheduler.py](app/scheduler.py)) with `ICEBERG_EBS_RETENTION_DAYS`.
 - **Pagination + filter + search** on `GET /api/extensions` and the dashboard (store, risk level,
   publisher, free-text, sort, limit/offset) — extend [app/routes/api.py](app/routes/api.py#L216) and
   [dashboard.html](app/templates/dashboard.html). (Author TODO.)

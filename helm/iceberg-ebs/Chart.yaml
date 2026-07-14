@@ -1,5 +1,5 @@
 apiVersion: v2
-name: marvin
+name: iceberg-ebs
 description: Extension risk monitor — tracks browser and editor extensions and scores them for risk
 type: application
 version: 0.1.0

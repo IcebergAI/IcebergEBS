@@ -1,14 +1,19 @@
+# Pin the Compose project name. Without it the project (and therefore container and
+# volume names) is derived from the working directory, which is not necessarily
+# named after the app.
+name: iceberg-ebs
+
 services:
   postgres:
     image: postgres:16-alpine
     environment:
-      POSTGRES_DB: ${POSTGRES_DB:-marvin}
-      POSTGRES_USER: ${POSTGRES_USER:-marvin}
+      POSTGRES_DB: ${POSTGRES_DB:-iceberg_ebs}
+      POSTGRES_USER: ${POSTGRES_USER:-iceberg_ebs}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-marvin} -d ${POSTGRES_DB:-marvin}"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-iceberg_ebs} -d ${POSTGRES_DB:-iceberg_ebs}"]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -17,12 +22,12 @@ services:
   app:
     build: .
     environment:
-      MARVIN_DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-marvin}:${POSTGRES_PASSWORD}@postgres/${POSTGRES_DB:-marvin}
-      MARVIN_ADMIN_USERNAME: ${MARVIN_ADMIN_USERNAME}
-      MARVIN_ADMIN_PASSWORD: ${MARVIN_ADMIN_PASSWORD}
-      MARVIN_SECRET_KEY: ${MARVIN_SECRET_KEY}
-      MARVIN_APP_BASE_URL: ${MARVIN_APP_BASE_URL:-}
-      MARVIN_SECURE_COOKIES: "true"
+      ICEBERG_EBS_DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-iceberg_ebs}:${POSTGRES_PASSWORD}@postgres/${POSTGRES_DB:-iceberg_ebs}
+      ICEBERG_EBS_ADMIN_USERNAME: ${ICEBERG_EBS_ADMIN_USERNAME}
+      ICEBERG_EBS_ADMIN_PASSWORD: ${ICEBERG_EBS_ADMIN_PASSWORD}
+      ICEBERG_EBS_SECRET_KEY: ${ICEBERG_EBS_SECRET_KEY}
+      ICEBERG_EBS_APP_BASE_URL: ${ICEBERG_EBS_APP_BASE_URL:-}
+      ICEBERG_EBS_SECURE_COOKIES: "true"
     depends_on:
       postgres:
         condition: service_healthy

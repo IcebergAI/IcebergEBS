@@ -42,7 +42,7 @@ async def test_export_csv(client, test_db, admin_user):
     assert r.status_code == 200
     assert r.headers["content-type"].startswith("text/csv")
     assert "attachment" in r.headers["content-disposition"]
-    assert "marvin-extensions.csv" in r.headers["content-disposition"]
+    assert "icebergebs-extensions.csv" in r.headers["content-disposition"]
 
     reader = list(csv.DictReader(io.StringIO(r.text)))
     assert len(reader) == 2

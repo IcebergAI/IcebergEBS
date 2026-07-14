@@ -72,7 +72,7 @@ def create_scheduler(client: httpx.AsyncClient) -> AsyncIOScheduler:
         id="watchlist_refresh",
         replace_existing=True,
     )
-    # Daily data-retention prune, only when MARVIN_RETENTION_DAYS is configured.
+    # Daily data-retention prune, only when ICEBERG_EBS_RETENTION_DAYS is configured.
     # run_retention_prune is itself a no-op when disabled, but skipping the job
     # entirely avoids a pointless daily wakeup on the default (disabled) config.
     if settings.retention_days > 0:

@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Marvin — Bulk import{% endblock %}
+{% block title %}IcebergEBS — Bulk import{% endblock %}
 {% block nav_add %}active{% endblock %}
 
 {% block content %}
@@ -7,7 +7,7 @@
   <h1 class="page-title">Bulk import</h1>
   <p class="page-sub mb-6">Paste many extensions at once — one per line. Each line is either
     <code class="mono">store,id</code> (e.g. <code class="mono">vscode,ms-python.python</code>) or a full store URL.
-    Marvin fetches, analyses and scores each one, skipping any already tracked.</p>
+    IcebergEBS fetches, analyses and scores each one, skipping any already tracked.</p>
 
   <div class="surface p-6" x-data="bulkImport()">
     <label class="label-cap block mb-1.5">Extensions</label>

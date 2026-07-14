@@ -1,5 +1,5 @@
 image:
-  repository: ghcr.io/yourorg/marvin
+  repository: ghcr.io/yourorg/icebergebs
   tag: latest
   pullPolicy: IfNotPresent
 
@@ -7,22 +7,22 @@ image:
 # independently refresh watchlisted extensions and write duplicate AlertLog rows.
 replicaCount: 1
 
-marvin:
+icebergEbs:
   adminUsername: admin
   adminPassword: ""        # required — set via --set or existingSecret; never commit a value here
   secretKey: ""            # required — set via --set or existingSecret; never commit a value here
-  appBaseUrl: ""           # e.g. https://marvin.example.com; included as marvin_url in webhook payloads
+  appBaseUrl: ""           # e.g. https://icebergebs.example.com; included as iceberg_ebs_url in webhook payloads
   fetchIntervalMinutes: 60
   secureCookies: true
 
 postgresql:
   auth:
-    username: marvin
+    username: iceberg_ebs
     password: ""           # required — set via --set; never commit a value here
-    database: marvin
+    database: iceberg_ebs
 
 ingress:
-  host: marvin.example.com
+  host: icebergebs.example.com
   className: nginx
   certManagerIssuer: letsencrypt-prod  # set to "" to disable cert-manager annotation
 

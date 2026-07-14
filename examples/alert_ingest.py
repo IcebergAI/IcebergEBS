@@ -1,18 +1,18 @@
 #!/usr/bin/env python3
 """
-Marvin alert ingest — polls the Marvin alert log and submits new entries to a
+IcebergEBS alert ingest — polls the IcebergEBS alert log and submits new entries to a
 ticketing system.
 
 Usage:
     python alert_ingest.py
 
 Configuration (environment variables):
-    MARVIN_URL          Base URL of your Marvin instance, e.g. https://marvin.example.com
-    MARVIN_USERNAME     Marvin account username
-    MARVIN_PASSWORD     Marvin account password
+    ICEBERG_EBS_URL          Base URL of your IcebergEBS instance, e.g. https://icebergebs.example.com
+    ICEBERG_EBS_USERNAME     IcebergEBS account username
+    ICEBERG_EBS_PASSWORD     IcebergEBS account password
     POLL_INTERVAL       Seconds between polls (default: 300)
     STATE_FILE          Path to the JSON file used to track the last seen alert ID
-                        (default: .marvin_ingest_state.json)
+                        (default: .iceberg_ebs_ingest_state.json)
 
 The script persists the highest alert ID it has processed in STATE_FILE so that
 restarts and network interruptions never cause duplicate tickets.
@@ -33,11 +33,11 @@ logging.basicConfig(
 )
 log = logging.getLogger(__name__)
 
-MARVIN_URL = os.environ["MARVIN_URL"].rstrip("/")
-MARVIN_USERNAME = os.environ["MARVIN_USERNAME"]
-MARVIN_PASSWORD = os.environ["MARVIN_PASSWORD"]
+ICEBERG_EBS_URL = os.environ["ICEBERG_EBS_URL"].rstrip("/")
+ICEBERG_EBS_USERNAME = os.environ["ICEBERG_EBS_USERNAME"]
+ICEBERG_EBS_PASSWORD = os.environ["ICEBERG_EBS_PASSWORD"]
 POLL_INTERVAL = int(os.environ.get("POLL_INTERVAL", "300"))
-STATE_FILE = Path(os.environ.get("STATE_FILE", ".marvin_ingest_state.json"))
+STATE_FILE = Path(os.environ.get("STATE_FILE", ".iceberg_ebs_ingest_state.json"))
 
 # How many alert log entries to fetch per poll. The API accepts up to 500.
 FETCH_LIMIT = 500
@@ -53,14 +53,14 @@ SUCCESSFUL_ONLY = True
 # ---------------------------------------------------------------------------
 
 def submit_ticket(alert: dict) -> None:
-    """Create a ticket in your internal system for a single Marvin alert.
+    """Create a ticket in your internal system for a single IcebergEBS alert.
 
     ``alert`` is a dict with these keys:
-        id          int     Marvin alert log ID (already deduplicated)
+        id          int     IcebergEBS alert log ID (already deduplicated)
         sent_at     str     ISO-8601 timestamp of when the webhook fired
         event_type  str     One of: risk_level_change, publisher_change,
                             permission_change, new_version
-        extension_id int    Marvin's internal extension ID
+        extension_id int    IcebergEBS's internal extension ID
         ext_name    str     Human-readable extension name
         dest_label  str     Alert destination label
         success     bool    Whether the webhook delivery succeeded
@@ -85,7 +85,7 @@ def _ticket_title(alert: dict) -> str:
         "new_version": "New version released",
     }
     label = labels.get(alert["event_type"], alert["event_type"])
-    return f"Marvin: {label} — {alert['ext_name']}"
+    return f"IcebergEBS: {label} — {alert['ext_name']}"
 
 
 def _ticket_body(alert: dict) -> str:
@@ -116,37 +116,37 @@ def save_state(state: dict) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Marvin API client
+# IcebergEBS API client
 # ---------------------------------------------------------------------------
 
-class MarvinClient:
+class IcebergEBSClient:
     def __init__(self) -> None:
         self._session = requests.Session()
-        self._session.headers["User-Agent"] = "marvin-alert-ingest/1.0"
+        self._session.headers["User-Agent"] = "icebergebs-alert-ingest/1.0"
         self._authenticated = False
 
     def login(self) -> None:
         resp = self._session.post(
-            f"{MARVIN_URL}/login",
-            data={"username": MARVIN_USERNAME, "password": MARVIN_PASSWORD},
+            f"{ICEBERG_EBS_URL}/login",
+            data={"username": ICEBERG_EBS_USERNAME, "password": ICEBERG_EBS_PASSWORD},
             allow_redirects=False,
             timeout=15,
         )
         # A successful login redirects to /; a failed login stays on /login.
-        if resp.status_code not in (302, 303) or "marvin_session" not in self._session.cookies:
+        if resp.status_code not in (302, 303) or "iceberg_ebs_session" not in self._session.cookies:
             raise RuntimeError(
                 f"Login failed (status {resp.status_code}). "
-                "Check MARVIN_USERNAME and MARVIN_PASSWORD."
+                "Check ICEBERG_EBS_USERNAME and ICEBERG_EBS_PASSWORD."
             )
         self._authenticated = True
-        log.info("Logged in to %s", MARVIN_URL)
+        log.info("Logged in to %s", ICEBERG_EBS_URL)
 
     def fetch_alerts(self, limit: int = FETCH_LIMIT) -> list[dict]:
         if not self._authenticated:
             self.login()
 
         resp = self._session.get(
-            f"{MARVIN_URL}/api/alerts/log",
+            f"{ICEBERG_EBS_URL}/api/alerts/log",
             params={"limit": limit},
             timeout=15,
         )
@@ -157,7 +157,7 @@ class MarvinClient:
             self._authenticated = False
             self.login()
             resp = self._session.get(
-                f"{MARVIN_URL}/api/alerts/log",
+                f"{ICEBERG_EBS_URL}/api/alerts/log",
                 params={"limit": limit},
                 timeout=15,
             )
@@ -170,7 +170,7 @@ class MarvinClient:
 # Poll loop
 # ---------------------------------------------------------------------------
 
-def poll(client: MarvinClient, state: dict) -> None:
+def poll(client: IcebergEBSClient, state: dict) -> None:
     try:
         alerts = client.fetch_alerts()
     except requests.RequestException as exc:
@@ -213,8 +213,8 @@ def poll(client: MarvinClient, state: dict) -> None:
 
 
 def main() -> None:
-    log.info("Starting Marvin alert ingest (poll interval: %ds)", POLL_INTERVAL)
-    client = MarvinClient()
+    log.info("Starting IcebergEBS alert ingest (poll interval: %ds)", POLL_INTERVAL)
+    client = IcebergEBSClient()
     state = load_state()
     log.info("Resuming from alert ID %d", state["last_seen_id"])
 

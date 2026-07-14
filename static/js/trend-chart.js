@@ -1,5 +1,5 @@
 /* ─────────────────────────────────────────────────────────────
-   Marvin · Risk-trend chart renderer  (CSP-safe, external file)
+   IcebergEBS · Risk-trend chart renderer  (CSP-safe, external file)
    Drop into  static/js/trend-chart.js  and load with:
      <script src="/static/js/trend-chart.js"></script>
    (Inline scripts are blocked by the CSP — see CLAUDE.md — so this

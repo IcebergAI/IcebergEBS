@@ -1,9 +1,9 @@
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: {{ include "marvin.fullname" . }}
+  name: {{ include "iceberg-ebs.fullname" . }}
   labels:
-    {{- include "marvin.labels" . | nindent 4 }}
+    {{- include "iceberg-ebs.labels" . | nindent 4 }}
   annotations:
     nginx.ingress.kubernetes.io/ssl-redirect: "true"
     nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
@@ -12,7 +12,7 @@ metadata:
     nginx.ingress.kubernetes.io/limit-rps: "2"
     nginx.ingress.kubernetes.io/limit-connections: "20"
     nginx.ingress.kubernetes.io/configuration-snippet: |
-      add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'sha256-KhejTvJfrnJvlOpLJujMQ/zWMQZiBfWaLFOz/LgKBek=' https://cdn.tailwindcss.com https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'" always;
+      add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'sha256-+Eb7yRWu45ifRb64zPIDP0hvsT4OloSS8kNklIXpCO4=' https://cdn.tailwindcss.com https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'" always;
       add_header Permissions-Policy "accelerometer=(), camera=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), payment=(), usb=()" always;
     {{- if .Values.ingress.certManagerIssuer }}
     cert-manager.io/cluster-issuer: {{ .Values.ingress.certManagerIssuer | quote }}
@@ -22,7 +22,7 @@ spec:
   tls:
     - hosts:
         - {{ .Values.ingress.host }}
-      secretName: {{ include "marvin.fullname" . }}-tls
+      secretName: {{ include "iceberg-ebs.fullname" . }}-tls
   rules:
     - host: {{ .Values.ingress.host }}
       http:
@@ -31,6 +31,6 @@ spec:
             pathType: Prefix
             backend:
               service:
-                name: {{ include "marvin.fullname" . }}
+                name: {{ include "iceberg-ebs.fullname" . }}
                 port:
                   number: 8000

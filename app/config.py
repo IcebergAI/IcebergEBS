@@ -6,8 +6,8 @@ class Settings(BaseSettings):
     admin_username: str
     admin_password: SecretStr
     secret_key: SecretStr
-    database_url: str = "postgresql+asyncpg://marvin:marvin@localhost:5432/marvin"
-    session_cookie_name: str = "marvin_session"
+    database_url: str = "postgresql+asyncpg://iceberg_ebs:iceberg_ebs@localhost:5432/iceberg_ebs"
+    session_cookie_name: str = "iceberg_ebs_session"
     session_max_age: int = 86400
     secure_cookies: bool = True
     fetch_interval_minutes: int = 60
@@ -24,9 +24,9 @@ class Settings(BaseSettings):
     login_max_attempts: int = 5
     login_attempt_window_seconds: int = 300
     login_lockout_seconds: int = 300
-    app_base_url: str = ""  # e.g. "https://marvin.example.com" — used in webhook payloads
+    app_base_url: str = ""  # e.g. "https://icebergebs.example.com" — used in webhook payloads
 
-    model_config = SettingsConfigDict(env_file=".env", env_prefix="MARVIN_")
+    model_config = SettingsConfigDict(env_file=".env", env_prefix="ICEBERG_EBS_")
 
 
 settings = Settings()

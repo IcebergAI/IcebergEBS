@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to Marvin are documented here.
+All notable changes to IcebergEBS are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
@@ -35,11 +35,18 @@ release to diff against.
 - **Fetch-health surfacing** on the dashboard, plus unauthenticated `/healthz` (liveness)
   and `/readyz` (readiness) probes for orchestrators (#26).
 - **Data retention pruning** for `FetchLog`, `InstallCountHistory`, and `AlertLog`, gated by
-  `MARVIN_RETENTION_DAYS` (#22).
+  `ICEBERG_EBS_RETENTION_DAYS` (#22).
 - **API keys** (bearer tokens, read-only supported) for machine-to-machine access.
 
 ### Changed
 
+- **Renamed from Marvin to IcebergEBS**, ahead of the repository being made public. This
+  renames the product, the repository (`IcebergAI/IcebergEBS`), and the internal
+  identifiers: the config env prefix is now **`ICEBERG_EBS_`** (was `MARVIN_`), the default
+  Postgres user/database is `iceberg_ebs`, the session cookie is `iceberg_ebs_session`, API
+  keys are prefixed `ebs_`, and the webhook payload field `marvin_url` is now
+  `iceberg_ebs_url`. There was no released version and no deployment to migrate, so no
+  compatibility shim is carried.
 - **PostgreSQL is now the only supported database** — SQLite support removed, in dev, test,
   and production (#27).
 - Schema is managed by **Alembic** instead of hand-rolled migrations (#11).
@@ -89,4 +96,4 @@ release to diff against.
 - Added `LICENSE` (Apache-2.0), `SECURITY.md` (private reporting + an explicit scope of what is
   and is not a trust boundary), `CONTRIBUTING.md`, and `CODE_OF_CONDUCT.md` (#92).
 
-[0.1.0-beta.1]: https://github.com/IcebergAI/marvin/commits/main
+[0.1.0-beta.1]: https://github.com/IcebergAI/IcebergEBS/commits/main

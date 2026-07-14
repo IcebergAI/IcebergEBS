@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
 """
-Marvin → DFIR-IRIS alert ingest.
+IcebergEBS → DFIR-IRIS alert ingest.
 
-Polls the Marvin alert log and creates alerts in DFIR-IRIS for each new entry.
+Polls the IcebergEBS alert log and creates alerts in DFIR-IRIS for each new entry.
 
 Usage:
     python alert_ingest_iris.py
 
 Configuration (environment variables):
-    MARVIN_URL          Base URL of your Marvin instance, e.g. https://marvin.example.com
-    MARVIN_USERNAME     Marvin account username
-    MARVIN_PASSWORD     Marvin account password
+    ICEBERG_EBS_URL          Base URL of your IcebergEBS instance, e.g. https://icebergebs.example.com
+    ICEBERG_EBS_USERNAME     IcebergEBS account username
+    ICEBERG_EBS_PASSWORD     IcebergEBS account password
 
     IRIS_URL            Base URL of your IRIS instance, e.g. https://iris.example.com
     IRIS_API_KEY        IRIS API key (My settings → API Key in the IRIS UI)
@@ -18,10 +18,10 @@ Configuration (environment variables):
 
     POLL_INTERVAL       Seconds between polls (default: 300)
     STATE_FILE          Path to JSON state file for deduplication
-                        (default: .marvin_iris_state.json)
-    MARVIN_BASE_URL     Optional public URL for deep-linking to extensions in IRIS alerts.
-                        If set, alerts include a link like {MARVIN_BASE_URL}/extensions/{id}.
-                        Usually the same as MARVIN_URL.
+                        (default: .iceberg_ebs_iris_state.json)
+    ICEBERG_EBS_BASE_URL     Optional public URL for deep-linking to extensions in IRIS alerts.
+                        If set, alerts include a link like {ICEBERG_EBS_BASE_URL}/extensions/{id}.
+                        Usually the same as ICEBERG_EBS_URL.
 
 IRIS severity IDs (defaults, adjust to match your instance):
     1 = Informational
@@ -53,21 +53,21 @@ logging.basicConfig(
 )
 log = logging.getLogger(__name__)
 
-MARVIN_URL = os.environ["MARVIN_URL"].rstrip("/")
-MARVIN_USERNAME = os.environ["MARVIN_USERNAME"]
-MARVIN_PASSWORD = os.environ["MARVIN_PASSWORD"]
+ICEBERG_EBS_URL = os.environ["ICEBERG_EBS_URL"].rstrip("/")
+ICEBERG_EBS_USERNAME = os.environ["ICEBERG_EBS_USERNAME"]
+ICEBERG_EBS_PASSWORD = os.environ["ICEBERG_EBS_PASSWORD"]
 
 IRIS_URL = os.environ["IRIS_URL"].rstrip("/")
 IRIS_API_KEY = os.environ["IRIS_API_KEY"]
 IRIS_CUSTOMER_ID = int(os.environ.get("IRIS_CUSTOMER_ID", "1"))
 
 POLL_INTERVAL = int(os.environ.get("POLL_INTERVAL", "300"))
-STATE_FILE = Path(os.environ.get("STATE_FILE", ".marvin_iris_state.json"))
-MARVIN_BASE_URL = os.environ.get("MARVIN_BASE_URL", MARVIN_URL)
+STATE_FILE = Path(os.environ.get("STATE_FILE", ".iceberg_ebs_iris_state.json"))
+ICEBERG_EBS_BASE_URL = os.environ.get("ICEBERG_EBS_BASE_URL", ICEBERG_EBS_URL)
 
 FETCH_LIMIT = 500
 
-# Map Marvin event types to IRIS severity IDs.
+# Map IcebergEBS event types to IRIS severity IDs.
 # publisher_change and risk_level_change are high because they indicate the
 # extension may have changed hands or become more dangerous.
 _SEVERITY = {
@@ -106,44 +106,44 @@ def save_state(state: dict) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Marvin client
+# IcebergEBS client
 # ---------------------------------------------------------------------------
 
-class MarvinClient:
+class IcebergEBSClient:
     def __init__(self) -> None:
         self._session = requests.Session()
-        self._session.headers["User-Agent"] = "marvin-iris-ingest/1.0"
+        self._session.headers["User-Agent"] = "icebergebs-iris-ingest/1.0"
         self._authenticated = False
 
     def login(self) -> None:
         resp = self._session.post(
-            f"{MARVIN_URL}/login",
-            data={"username": MARVIN_USERNAME, "password": MARVIN_PASSWORD},
+            f"{ICEBERG_EBS_URL}/login",
+            data={"username": ICEBERG_EBS_USERNAME, "password": ICEBERG_EBS_PASSWORD},
             allow_redirects=False,
             timeout=15,
         )
-        if resp.status_code not in (302, 303) or "marvin_session" not in self._session.cookies:
+        if resp.status_code not in (302, 303) or "iceberg_ebs_session" not in self._session.cookies:
             raise RuntimeError(
-                f"Marvin login failed (status {resp.status_code}). "
-                "Check MARVIN_USERNAME and MARVIN_PASSWORD."
+                f"IcebergEBS login failed (status {resp.status_code}). "
+                "Check ICEBERG_EBS_USERNAME and ICEBERG_EBS_PASSWORD."
             )
         self._authenticated = True
-        log.info("Logged in to Marvin at %s", MARVIN_URL)
+        log.info("Logged in to IcebergEBS at %s", ICEBERG_EBS_URL)
 
     def fetch_alerts(self, limit: int = FETCH_LIMIT) -> list[dict]:
         if not self._authenticated:
             self.login()
         resp = self._session.get(
-            f"{MARVIN_URL}/api/alerts/log",
+            f"{ICEBERG_EBS_URL}/api/alerts/log",
             params={"limit": limit},
             timeout=15,
         )
         if resp.status_code == 401:
-            log.info("Marvin session expired, re-authenticating")
+            log.info("IcebergEBS session expired, re-authenticating")
             self._authenticated = False
             self.login()
             resp = self._session.get(
-                f"{MARVIN_URL}/api/alerts/log",
+                f"{ICEBERG_EBS_URL}/api/alerts/log",
                 params={"limit": limit},
                 timeout=15,
             )
@@ -161,7 +161,7 @@ class IrisClient:
         self._session.headers.update({
             "Authorization": f"Bearer {IRIS_API_KEY}",
             "Content-Type": "application/json",
-            "User-Agent": "marvin-iris-ingest/1.0",
+            "User-Agent": "icebergebs-iris-ingest/1.0",
         })
 
     def create_alert(self, payload: dict) -> dict:
@@ -187,36 +187,36 @@ def _build_iris_payload(alert: dict) -> dict:
     ext_id = alert["extension_id"]
 
     title_label = _EVENT_TITLES.get(event_type, event_type.replace("_", " ").title())
-    title = f"Marvin: {title_label} — {ext_name}"
+    title = f"IcebergEBS: {title_label} — {ext_name}"
 
     severity_id = _SEVERITY.get(event_type, _DEFAULT_SEVERITY)
 
     context: dict = {
-        "marvin_alert_id": alert["id"],
+        "iceberg_ebs_alert_id": alert["id"],
         "extension_name": ext_name,
         "extension_id": ext_id,
         "event_type": event_type,
         "destination": alert["dest_label"],
         "detected_at": alert["sent_at"],
     }
-    if MARVIN_BASE_URL:
-        context["marvin_url"] = f"{MARVIN_BASE_URL}/extensions/{ext_id}"
+    if ICEBERG_EBS_BASE_URL:
+        context["iceberg_ebs_url"] = f"{ICEBERG_EBS_BASE_URL}/extensions/{ext_id}"
 
     payload: dict = {
         "alert_title": title,
-        "alert_source": "Marvin",
-        "alert_source_ref": f"marvin-{alert['id']}",
+        "alert_source": "IcebergEBS",
+        "alert_source_ref": f"icebergebs-{alert['id']}",
         "alert_source_event_time": alert["sent_at"],
         "alert_customer_id": IRIS_CUSTOMER_ID,
         "alert_severity_id": severity_id,
         "alert_status_id": IRIS_STATUS_NEW,
-        "alert_tags": f"marvin,{event_type}",
+        "alert_tags": f"icebergebs,{event_type}",
         "alert_context": context,
         "alert_source_content": alert,
     }
 
-    if MARVIN_BASE_URL:
-        payload["alert_source_link"] = f"{MARVIN_BASE_URL}/extensions/{ext_id}"
+    if ICEBERG_EBS_BASE_URL:
+        payload["alert_source_link"] = f"{ICEBERG_EBS_BASE_URL}/extensions/{ext_id}"
 
     return payload
 
@@ -225,11 +225,11 @@ def _build_iris_payload(alert: dict) -> dict:
 # Poll loop
 # ---------------------------------------------------------------------------
 
-def poll(marvin: MarvinClient, iris: IrisClient, state: dict) -> None:
+def poll(ebs: IcebergEBSClient, iris: IrisClient, state: dict) -> None:
     try:
-        alerts = marvin.fetch_alerts()
+        alerts = ebs.fetch_alerts()
     except requests.RequestException as exc:
-        log.warning("Failed to fetch Marvin alerts: %s", exc)
+        log.warning("Failed to fetch IcebergEBS alerts: %s", exc)
         return
 
     last_seen = state["last_seen_id"]
@@ -242,7 +242,7 @@ def poll(marvin: MarvinClient, iris: IrisClient, state: dict) -> None:
     all_new.sort(key=lambda a: a["id"])
 
     # Only send successful webhook deliveries to IRIS; failed deliveries indicate
-    # a Marvin-side webhook problem, not a genuine extension event.
+    # a IcebergEBS-side webhook problem, not a genuine extension event.
     to_send = [a for a in all_new if a["success"]]
 
     for alert in to_send:
@@ -250,7 +250,7 @@ def poll(marvin: MarvinClient, iris: IrisClient, state: dict) -> None:
         try:
             result = iris.create_alert(payload)
             log.info(
-                "Created IRIS alert %d for Marvin alert %d (%s: %s)",
+                "Created IRIS alert %d for IcebergEBS alert %d (%s: %s)",
                 result.get("alert_id", "?"),
                 alert["id"],
                 alert["event_type"],
@@ -258,7 +258,7 @@ def poll(marvin: MarvinClient, iris: IrisClient, state: dict) -> None:
             )
         except Exception as exc:
             log.error(
-                "Failed to create IRIS alert for Marvin alert %d: %s",
+                "Failed to create IRIS alert for IcebergEBS alert %d: %s",
                 alert["id"],
                 exc,
             )
@@ -279,17 +279,17 @@ def poll(marvin: MarvinClient, iris: IrisClient, state: dict) -> None:
 
 def main() -> None:
     log.info(
-        "Starting Marvin → IRIS ingest (poll interval: %ds, customer ID: %d)",
+        "Starting IcebergEBS → IRIS ingest (poll interval: %ds, customer ID: %d)",
         POLL_INTERVAL,
         IRIS_CUSTOMER_ID,
     )
-    marvin = MarvinClient()
+    ebs = IcebergEBSClient()
     iris = IrisClient()
     state = load_state()
-    log.info("Resuming from Marvin alert ID %d", state["last_seen_id"])
+    log.info("Resuming from IcebergEBS alert ID %d", state["last_seen_id"])
 
     while True:
-        poll(marvin, iris, state)
+        poll(ebs, iris, state)
         time.sleep(POLL_INTERVAL)
 
 

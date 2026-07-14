@@ -22,18 +22,18 @@ jobs:
       postgres:
         image: postgres:16-alpine
         env:
-          POSTGRES_DB: marvin
-          POSTGRES_USER: marvin
-          POSTGRES_PASSWORD: marvin
+          POSTGRES_DB: iceberg_ebs
+          POSTGRES_USER: iceberg_ebs
+          POSTGRES_PASSWORD: iceberg_ebs
         ports:
           - 5432:5432
         options: >-
-          --health-cmd "pg_isready -U marvin -d marvin"
+          --health-cmd "pg_isready -U iceberg_ebs -d iceberg_ebs"
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
     env:
-      MARVIN_TEST_DATABASE_URL: postgresql+asyncpg://marvin:marvin@localhost:5432/marvin
+      ICEBERG_EBS_TEST_DATABASE_URL: postgresql+asyncpg://iceberg_ebs:iceberg_ebs@localhost:5432/iceberg_ebs
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
