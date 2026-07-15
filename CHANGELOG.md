@@ -151,7 +151,9 @@ release to diff against.
 - **Kubernetes NetworkPolicies (#103)** — the Helm chart adds default-deny ingress plus named hops
   (ingress-controller → app:8000, app → postgres:5432), turning the previously flat namespace into
   a segmented one so a single compromised pod can't reach Postgres directly. Egress is left open
-  (the app must reach the extension stores, webhooks, and TI feeds). Gated behind
-  `networkPolicy.enabled` (default on); requires a CNI that enforces NetworkPolicy (Calico/Cilium).
+  (the app must reach the extension stores, webhooks, and TI feeds). The Bitnami postgresql
+  subchart's own (default-permissive) NetworkPolicy is disabled so it can't union back broader
+  ingress to Postgres. Gated behind `networkPolicy.enabled` (default on); requires a CNI that
+  enforces NetworkPolicy (Calico/Cilium).
 
 [0.1.0-beta.1]: https://github.com/IcebergAI/IcebergEBS/commits/main
