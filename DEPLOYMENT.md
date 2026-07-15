@@ -767,16 +767,18 @@ helm upgrade --install icebergebs helm/iceberg-ebs \
 kubectl rollout status deployment/icebergebs -n icebergebs
 ```
 
-**Always pin an immutable release tag** (`--set image.tag=v0.1.0-beta.1`) from a verified release —
-see [docs/RELEASING.md → Verifying a release](docs/RELEASING.md). Do **not** deploy `:latest` or the
-`:edge` tag: `:edge` is the moving "latest `main`" dev image from `build.yml`, not a release, and a
-mutable tag with the chart's `pullPolicy: IfNotPresent` silently ships stale code on upgrade (#88).
-Verify the image (`cosign verify` / `gh attestation verify`) before rolling it out.
+**`image.tag` is required — the chart has no default** (#88). Pin an immutable release tag
+(`--set image.tag=v0.1.0-beta.1`) from a verified release; an empty tag fails the render rather than
+silently deploying a mutable `:latest`, which with `pullPolicy: IfNotPresent` re-renders an identical
+pod spec on `helm upgrade` (no rollout) and reuses the node's cached image — shipping stale code.
+Do **not** deploy `:latest` or the `:edge` tag (`:edge` is the moving "latest `main`" dev image from
+`build.yml`, not a release). See [docs/RELEASING.md → Verifying a release](docs/RELEASING.md), and
+verify the image (`cosign verify` / `gh attestation verify`) before rolling it out.
 
 > Pinning by **digest** is stronger still, but the chart's `deployment.yaml` renders
 > `repository:tag`, so `--set image.tag=@sha256:…` would produce an invalid `repository:@sha256:…`
-> reference. Chart-level digest support is tracked in **#88**; until then, pin the immutable SemVer
-> tag above.
+> reference. Chart-level digest support (a separate `image.digest` value) is a possible future
+> enhancement; until then, pin the immutable SemVer tag above.
 
 For GitOps (Flux / ArgoCD): use `SealedSecret` or an ExternalSecrets `ExternalSecret` object to inject passwords from your secrets store rather than `--set`, and pin the same immutable release tag there.
 
