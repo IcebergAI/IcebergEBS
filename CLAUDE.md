@@ -158,7 +158,7 @@ Merges to `main` go through the **`icebergai-review-bot`** (an automated reviewe
 - **"Dismiss stale reviews on push" is ON.** Any push — including an empty "nudge" commit — dismisses a fresh approval, and a nudge can race an incoming approval webhook and cancel it. **Never push to an approved (or freshly reviewed) PR unless you have a real change to make.**
 
 **Branch & PR hygiene**
-- One issue per branch, branched from **latest `main`** — **never stack PRs.** A stacked PR whose base branch is deleted on merge is auto-**closed** (not retargeted), silently losing the work.
+- One issue per branch, branched from **latest `main`** — **never stack PRs.** GitHub's *documented* default is to **retarget** an open PR to its base's base branch when the base branch is deleted on merge ([docs](https://docs.github.com/en/pull-requests/collaborating-with-pull-requests/incorporating-changes-from-a-pull-request/merging-a-pull-request)), but stacking is fragile in practice: in this repo **#138 was auto-closed** (not cleanly retargeted) when its stacked base — the #108 PR branch — was deleted on merge, silently losing the work. Branch every PR from `main` so a base merge can't strand it.
 - Clear `mergeable_state: behind` by rebasing onto `main`. Recurring conflicts land on the append-only shared files (`CHANGELOG.md`, `CLAUDE.md`, `DEPLOYMENT.md`) — resolve by keeping **both** entries in order, not by dropping one side.
 - `mergeable_state` cheatsheet: `clean` = ready to merge · `blocked` = missing the required bot review · `behind` = base moved, rebase · `unstable` = a non-required check (often the bot review itself) still running.
 
