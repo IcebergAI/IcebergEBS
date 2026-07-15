@@ -151,25 +151,9 @@ async def fetch_and_store(
     ext.risk_score = risk.total
     ext.risk_detail = json.dumps(risk._asdict())
     if analysis:
-        ext.package_analysis = json.dumps(
-            {
-                "permissions": analysis.permissions,
-                "host_permissions": analysis.host_permissions,
-                "external_domains": analysis.external_domains,
-                "external_urls": analysis.external_urls,
-                "network_callout_urls": analysis.network_callout_urls,
-                "package_sha256": analysis.package_sha256,
-                "archive_sha256": analysis.archive_sha256,
-                "uses_eval": analysis.uses_eval,
-                "uses_remote_code": analysis.uses_remote_code,
-                "obfuscation_score": analysis.obfuscation_score,
-                "file_count": analysis.file_count,
-                "total_size_bytes": analysis.total_size_bytes,
-                "has_minified_code": analysis.has_minified_code,
-                "manifest_version": analysis.manifest_version,
-                "findings": [asdict(finding) for finding in analysis.findings],
-            }
-        )
+        # Serialization lives on the dataclass so the stored field list can't
+        # drift from the render defaults in routes/ui.py (#164).
+        ext.package_analysis = json.dumps(analysis.to_json_dict())
 
     session.add(ext)
     session.add(
