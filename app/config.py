@@ -1,5 +1,9 @@
-from pydantic import SecretStr
+from pydantic import SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# itsdangerous cookie/flash signing is only as strong as secret_key. Reject a
+# weak key at startup rather than silently signing sessions with it.
+_MIN_SECRET_KEY_LENGTH = 32
 
 
 class Settings(BaseSettings):
@@ -27,6 +31,16 @@ class Settings(BaseSettings):
     app_base_url: str = ""  # e.g. "https://icebergebs.example.com" — used in webhook payloads
 
     model_config = SettingsConfigDict(env_file=".env", env_prefix="ICEBERG_EBS_")
+
+    @field_validator("secret_key")
+    @classmethod
+    def _validate_secret_key_length(cls, v: SecretStr) -> SecretStr:
+        if len(v.get_secret_value()) < _MIN_SECRET_KEY_LENGTH:
+            raise ValueError(
+                f"ICEBERG_EBS_SECRET_KEY must be at least {_MIN_SECRET_KEY_LENGTH} characters "
+                '(generate one with: python -c "import secrets; print(secrets.token_hex(32))")'
+            )
+        return v
 
 
 settings = Settings()

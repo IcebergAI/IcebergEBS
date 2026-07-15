@@ -36,12 +36,33 @@ def hash_api_key(raw_key: str) -> str:
     return hashlib.sha256(raw_key.encode()).hexdigest()
 
 
+# bcrypt hashes only the first 72 bytes of its input; a longer password is either
+# silently truncated (older bcrypt) or rejected (recent bcrypt). Silent truncation
+# would let two distinct passwords sharing a 72-byte prefix hash identically (#67),
+# so reject an over-long password explicitly instead of truncating it. The hashing
+# itself is unchanged, so existing stored hashes verify as-is (no migration).
+MAX_PASSWORD_BYTES = 72
+
+
+class PasswordTooLongError(ValueError):
+    """A password exceeds bcrypt's 72-byte hashing limit (#67)."""
+
+
 def _hash_password_sync(password: str) -> str:
-    return bcrypt.hashpw(password.encode(), bcrypt.gensalt(rounds=BCRYPT_ROUNDS)).decode()
+    encoded = password.encode()
+    if len(encoded) > MAX_PASSWORD_BYTES:
+        raise PasswordTooLongError(f"password must be at most {MAX_PASSWORD_BYTES} bytes")
+    return bcrypt.hashpw(encoded, bcrypt.gensalt(rounds=BCRYPT_ROUNDS)).decode()
 
 
 def _verify_password_sync(password: str, hashed: str) -> bool:
-    return bcrypt.checkpw(password.encode(), hashed.encode())
+    encoded = password.encode()
+    if len(encoded) > MAX_PASSWORD_BYTES:
+        # No stored hash can match — over-long passwords are rejected at set time, and
+        # recent bcrypt raises on >72-byte input. Rejecting here for known and unknown
+        # users alike keeps the constant-time username-enumeration defense intact.
+        return False
+    return bcrypt.checkpw(encoded, hashed.encode())
 
 
 async def hash_password(password: str) -> str:
