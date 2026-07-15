@@ -20,3 +20,11 @@ def test_pod_disruption_budget_present():
     p = (_TEMPLATES / "pdb.yaml").read_text()
     assert "kind: PodDisruptionBudget" in p
     assert "maxUnavailable: 0" in p
+
+
+def test_deployment_uses_recreate_strategy_for_singleton():
+    # A PDB only governs voluntary evictions; a rolling update with replicas=1 could
+    # still surge to two pods and run two schedulers. Recreate closes that window (#104).
+    d = (_TEMPLATES / "deployment.yaml").read_text()
+    assert "strategy:" in d
+    assert "type: Recreate" in d

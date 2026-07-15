@@ -8,8 +8,10 @@ image:
 replicaCount: 1
 
 # With replicaCount 1 the PDB uses maxUnavailable: 0 — it blocks *voluntary* disruption
-# (node drains/evictions) so the cluster never runs the singleton at 0 or 2 replicas.
-# Disable it to allow drains (accepting brief downtime). See templates/pdb.yaml.
+# (node drains/evictions) so an eviction can't take the singleton to 0. Rollouts are
+# handled separately by the Deployment's `strategy: Recreate`, which prevents the
+# two-scheduler window a rolling update would otherwise open. Disable the PDB to allow
+# drains (accepting brief downtime). See templates/pdb.yaml + templates/deployment.yaml.
 podDisruptionBudget:
   enabled: true
 

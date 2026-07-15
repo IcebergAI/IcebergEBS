@@ -6,6 +6,14 @@ metadata:
     {{- include "iceberg-ebs.labels" . | nindent 4 }}
 spec:
   replicas: {{ .Values.replicaCount }}
+  # Recreate (not the default RollingUpdate): with replicas=1 a rolling update's
+  # default maxSurge would briefly run a second pod, and two APScheduler processes
+  # duplicate watchlist refreshes + AlertLog rows (the exact thing replicas=1 exists
+  # to prevent). Recreate terminates the old pod before starting the new one, so a
+  # deploy is never a two-scheduler window — at the cost of a brief downtime gap on
+  # each rollout, which is acceptable for this single-replica app (#104).
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       {{- include "iceberg-ebs.selectorLabels" . | nindent 6 }}

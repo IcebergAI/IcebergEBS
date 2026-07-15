@@ -7,11 +7,12 @@ metadata:
     {{- include "iceberg-ebs.labels" . | nindent 4 }}
 spec:
   # replicaCount is mandatorily 1 (APScheduler is per-process — two pods would double
-  # every watchlist refresh and AlertLog row). maxUnavailable: 0 therefore blocks
-  # *voluntary* disruption (node drains, evictions) entirely, so the cluster never
-  # runs the singleton at zero or two replicas behind your back. To drain a node on
-  # purpose, delete this PDB (or set podDisruptionBudget.enabled=false) and accept the
-  # brief downtime.
+  # every watchlist refresh and AlertLog row). A PDB only governs *voluntary* disruption
+  # (node drains, evictions), so maxUnavailable: 0 stops an eviction from taking the
+  # singleton to zero behind your back. It does NOT constrain rollouts — the two-pod
+  # rollout window is prevented separately by the Deployment's `strategy: Recreate`
+  # (see deployment.yaml). To drain a node on purpose, delete this PDB (or set
+  # podDisruptionBudget.enabled=false) and accept the brief downtime.
   maxUnavailable: 0
   selector:
     matchLabels:
