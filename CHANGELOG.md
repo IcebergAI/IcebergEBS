@@ -129,5 +129,11 @@ release to diff against.
   doesn't match the request host (or `ICEBERG_EBS_TRUSTED_ORIGINS`), as defence-in-depth over the
   existing `SameSite=Lax` posture (#16). Bearer-token (M2M) requests carry no session cookie and are
   never checked, so the API's primary credential is unaffected.
+- **Hardened the Docker Compose stack (#102)** — the `app` and `nginx` services now run with
+  `no-new-privileges`, `cap_drop: [ALL]` (nginx adds back only `NET_BIND_SERVICE` + the master's
+  user-drop caps), a **read-only root filesystem** with tmpfs for the few writable paths, and
+  healthchecks (app → `/readyz`, nginx → a plain-HTTP `/nginx-health`); `postgres` gets
+  `no-new-privileges` (keeping the caps its entrypoint needs). nginx now waits for the app to be
+  `service_healthy` before starting.
 
 [0.1.0-beta.1]: https://github.com/IcebergAI/IcebergEBS/commits/main
