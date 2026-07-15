@@ -42,6 +42,11 @@ release to diff against.
   (`BACKUP_INTERVAL_SECONDS`/`BACKUP_RETENTION_DAYS`), plus a restore runbook, pre-upgrade dump step,
   Helm backup options (Bitnami CronJob / VolumeSnapshots / external managed Postgres), and an explicit
   RPO in `DEPLOYMENT.md → Backups & disaster recovery` (#86).
+- A **browser-level UI smoke** CI job (`ui`) — boots the real stack (Postgres + uvicorn behind nginx
+  with `security_headers.conf`) and drives it with Playwright: login → dashboard renders → topbar
+  search, asserting no CSP violation or uncaught JS error. This catches breakage the API/unit suite
+  can't see — most importantly the hand-maintained inline-script CSP hash drifting. Playwright runs
+  from a throwaway venv, so it needs no `uv.lock` entry (#100).
 
 ### Changed
 

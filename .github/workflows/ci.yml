@@ -1,7 +1,7 @@
 name: CI
 
 # Correctness + static-analysis gates. Runs on every PR and on pushes to main.
-# All five jobs are required to pass (configure as required checks in branch
+# All six jobs are required to pass (configure as required checks in branch
 # protection). Tooling config and the dependency manifest both live in
 # pyproject.toml; dev/test tooling is the `dev` dependency-group. `uv sync
 # --locked` fails if uv.lock has drifted from pyproject.toml, so a dependency
@@ -61,8 +61,8 @@ jobs:
       # surfacing as a confusing sync error further down.
       - run: uv lock --check
       - run: uv sync --locked
-      - run: uv run ruff check app tests
-      - run: uv run ruff format --check app tests alembic
+      - run: uv run ruff check app tests e2e
+      - run: uv run ruff format --check app tests alembic e2e
       # Dead-code gate (#101). Run via uvx (version-pinned) rather than the dev group:
       # adding vulture to the group would need a uv.lock refresh, and — like zizmor —
       # it's a standalone linter. Config + whitelist live in pyproject.toml.
@@ -134,3 +134,63 @@ jobs:
         run: |
           go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
           "$(go env GOPATH)/bin/actionlint" -color
+
+  # Browser-level UI smoke (#100): boots the real stack (Postgres + uvicorn behind
+  # nginx with security_headers.conf) and drives it with Playwright, so a CSP
+  # violation — e.g. the hand-maintained inline-script hash drifting — or a broken
+  # Alpine component fails CI. The API/unit suite can see none of that. Playwright is
+  # installed into a throwaway venv, not the dev group: like zizmor/vulture it's a
+  # standalone tool, so it needs no uv.lock entry (and can't get one here — uv.lock's
+  # Python 3.14 pin isn't required just to run a browser against the running stack).
+  ui:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      # Throwaway credentials for the ephemeral CI stack only — not secrets.
+      POSTGRES_PASSWORD: ci_postgres_pw
+      ICEBERG_EBS_ADMIN_USERNAME: admin
+      ICEBERG_EBS_ADMIN_PASSWORD: ci-admin-password
+      ICEBERG_EBS_SECRET_KEY: ci-secret-key-not-a-real-secret-32chars
+      BASE_URL: https://localhost
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+      - name: Generate self-signed dev cert
+        run: bash nginx/generate-dev-cert.sh
+      - name: Write .env for the stack
+        run: |
+          {
+            echo "POSTGRES_PASSWORD=${POSTGRES_PASSWORD}"
+            echo "ICEBERG_EBS_ADMIN_USERNAME=${ICEBERG_EBS_ADMIN_USERNAME}"
+            echo "ICEBERG_EBS_ADMIN_PASSWORD=${ICEBERG_EBS_ADMIN_PASSWORD}"
+            echo "ICEBERG_EBS_SECRET_KEY=${ICEBERG_EBS_SECRET_KEY}"
+            echo "ICEBERG_EBS_APP_BASE_URL=${BASE_URL}"
+          } > .env
+      - name: Start the stack
+        run: docker compose up -d --build
+      - name: Wait for the app behind nginx
+        run: |
+          for _ in $(seq 1 60); do
+            if curl -ksSf "${BASE_URL}/login" >/dev/null 2>&1; then echo "stack up"; exit 0; fi
+            sleep 5
+          done
+          echo "stack did not become ready" >&2
+          docker compose logs
+          exit 1
+      - name: Install Playwright + Chromium (ephemeral, outside uv.lock)
+        run: |
+          python3 -m venv "${RUNNER_TEMP}/e2e"
+          "${RUNNER_TEMP}/e2e/bin/pip" install --quiet --upgrade pip
+          "${RUNNER_TEMP}/e2e/bin/pip" install --quiet pytest-playwright pytest-asyncio
+          "${RUNNER_TEMP}/e2e/bin/playwright" install --with-deps chromium
+      - name: Run UI smoke
+        run: |
+          "${RUNNER_TEMP}/e2e/bin/pytest" e2e/ -v
+      - name: Dump stack logs on failure
+        if: failure()
+        run: docker compose logs
+      - name: Tear down
+        if: always()
+        run: docker compose down -v
