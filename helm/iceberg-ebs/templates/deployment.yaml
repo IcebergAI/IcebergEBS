@@ -36,7 +36,11 @@ spec:
           emptyDir: {}
       containers:
         - name: iceberg-ebs
-          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          # image.tag has no default (#88): an empty value fails the render via `required`
+          # rather than silently deploying a mutable `:latest`, which with IfNotPresent
+          # ships stale code on upgrade and can't be rolled back to a known-good build.
+          # Pin an immutable release tag: --set image.tag=v0.1.0-beta.1 (see DEPLOYMENT.md).
+          image: "{{ .Values.image.repository }}:{{ required "image.tag is required — pin an immutable release tag, e.g. --set image.tag=v0.1.0-beta.1 (never :latest); see DEPLOYMENT.md and docs/RELEASING.md (#88)" .Values.image.tag }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           ports:
             - containerPort: 8000
