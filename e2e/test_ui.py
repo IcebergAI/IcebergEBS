@@ -62,6 +62,12 @@ def test_login_and_dashboard_render(page: Page, collect_errors):
     _login(page)
     # The dashboard shell rendered (a known stat tile), proving auth + template + assets.
     expect(page.locator("text=Fetch health").first).to_be_visible()
+    # Alpine must actually load — the interactive controls depend on it, and a plain
+    # resource error from a removed/broken Alpine CDN script would otherwise slip past the
+    # error filters. window.Alpine is defined once the library loads; its *expression eval*
+    # is separately CSP-blocked today (#106), so this asserts the script loaded, not that
+    # components fully initialise (that assertion can tighten once #106 lands).
+    page.wait_for_function("() => typeof window.Alpine !== 'undefined'")
     _assert_no_critical_errors(collect_errors)
 
 

@@ -180,10 +180,11 @@ jobs:
           docker compose logs
           exit 1
       - name: Install Playwright + Chromium (ephemeral, outside uv.lock)
+        # Pinned to reviewed versions (like uvx vulture@/zizmor@) so the runner
+        # toolchain is reproducible; bump alongside a Chromium refresh.
         run: |
           python3 -m venv "${RUNNER_TEMP}/e2e"
-          "${RUNNER_TEMP}/e2e/bin/pip" install --quiet --upgrade pip
-          "${RUNNER_TEMP}/e2e/bin/pip" install --quiet pytest-playwright pytest-asyncio
+          "${RUNNER_TEMP}/e2e/bin/pip" install --quiet 'pytest-playwright==0.8.0' 'playwright==1.61.0'
           "${RUNNER_TEMP}/e2e/bin/playwright" install --with-deps chromium
       - name: Run UI smoke
         run: |
