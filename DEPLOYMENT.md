@@ -826,17 +826,20 @@ restore) into `./backups` on the host on a fixed cadence, keeping `BACKUP_RETENT
 **Restore (Compose):**
 
 ```bash
-# 1. Stop the app so nothing writes mid-restore (leave postgres up).
-docker compose stop app
+# 1. Stop the app AND the backup service so nothing writes (or dumps) mid-restore
+#    (leave postgres up).
+docker compose stop app backup
 
 # 2. Restore a chosen dump into the existing database (--clean --if-exists drops objects first;
-#    add --create to restore into a fresh DB instead). pg_restore reads the -Fc archive.
+#    add --create to restore into a fresh DB instead). pg_restore reads the -Fc archive on the
+#    container's stdin. The command runs in single quotes so $POSTGRES_USER/$POSTGRES_DB are
+#    expanded by the *container's* shell (Compose reads .env but doesn't export it to your shell).
 docker compose exec -T postgres \
-  pg_restore -U "$POSTGRES_USER" -d "$POSTGRES_DB" --clean --if-exists \
+  sh -c 'pg_restore -U "$POSTGRES_USER" -d "$POSTGRES_DB" --clean --if-exists' \
   < ./backups/iceberg_ebs-<timestamp>.pgc
 
-# 3. Bring the app back. Alembic runs at startup and no-ops if the schema already matches.
-docker compose start app
+# 3. Bring the app (and backup) back. Alembic runs at startup and no-ops if the schema matches.
+docker compose start app backup
 ```
 
 ### Kubernetes (Helm)
@@ -854,8 +857,9 @@ The chart does not template a backup CronJob; choose one of:
 
 Restore mirrors the Compose flow: scale the app to 0 (`kubectl scale deploy/icebergebs --replicas=0`),
 `pg_restore` the dump into the database, then scale back to 1. Note the NetworkPolicy (#103) default-denies
-ingress to Postgres, so a backup/restore CronJob needs its own explicit rule (or run it as the app's
-service account) to reach `postgres:5432`.
+ingress to Postgres, so a backup/restore Job needs either its own explicit rule or to carry the app pod's
+labels (NetworkPolicy matches on pod/namespace selectors, so the existing allow-postgres-from-app rule
+admits any pod with those labels) to reach `postgres:5432`.
 
 ### Before every upgrade
 
@@ -863,5 +867,9 @@ Take a fresh dump **before** a Postgres major-version bump or an app upgrade tha
 migration — both rewrite data and are not trivially reversible:
 
 ```bash
-docker compose exec -T postgres pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Fc > ./backups/pre-upgrade-$(date +%Y%m%d-%H%M%S).pgc
+# Single-quoted so $POSTGRES_USER/$POSTGRES_DB expand in the container (Compose reads .env
+# but doesn't export it to your shell); the output redirect writes to a host file.
+docker compose exec -T postgres \
+  sh -c 'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Fc' \
+  > "./backups/pre-upgrade-$(date +%Y%m%d-%H%M%S).pgc"
 ```

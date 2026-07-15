@@ -4,7 +4,9 @@ from pathlib import Path
 
 import yaml
 
-_COMPOSE = Path(__file__).resolve().parent.parent / "docker-compose.yml"
+_ROOT = Path(__file__).resolve().parent.parent
+_COMPOSE = _ROOT / "docker-compose.yml"
+_DEPLOYMENT = _ROOT / "DEPLOYMENT.md"
 
 
 def _services():
@@ -51,3 +53,13 @@ def test_backup_has_db_credentials():
     env = _services()["backup"]["environment"]
     assert "PGPASSWORD" in env
     assert "POSTGRES_USER" in env and "POSTGRES_DB" in env
+
+
+def test_restore_docs_use_container_side_expansion():
+    # Compose reads .env but doesn't export it to the invoking shell, so $POSTGRES_USER /
+    # $POSTGRES_DB must be expanded inside the container (single-quoted `sh -c`), not by the
+    # host shell where they'd be empty. Also stop the backup service during a restore.
+    doc = _DEPLOYMENT.read_text()
+    assert "sh -c 'pg_restore -U \"$POSTGRES_USER\" -d \"$POSTGRES_DB\"" in doc
+    assert "sh -c 'pg_dump -U \"$POSTGRES_USER\" -d \"$POSTGRES_DB\"" in doc
+    assert "docker compose stop app backup" in doc
