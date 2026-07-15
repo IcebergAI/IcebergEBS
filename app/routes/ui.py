@@ -13,19 +13,19 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 from app.auth import authenticate_session, clear_session, get_current_user, set_session, verify_credentials
 from app.config import settings
 from app.deps import AdminUserUI, SessionDep, WebUser
+from app.extension_queries import (
+    EXPOSURE_EXPR,
+    RISK_BANDS,
+    SORT_COLUMNS,
+    ExtensionFilters,
+    build_extension_query,
+    count_rows,
+)
 from app.models import AlertDestination, AlertRule, ApiKey, Extension, FetchLog, InstallObservation, User
 from app.ratelimit import login_limiter
 from app.routes.alerts import get_alert_log
-from app.routes.api import (
-    _EXPOSURE_EXPR,
-    _RISK_BANDS,
-    _SORT_COLUMNS,
-    ExtensionFilters,
-    _count,
-    _safe_json,
-    build_extension_query,
-)
 from app.threat_intel import build_threat_intel_indicators
+from app.utils import safe_json_loads
 from app.version import get_version
 
 router = APIRouter()
@@ -324,9 +324,9 @@ async def dashboard(
     # to defaults rather than rejecting.
     if store not in ("chrome", "vscode", "edge"):
         store = None
-    if risk not in _RISK_BANDS:
+    if risk not in RISK_BANDS:
         risk = None
-    if sort not in _SORT_COLUMNS:
+    if sort not in SORT_COLUMNS:
         sort = "risk_score"
     if order not in ("asc", "desc"):
         order = "desc"
@@ -390,7 +390,7 @@ async def dashboard(
                 Extension.install_footprint > 0,
                 Extension.risk_score.is_not(None),
             )
-            .order_by(_EXPOSURE_EXPR.desc())
+            .order_by(EXPOSURE_EXPR.desc())
             .limit(5)
         )
     ).all()
@@ -411,7 +411,7 @@ async def dashboard(
     # 422-ing dependency) — the dashboard doesn't filter by publisher.
     filters = ExtensionFilters(store=store, risk=risk, q=q, sort=sort, order=order)
     stmt = build_extension_query(current_user.id, filters)
-    filtered_total = await _count(session, stmt)
+    filtered_total = await count_rows(session, stmt)
     total_pages = max((filtered_total + _DASHBOARD_PAGE_SIZE - 1) // _DASHBOARD_PAGE_SIZE, 1)
     page = min(page, total_pages)
     offset = (page - 1) * _DASHBOARD_PAGE_SIZE
@@ -534,9 +534,9 @@ async def extension_detail(
     # Parse defensively: a partial write or manual DB edit could leave invalid JSON,
     # which must not 500 the detail page — fall back and log instead (#61, mirroring
     # the JSON API's #17 hardening).
-    permissions = _safe_json(ext.permissions, "[]", "permissions", ext.id)
-    risk_detail = _safe_json(ext.risk_detail, "null", "risk_detail", ext.id)
-    package_analysis = _safe_json(ext.package_analysis, "null", "package_analysis", ext.id)
+    permissions = safe_json_loads(ext.permissions, "[]", "permissions", ext.id)
+    risk_detail = safe_json_loads(ext.risk_detail, "null", "risk_detail", ext.id)
+    package_analysis = safe_json_loads(ext.package_analysis, "null", "package_analysis", ext.id)
 
     host_permissions = []
     if package_analysis:
