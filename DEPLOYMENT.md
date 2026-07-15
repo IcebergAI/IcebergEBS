@@ -1009,29 +1009,31 @@ and errors on the old mount) — this repo's `docker-compose.yml` already does t
 (no existing volume) needs none of the below — 18 initialises cleanly. To migrate an existing
 Compose deployment:
 
+Run this as one block. Every **destructive** step (dropping the old volume, restoring) lives
+inside the `if` and executes **only** when both the dump and its `pg_restore --list` integrity
+check succeed — a failed or interrupted `pg_dump` leaves the `.tmp` behind and drops into the
+`else`, so the data volume is never touched:
+
 ```bash
-# 1. Dump with the OLD (16) image still running — to a *temp* file, then VERIFY it before
-#    trusting it. Step 2 destroys the only copy of the data, so a truncated/partial dump
-#    (a failed or interrupted pg_dump, which shell redirection would still leave behind)
-#    must NOT be allowed to reach that point. The && chain aborts on any failure, and the
-#    dump only takes its real name after pg_restore --list confirms the archive is intact.
-docker compose exec -T postgres \
-  sh -c 'pg_dump -Fc -U "$POSTGRES_USER" "$POSTGRES_DB"' > ./backups/pre-pg18.pgc.tmp \
-  && docker compose exec -T postgres sh -c 'pg_restore --list' < ./backups/pre-pg18.pgc.tmp > /dev/null \
-  && mv ./backups/pre-pg18.pgc.tmp ./backups/pre-pg18.pgc \
-  && echo "dump verified: ./backups/pre-pg18.pgc"
+# Dump the OLD (16) database to a temp file and verify the archive is intact before trusting it.
+if docker compose exec -T postgres sh -c 'pg_dump -Fc -U "$POSTGRES_USER" "$POSTGRES_DB"' > ./backups/pre-pg18.pgc.tmp \
+   && docker compose exec -T postgres sh -c 'pg_restore --list' < ./backups/pre-pg18.pgc.tmp > /dev/null
+then
+  mv ./backups/pre-pg18.pgc.tmp ./backups/pre-pg18.pgc   # verified dump takes its real name
 
-# 2. ONLY if step 1 printed "dump verified": stop the stack and drop the old data volume.
-docker compose down
-docker volume rm iceberg-ebs_postgres_data
+  # Destructive: drop the old 16 volume, then start 18 fresh on the new /var/lib/postgresql mount.
+  docker compose down
+  docker volume rm iceberg-ebs_postgres_data
+  docker compose up -d postgres
 
-# 3. Pull the new images and start ONLY postgres so 18 initialises a fresh data dir.
-docker compose up -d postgres
-
-# 4. Restore into the fresh 18 database, then bring the rest up.
-docker compose exec -T postgres \
-  sh -c 'pg_restore -U "$POSTGRES_USER" -d "$POSTGRES_DB" --clean --if-exists' < ./backups/pre-pg18.pgc
-docker compose up -d
+  # Restore the verified dump into the fresh 18 database, then bring the rest of the stack up.
+  docker compose exec -T postgres \
+    sh -c 'pg_restore -U "$POSTGRES_USER" -d "$POSTGRES_DB" --clean --if-exists' < ./backups/pre-pg18.pgc
+  docker compose up -d
+else
+  rm -f ./backups/pre-pg18.pgc.tmp
+  echo "Dump/verify failed — data volume untouched; fix the error and re-run." >&2
+fi
 ```
 
 **Helm:** the chart's Postgres version tracks the Bitnami `postgresql` subchart pinned in
