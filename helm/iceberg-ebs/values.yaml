@@ -13,6 +13,12 @@ icebergEbs:
   secretKey: ""            # required — set via --set or existingSecret; never commit a value here
   appBaseUrl: ""           # e.g. https://icebergebs.example.com; included as iceberg_ebs_url in webhook payloads
   fetchIntervalMinutes: 60
+  # Prune FetchLog / InstallCountHistory / AlertLog rows older than this many days.
+  # 0 disables pruning; set to e.g. 90 for a real watchlist so history doesn't grow
+  # unbounded (#22, #87).
+  retentionDays: 0
+  sessionMaxAge: 86400     # session lifetime in seconds
+  httpxTimeout: 15.0       # outbound HTTP timeout in seconds
   secureCookies: true
 
 postgresql:
