@@ -171,3 +171,32 @@ async def test_fresh_values_still_overwrite(test_db, admin_user):
     assert ext.install_count == 60_000
     assert ext.last_updated == newer
     assert await _history_count(test_db, ext_id) == 2
+
+
+async def test_sudden_drop_uses_the_two_most_recent_readings(test_db, admin_user):
+    """#146: replacing the full install-count history scan with a two-row lookup
+    must still fire the >30% sudden-drop popularity bonus, computed from the two
+    most recent readings even behind a long steady history."""
+    ext_id = await _make_ext(test_db, admin_user.id)
+    # A deep, all-identical history — no reading is itself a drop.
+    for _ in range(5):
+        await _fetch(test_db, ext_id, _meta(install_count=1_000))
+
+    # Final reading falls 40% from the immediately preceding 1_000.
+    ext, _ = await _fetch(test_db, ext_id, _meta(install_count=600))
+
+    # base 8 (600 < 1_000) + 10 sudden-drop bonus.
+    assert json.loads(ext.risk_detail)["popularity"] == 18
+    # Every reading is still persisted; only the *read* side is bounded.
+    assert await _history_count(test_db, ext_id) == 6
+
+
+async def test_no_drop_bonus_when_recent_readings_are_steady(test_db, admin_user):
+    """Control for the two-row lookup: a steady immediately-preceding reading
+    must not be misread as a drop (guards the reconstruction ordering)."""
+    ext_id = await _make_ext(test_db, admin_user.id)
+    for _ in range(5):
+        await _fetch(test_db, ext_id, _meta(install_count=600))
+    ext, _ = await _fetch(test_db, ext_id, _meta(install_count=600))
+
+    assert json.loads(ext.risk_detail)["popularity"] == 8  # base only, no bonus
