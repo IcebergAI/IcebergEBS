@@ -1,3 +1,4 @@
+import asyncio
 import enum
 import logging
 
@@ -15,6 +16,23 @@ from app.scheduler_state import mark_scheduler_run
 from app.services import fetch_and_store, fire_pending_alerts, recover_pending_alerts
 
 logger = logging.getLogger(__name__)
+
+# Tasks for in-flight refresh cycles, so a graceful shutdown can await them (#109). APScheduler
+# 3.x's AsyncIOExecutor.shutdown(wait=True) does NOT await running asyncio jobs — it cancels
+# their futures — so `wait=True` alone can abandon a refresh mid-cycle. We track the running
+# task ourselves and drain it explicitly in drain_inflight().
+_inflight: set[asyncio.Task] = set()
+
+
+async def drain_inflight(timeout: float) -> None:
+    """Await any in-flight refresh job (bounded by ``timeout``) so a graceful shutdown lets it
+    finish committing + firing instead of being cancelled. The durable pending-alert marker
+    (#109) is the backstop if the timeout is exceeded (SIGKILL): recovery re-fires on restart."""
+    tasks = [t for t in _inflight if not t.done()]
+    if not tasks:
+        return
+    logger.info("Draining %d in-flight refresh job(s) before shutdown", len(tasks))
+    await asyncio.wait(tasks, timeout=timeout)
 
 
 class _Outcome(enum.Enum):
@@ -124,38 +142,46 @@ async def _record_store_outage(ext_id: int, store: str) -> None:
 
 
 async def refresh_watchlist(client: httpx.AsyncClient) -> None:
-    logger.info("Starting watchlist refresh")
-    # Re-fire any alerts persisted-but-not-delivered before a prior shutdown/crash (#109),
-    # before the new cycle overwrites the state they describe.
-    await recover_pending_alerts(engine, client)
-    async with AsyncSession(engine) as session:
-        rows = (
-            await session.exec(
-                select(Extension.id, Extension.store).where(Extension.watchlist == True)  # noqa: E712
+    # Register this cycle so drain_inflight() can await it on a graceful shutdown (#109).
+    task = asyncio.current_task()
+    if task is not None:
+        _inflight.add(task)
+    try:
+        logger.info("Starting watchlist refresh")
+        # Re-fire any alerts persisted-but-not-delivered before a prior shutdown/crash (#109),
+        # before the new cycle overwrites the state they describe.
+        await recover_pending_alerts(engine, client)
+        async with AsyncSession(engine) as session:
+            rows = (
+                await session.exec(
+                    select(Extension.id, Extension.store).where(Extension.watchlist == True)  # noqa: E712
+                )
+            ).all()
+
+        breaker = _StoreCircuitBreaker(settings.store_circuit_failure_threshold)
+        skipped = 0
+        for ext_id, store in rows:
+            if breaker.is_open(store):
+                await _record_store_outage(ext_id, store)
+                skipped += 1
+                continue
+            outcome = await _refresh_one(ext_id, client)
+            breaker.record(store, outcome)
+
+        # Record that the scheduler completed a cycle, so /readyz can surface freshness
+        # without scanning the history table on every probe (#89).
+        mark_scheduler_run()
+        if skipped:
+            logger.warning(
+                "Watchlist refresh complete (%d extensions, %d skipped due to store outage)",
+                len(rows),
+                skipped,
             )
-        ).all()
-
-    breaker = _StoreCircuitBreaker(settings.store_circuit_failure_threshold)
-    skipped = 0
-    for ext_id, store in rows:
-        if breaker.is_open(store):
-            await _record_store_outage(ext_id, store)
-            skipped += 1
-            continue
-        outcome = await _refresh_one(ext_id, client)
-        breaker.record(store, outcome)
-
-    # Record that the scheduler completed a cycle, so /readyz can surface freshness
-    # without scanning the history table on every probe (#89).
-    mark_scheduler_run()
-    if skipped:
-        logger.warning(
-            "Watchlist refresh complete (%d extensions, %d skipped due to store outage)",
-            len(rows),
-            skipped,
-        )
-    else:
-        logger.info("Watchlist refresh complete (%d extensions)", len(rows))
+        else:
+            logger.info("Watchlist refresh complete (%d extensions)", len(rows))
+    finally:
+        if task is not None:
+            _inflight.discard(task)
 
 
 def create_scheduler(client: httpx.AsyncClient) -> AsyncIOScheduler:

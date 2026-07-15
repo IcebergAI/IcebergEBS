@@ -18,7 +18,7 @@ from app.routes import api as api_routes
 from app.routes import keys as keys_routes
 from app.routes import ui as ui_routes
 from app.routes import users as users_routes
-from app.scheduler import create_scheduler
+from app.scheduler import create_scheduler, drain_inflight
 from app.version import get_version
 
 setup_logging()
@@ -68,13 +68,16 @@ async def lifespan(app: FastAPI):
 
     yield
 
-    # Drain in-flight jobs on shutdown (wait=True) so a refresh mid-flight isn't abandoned
-    # between committing a state change and firing its alert. The durable pending-alert
-    # marker (#109) is the backstop if the grace period is exceeded (SIGKILL): the next
-    # startup's recover_pending_alerts re-fires anything still marked. Set the container
-    # grace period (terminationGracePeriodSeconds / stop_grace_period) above the worst-case
-    # job time so the drain can finish.
-    scheduler.shutdown(wait=True)
+    # Graceful shutdown (#109): stop scheduling new cycles, then explicitly await any in-flight
+    # refresh so it isn't abandoned between committing a state change and firing its alert.
+    # APScheduler 3.x's shutdown(wait=True) does NOT await running asyncio jobs — it cancels
+    # them — so pausing + draining ourselves is what actually lets the cycle finish. The drain
+    # is bounded by settings.shutdown_drain_seconds; past that (SIGKILL at the container grace
+    # period) the durable pending-alert marker is the backstop, re-fired by the next startup's
+    # recover_pending_alerts. Keep the container grace period above shutdown_drain_seconds.
+    scheduler.pause()
+    await drain_inflight(settings.shutdown_drain_seconds)
+    scheduler.shutdown(wait=False)
     await client.aclose()
 
 

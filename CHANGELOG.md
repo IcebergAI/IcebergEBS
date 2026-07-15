@@ -114,10 +114,14 @@ release to diff against.
 - **Alerts could be silently dropped on restart** — the scheduler shut down with `wait=False`,
   abandoning an in-flight refresh; a shutdown between committing a state change and firing its alert
   left the change persisted but the alert never sent (and never retried, since the next cycle sees no
-  diff). Shutdown now **drains in-flight jobs** (`wait=True`), and pending change events are persisted
-  in the **same commit** as the state change (`Extension.pending_alert_events`) so a restart re-fires
-  anything undelivered. The container grace period is raised (`terminationGracePeriodSeconds` /
-  `stop_grace_period`) to let the drain finish, and the HTTP client is closed on shutdown (#109).
+  diff). Pending change events are now persisted in the **same commit** as the state change
+  (`Extension.pending_alert_events`) and **merged** across refreshes (never overwritten), so a restart
+  re-fires anything undelivered; delivery clears the marker with **compare-and-clear** so a concurrent
+  refresh's newer events aren't wiped. Shutdown now **explicitly drains the in-flight refresh** (pause
+  + await, bounded by `ICEBERG_EBS_SHUTDOWN_DRAIN_SECONDS`) — APScheduler 3.x's `shutdown(wait=True)`
+  cancels rather than awaits async jobs, so it alone doesn't drain. The container grace period
+  (`terminationGracePeriodSeconds` / `stop_grace_period`) is raised above that window, and the HTTP
+  client is closed on shutdown (#109).
 
 ### Security
 

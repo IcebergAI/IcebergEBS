@@ -161,7 +161,20 @@ async def fetch_and_store(
     # Persist the pending events in the SAME session as the state change so they commit
     # atomically (#109). If the process dies before fire_pending_alerts runs, the marker
     # survives and the next cycle re-fires them; fire_pending_alerts clears it on success.
-    ext.pending_alert_events = json.dumps([asdict(e) for e in events]) if events else None
+    #
+    # MERGE rather than overwrite: a prior delivery may have failed and intentionally left
+    # its events in the marker for retry. Overwriting (with the new events, or None when
+    # nothing changed) would silently drop them — and the manual-refresh path doesn't run
+    # recovery first, so it can't rely on the scheduler having drained them. Prepend any
+    # still-undelivered events and return the full set, so the caller fires everything
+    # pending, not just this refresh's new events (#109 review).
+    try:
+        prior = json.loads(ext.pending_alert_events) if ext.pending_alert_events else []
+    except (ValueError, TypeError):
+        prior = []  # a corrupt marker can't be delivered anyway; don't fail the fetch over it
+    pending = prior + [asdict(e) for e in events]
+    ext.pending_alert_events = json.dumps(pending) if pending else None
+    events = [ChangeEvent(**e) for e in pending]
 
     return ext, events
 
@@ -181,10 +194,10 @@ async def fire_pending_alerts(
     since fire_alerts reads them to build the webhook payload.
     """
     if not events:
-        # No events to fire, but a stale marker (e.g. from an interrupted prior run with
-        # no matching rules) should not linger — clear it so recovery doesn't retry forever.
-        await _clear_pending_alerts(ext.id, engine)
         return
+    # Snapshot exactly what we're about to fire; we clear the marker only if it still holds
+    # this same value (compare-and-clear below).
+    fired = json.dumps([asdict(e) for e in events])
     try:
         await fire_alerts(events, ext, engine, client)
     except Exception:
@@ -195,16 +208,22 @@ async def fire_pending_alerts(
         # Keep the durable marker so a shutdown-dropped alert is retried next cycle (#109).
         return
     # Delivered + recorded: clear the durable marker so it isn't re-fired.
-    await _clear_pending_alerts(ext.id, engine)
+    await _clear_pending_alerts(ext.id, engine, fired)
 
 
-async def _clear_pending_alerts(ext_id: int | None, engine: AsyncEngine) -> None:
-    """Clear an extension's pending-alert marker in its own committed session (#109)."""
+async def _clear_pending_alerts(ext_id: int | None, engine: AsyncEngine, expected: str) -> None:
+    """Clear an extension's pending-alert marker in its own committed session (#109).
+
+    Compare-and-clear: only clear when the stored marker still equals ``expected`` (the exact
+    value we just delivered). A concurrent refresh may have appended new events to the marker
+    between our read and this clear; wiping it blindly would drop those undelivered events
+    (#109 review). If it no longer matches, leave it for the next cycle to deliver.
+    """
     if ext_id is None:
         return
     async with AsyncSession(engine) as session:
         ext = await session.get(Extension, ext_id)
-        if ext is not None and ext.pending_alert_events is not None:
+        if ext is not None and ext.pending_alert_events == expected:
             ext.pending_alert_events = None
             await session.commit()
 
@@ -229,6 +248,11 @@ async def recover_pending_alerts(engine: AsyncEngine, client: httpx.AsyncClient)
                 events = [ChangeEvent(**e) for e in json.loads(ext.pending_alert_events)]
             except Exception:
                 logger.exception("Discarding unparsable pending_alert_events for %s", ext.extension_id)
+                ext.pending_alert_events = None
+                await session.commit()
+                continue
+            if not events:
+                # An empty marker ("[]") has nothing to deliver — clear it so it doesn't linger.
                 ext.pending_alert_events = None
                 await session.commit()
                 continue
