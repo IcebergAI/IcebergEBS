@@ -95,5 +95,9 @@ release to diff against.
   JSON-only API, and bearer tokens as the primary M2M credential, rather than tokens (#16).
 - Added `LICENSE` (Apache-2.0), `SECURITY.md` (private reporting + an explicit scope of what is
   and is not a trust boundary), `CONTRIBUTING.md`, and `CODE_OF_CONDUCT.md` (#92).
+- **GitHub Actions are SHA-pinned** (with the release tag in a trailing comment) and checkout
+  credential persistence is disabled, so a repointed action tag cannot run arbitrary code in CI —
+  including the GHCR-pushing build job — and the repo token is no longer left in the workspace
+  `.git/config` (OWASP CICD-SEC-3/4) (#96).
 
 [0.1.0-beta.1]: https://github.com/IcebergAI/IcebergEBS/commits/main
