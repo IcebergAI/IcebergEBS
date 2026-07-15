@@ -1,16 +1,24 @@
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, HTTPException, Response
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import delete as sa_delete
 from sqlalchemy import update as sa_update
 from sqlmodel import select
 
-from app.auth import clear_session, hash_password, verify_password
+from app.auth import MAX_PASSWORD_BYTES, clear_session, hash_password, verify_password
 from app.deps import AdminUser, CurrentUser, SessionDep
 from app.models import ApiKey, Extension, User
 
 router = APIRouter(prefix="/api", tags=["users"])
+
+
+def _reject_over_long_password(v: str) -> str:
+    # bcrypt hashes at most 72 bytes; reject longer here so the caller gets a clean
+    # 422 rather than an over-long password being truncated or 500ing at hash time (#67).
+    if len(v.encode()) > MAX_PASSWORD_BYTES:
+        raise ValueError(f"password must be at most {MAX_PASSWORD_BYTES} bytes")
+    return v
 
 
 class UserOut(BaseModel):
@@ -26,10 +34,14 @@ class CreateUserIn(BaseModel):
     email: str | None = None
     is_admin: bool = False
 
+    _check_password = field_validator("password")(_reject_over_long_password)
+
 
 class ChangePasswordIn(BaseModel):
     current_password: str
     new_password: str = Field(min_length=8)
+
+    _check_new_password = field_validator("new_password")(_reject_over_long_password)
 
 
 @router.get("/users")

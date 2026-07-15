@@ -103,6 +103,10 @@ release to diff against.
   security: unpinned actions, credential persistence, template injection, over-broad permissions)
   and **actionlint** (syntax + shellcheck), so the pinning/least-privilege posture above cannot
   silently regress (#97).
+- **Auth hardening (#67)** — `ICEBERG_EBS_SECRET_KEY` shorter than 32 characters is now rejected at
+  startup (a weak key undermines all itsdangerous cookie/flash signing), and passwords longer than
+  bcrypt's 72-byte limit are rejected explicitly (a clean `422`) instead of being silently
+  truncated — truncation previously let two distinct passwords sharing a 72-byte prefix collide.
 - **CodeQL SAST** (`codeql.yml`) now runs dataflow/taint analysis over both **Python** and
   **JavaScript/TypeScript** on every PR, on push to `main`, and on a weekly schedule (to catch new
   advisories against already-merged code). It is a dedicated workflow so its `security-events: write`
