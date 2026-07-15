@@ -58,6 +58,12 @@ release to diff against.
 
 ### Changed
 
+- **Postgres pinned to `18-alpine`** (was `16-alpine`), bumped together across the Compose server,
+  the `backup`/`pg_dump` service, and the CI test service container so `pg_dump`'s version always
+  matches the server's. An existing PG16 `postgres_data` volume will **not** start under 18 — see
+  `DEPLOYMENT.md → Backups & disaster recovery` for the dump/restore upgrade path (a fresh install
+  needs nothing). nginx bumped `1.29-alpine` → `1.31-alpine`. Supersedes the grouped Dependabot
+  PR #114, which changed only the Compose server image.
 - **Renamed from Marvin to IcebergEBS**, ahead of the repository being made public. This
   renames the product, the repository (`IcebergAI/IcebergEBS`), and the internal
   identifiers: the config env prefix is now **`ICEBERG_EBS_`** (was `MARVIN_`), the default
