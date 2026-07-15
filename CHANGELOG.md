@@ -37,6 +37,11 @@ release to diff against.
 - **Data retention pruning** for `FetchLog`, `InstallCountHistory`, and `AlertLog`, gated by
   `ICEBERG_EBS_RETENTION_DAYS` (#22).
 - **API keys** (bearer tokens, read-only supported) for machine-to-machine access.
+- **Database backups** — the Docker Compose stack ships a `backup` service that writes retained,
+  atomically-written `pg_dump -Fc` dumps to `./backups` on a configurable cadence
+  (`BACKUP_INTERVAL_SECONDS`/`BACKUP_RETENTION_DAYS`), plus a restore runbook, pre-upgrade dump step,
+  Helm backup options (Bitnami CronJob / VolumeSnapshots / external managed Postgres), and an explicit
+  RPO in `DEPLOYMENT.md → Backups & disaster recovery` (#86).
 
 ### Changed
 

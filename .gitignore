@@ -61,6 +61,9 @@ coverage.xml
 *.db-wal
 *.db-shm
 
+# Local database backups written by the Compose `backup` service (#86)
+/backups/
+
 # Stamped build version (deploy-time; runtime git is the default source)
 app/_version
 
