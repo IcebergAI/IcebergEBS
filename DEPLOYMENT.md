@@ -184,7 +184,7 @@ name: iceberg-ebs   # pin the project name (container/volume names) to the app
 
 services:
   postgres:
-    image: postgres:16-alpine
+    image: postgres:18-alpine
     # Postgres' entrypoint needs its default caps to chown PGDATA and drop to the
     # postgres user, so caps are NOT dropped here; just block privilege escalation.
     security_opt:
@@ -245,7 +245,7 @@ services:
   nginx:
     # Pinned to a minor: `nginx:alpine` floats, so the TLS-terminating proxy
     # would silently change version on every `docker compose pull`.
-    image: nginx:1.29-alpine
+    image: nginx:1.31-alpine
     security_opt:
       - no-new-privileges:true
     # Drop everything, add back only what stock nginx needs under a read-only rootfs.
@@ -288,7 +288,7 @@ services:
     # pg_dump's version always matches. Custom-format dumps (-Fc), written atomically
     # (.tmp then mv), pruned after BACKUP_RETENTION_DAYS. Full shell loop in the
     # repo file; behaviour documented in "Backups & disaster recovery" below.
-    image: postgres:16-alpine
+    image: postgres:18-alpine
     security_opt:
       - no-new-privileges:true
     cap_drop:
@@ -994,6 +994,37 @@ docker compose exec -T postgres \
 # 3. Bring the app (and backup) back. Alembic runs at startup and no-ops if the schema matches.
 docker compose start app backup
 ```
+
+### Major-version upgrade (Postgres 16 → 18)
+
+A Postgres **major** bump changes the on-disk data-directory format: pointing an 18 image at a
+`postgres_data` volume initialised by 16 fails to start (`database files are incompatible with
+server`). The stack pins the same major across the **server**, the **`backup`** service (so
+`pg_dump`'s version always matches the server's), and the **CI test** container — always bump them
+together, never one in isolation. A fresh install (no existing volume) needs none of the below —
+18 initialises cleanly. To migrate an existing Compose deployment:
+
+```bash
+# 1. Dump with the OLD (16) image still running.
+docker compose exec -T postgres \
+  sh -c 'pg_dump -Fc -U "$POSTGRES_USER" "$POSTGRES_DB"' > ./backups/pre-pg18.pgc
+
+# 2. Stop the stack and drop the old data volume (the dump is your safety net).
+docker compose down
+docker volume rm iceberg-ebs_postgres_data
+
+# 3. Pull the new images and start ONLY postgres so 18 initialises a fresh data dir.
+docker compose up -d postgres
+
+# 4. Restore into the fresh 18 database, then bring the rest up.
+docker compose exec -T postgres \
+  sh -c 'pg_restore -U "$POSTGRES_USER" -d "$POSTGRES_DB" --clean --if-exists' < ./backups/pre-pg18.pgc
+docker compose up -d
+```
+
+**Helm:** the chart's Postgres version tracks the Bitnami `postgresql` subchart pinned in
+`Chart.yaml`, upgraded separately from these Compose pins; follow the subchart's own major-upgrade
+guidance (dump/restore, or its `pg_upgrade` job) so both deployment paths land on the same major.
 
 ### Kubernetes (Helm)
 

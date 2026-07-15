@@ -5,7 +5,7 @@ name: iceberg-ebs
 
 services:
   postgres:
-    image: postgres:16-alpine
+    image: postgres:18-alpine
     # Postgres' entrypoint needs its default caps to chown PGDATA and drop to the
     # postgres user, so caps are NOT dropped here; just block privilege escalation.
     security_opt:
@@ -77,7 +77,7 @@ services:
   nginx:
     # Pinned to a minor: `nginx:alpine` floats, so the TLS-terminating proxy
     # would silently change version on every `docker compose pull`.
-    image: nginx:1.29-alpine
+    image: nginx:1.31-alpine
     security_opt:
       - no-new-privileges:true
     # cap_drop ALL, then add back only what the stock nginx image needs under a
@@ -127,7 +127,7 @@ services:
     # Dumps are custom-format (-Fc, compressed + selective restore) written atomically
     # (.tmp then mv) so a half-written file is never a restore candidate, with retention
     # of BACKUP_RETENTION_DAYS. RPO ≈ BACKUP_INTERVAL_SECONDS (default nightly → ≤24h loss).
-    image: postgres:16-alpine
+    image: postgres:18-alpine
     security_opt:
       - no-new-privileges:true
     cap_drop:
