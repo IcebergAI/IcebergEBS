@@ -35,6 +35,7 @@ icebergEbs:
   sessionMaxAge: 86400     # session lifetime in seconds
   httpxTimeout: 15.0       # outbound HTTP timeout in seconds
   secureCookies: true
+  logJson: false          # emit single-line JSON logs for a collector (#89)
 
 postgresql:
   auth:

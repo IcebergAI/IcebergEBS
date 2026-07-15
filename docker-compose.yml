@@ -43,6 +43,8 @@ services:
       ICEBERG_EBS_SECRET_KEY: ${ICEBERG_EBS_SECRET_KEY}
       ICEBERG_EBS_APP_BASE_URL: ${ICEBERG_EBS_APP_BASE_URL:-}
       ICEBERG_EBS_SECURE_COOKIES: "true"
+      # Emit logs as single-line JSON for a log collector (#89); default text.
+      ICEBERG_EBS_LOG_JSON: ${ICEBERG_EBS_LOG_JSON:-false}
       # Forwarded so an operator who sets these in .env actually gets them (#87):
       # without these lines pydantic-settings never sees the value (.env is excluded
       # from the image by .dockerignore) and retention/fetch-interval silently

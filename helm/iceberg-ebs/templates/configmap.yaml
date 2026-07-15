@@ -12,3 +12,4 @@ data:
   ICEBERG_EBS_SESSION_MAX_AGE:        {{ .Values.icebergEbs.sessionMaxAge | quote }}
   ICEBERG_EBS_HTTPX_TIMEOUT:          {{ .Values.icebergEbs.httpxTimeout | quote }}
   ICEBERG_EBS_SECURE_COOKIES:         {{ .Values.icebergEbs.secureCookies | quote }}
+  ICEBERG_EBS_LOG_JSON:               {{ .Values.icebergEbs.logJson | quote }}

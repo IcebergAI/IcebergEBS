@@ -5,11 +5,9 @@ import logging
 from datetime import datetime, timezone
 from pathlib import Path
 
-from sqlmodel.ext.asyncio.session import AsyncSession
-
+from app import scheduler_state
 from app.config import settings
 from app.logging_config import _TEXT_FORMAT, JsonFormatter, setup_logging
-from app.models import Extension, FetchLog
 
 _NGINX_CONF = Path(__file__).resolve().parent.parent / "nginx" / "nginx.conf"
 
@@ -50,37 +48,36 @@ def test_setup_logging_selects_formatter(monkeypatch):
     assert not isinstance(logging.getLogger().handlers[0].formatter, JsonFormatter)
 
 
-async def test_readyz_reports_last_successful_refresh_null(anon_client):
+async def test_readyz_reports_last_scheduler_run_null(anon_client, monkeypatch):
+    monkeypatch.setattr(scheduler_state, "_last_run", None)
     body = (await anon_client.get("/readyz")).json()
-    # Key is always present; null when the scheduler hasn't logged a successful refresh.
-    assert "last_successful_refresh" in body
-    assert body["last_successful_refresh"] is None
+    # Key is always present; null until the scheduler has completed a cycle this process.
+    assert "last_scheduler_run" in body
+    assert body["last_scheduler_run"] is None
 
 
-async def test_readyz_reports_last_successful_refresh(anon_client, test_db, admin_user):
+async def test_readyz_reports_last_scheduler_run(anon_client, monkeypatch):
     now = datetime.now(timezone.utc)
-    async with AsyncSession(test_db) as s:
-        ext = Extension(
-            user_id=admin_user.id,
-            store="chrome",
-            extension_id="e" * 32,
-            name="E",
-            publisher="p",
-            version="1.0",
-            store_url="https://example.com",
-            risk_score=10,
-        )
-        s.add(ext)
-        await s.commit()
-        await s.refresh(ext)
-        s.add(FetchLog(extension_id=ext.id, success=True, fetched_at=now))
-        s.add(FetchLog(extension_id=ext.id, success=False, fetched_at=now, error_message="ignored"))
-        await s.commit()
-
+    monkeypatch.setattr(scheduler_state, "_last_run", now)
     body = (await anon_client.get("/readyz")).json()
-    assert body["last_successful_refresh"] is not None
-    # It reflects the successful row, not the later failed one.
-    assert body["last_successful_refresh"].startswith(now.isoformat()[:19])
+    assert body["last_scheduler_run"] is not None
+    assert body["last_scheduler_run"].startswith(now.isoformat()[:19])
+
+
+def test_mark_scheduler_run_records_timestamp(monkeypatch):
+    monkeypatch.setattr(scheduler_state, "_last_run", None)
+    scheduler_state.mark_scheduler_run()
+    assert scheduler_state.last_scheduler_run() is not None
+
+
+def test_setup_logging_routes_uvicorn_loggers_through_root():
+    # Uvicorn's own loggers must lose their handlers + propagate, so LOG_JSON applies to
+    # uvicorn/access lines too instead of leaving them in the default text format.
+    setup_logging()
+    for name in ("uvicorn", "uvicorn.error", "uvicorn.access"):
+        lg = logging.getLogger(name)
+        assert lg.handlers == []
+        assert lg.propagate is True
 
 
 def test_nginx_log_format_has_ua_and_timing():

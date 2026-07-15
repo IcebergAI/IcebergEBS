@@ -90,29 +90,29 @@ async def healthz() -> JSONResponse:
 async def readyz() -> JSONResponse:
     """Readiness probe: verify the database is reachable before taking traffic.
 
-    Also reports the fleet's last successful watchlist refresh (#89) so an external
-    monitor can catch "the app is up but the scheduler hasn't refreshed in a day" —
-    invisible to /healthz and to a bare 200 here. It's advisory only: a stale refresh
-    does NOT flip readiness (the app still serves), it just enriches the JSON body.
+    Also reports when the background scheduler last completed a refresh cycle (#89) so an
+    external monitor can catch "the app is up but the scheduler has stalled" — invisible to
+    /healthz and a bare 200 here. The value is an in-process signal (no history-table scan
+    on the probe path, and it reflects only the *scheduler*, so an API-triggered fetch can't
+    mask a stall). It's advisory: a stale/None value does NOT flip readiness.
     """
     from sqlalchemy import text
 
     from app.database import engine
+    from app.scheduler_state import last_scheduler_run
 
     try:
         async with engine.connect() as conn:
             await conn.execute(text("SELECT 1"))
-            # Raw SQL (not the ORM) keeps this type-clean and dependency-free; `success`
-            # is a boolean column so `WHERE success` selects the successful refreshes.
-            last_success = (await conn.execute(text("SELECT max(fetched_at) FROM fetchlog WHERE success"))).scalar()
     except Exception:
         logging.getLogger(__name__).exception("Readiness check failed: database unreachable")
         return JSONResponse({"status": "unavailable", "database": "down"}, status_code=503)
+    last_run = last_scheduler_run()
     return JSONResponse(
         {
             "status": "ok",
             "database": "up",
-            "last_successful_refresh": last_success.isoformat() if last_success else None,
+            "last_scheduler_run": last_run.isoformat() if last_run else None,
         }
     )
 

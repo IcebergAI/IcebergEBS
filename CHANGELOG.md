@@ -48,9 +48,11 @@ release to diff against.
   can't see — most importantly the hand-maintained inline-script CSP hash drifting. Playwright runs
   from a throwaway venv, so it needs no `uv.lock` entry (#100).
 - **Observability baseline** (#89) — application logs now carry a **timestamp** (and can be emitted as
-  single-line **JSON** via `ICEBERG_EBS_LOG_JSON=true` for a log collector); **`/readyz` reports the
-  fleet's `last_successful_refresh`** so an external monitor can catch "the app is up but the scheduler
-  hasn't refreshed in a day" (advisory — it doesn't flip readiness); and the nginx access log gains
+  single-line **JSON** via `ICEBERG_EBS_LOG_JSON=true`, forwarded by both deploy stacks, covering the
+  app + uvicorn loggers); **`/readyz` reports
+  `last_scheduler_run`** (an in-process signal — no history-table scan on the probe, scheduler-only so an
+  API fetch can't mask a stall) so an external monitor can catch "the app is up but the scheduler has
+  stalled" (advisory — it doesn't flip readiness); and the nginx access log gains
   **referer, user-agent, and request/upstream timing**. Error-tracking (Sentry) is a documented
   follow-up (it needs a runtime dependency).
 

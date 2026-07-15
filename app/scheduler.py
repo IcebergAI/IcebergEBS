@@ -11,6 +11,7 @@ from app.database import engine
 from app.fetchers.base import FetchError
 from app.models import Extension, FetchLog
 from app.retention import run_retention_prune
+from app.scheduler_state import mark_scheduler_run
 from app.services import fetch_and_store, fire_pending_alerts
 
 logger = logging.getLogger(__name__)
@@ -141,6 +142,9 @@ async def refresh_watchlist(client: httpx.AsyncClient) -> None:
         outcome = await _refresh_one(ext_id, client)
         breaker.record(store, outcome)
 
+    # Record that the scheduler completed a cycle, so /readyz can surface freshness
+    # without scanning the history table on every probe (#89).
+    mark_scheduler_run()
     if skipped:
         logger.warning(
             "Watchlist refresh complete (%d extensions, %d skipped due to store outage)",

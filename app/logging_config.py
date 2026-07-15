@@ -43,3 +43,13 @@ def setup_logging() -> None:
         root.removeHandler(existing)
     root.setLevel(logging.INFO)
     root.addHandler(handler)
+
+    # Uvicorn installs its own non-propagating handlers on `uvicorn*` loggers, so without
+    # this its lines (incl. access logs and unhandled-ASGI-exception traces) would keep the
+    # default timestamp-free text format even under LOG_JSON. Strip those handlers and let
+    # the records propagate to the root handler above, so ALL output shares one format.
+    for name in ("uvicorn", "uvicorn.error", "uvicorn.access"):
+        uv = logging.getLogger(name)
+        for existing in list(uv.handlers):
+            uv.removeHandler(existing)
+        uv.propagate = True

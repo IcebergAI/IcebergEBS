@@ -196,7 +196,7 @@
       <code class="mono">ICEBERG_EBS_RETENTION_DAYS</code> to prune fetch/install/alert history older
       than the window. Ops probes: <code class="mono">/healthz</code> (liveness) and
       <code class="mono">/readyz</code> (readiness — checks the database and reports
-      <code class="mono">last_successful_refresh</code> so an external monitor can alert when the
+      <code class="mono">last_scheduler_run</code> so an external monitor can alert when the
       scheduler has stalled). Set <code class="mono">ICEBERG_EBS_LOG_JSON=true</code> for JSON logs.
     </p>
   </div>
