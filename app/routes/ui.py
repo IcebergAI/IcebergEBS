@@ -1,5 +1,6 @@
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Annotated
+from typing import Annotated, Callable
 from urllib.parse import urlencode
 
 from fastapi import APIRouter, Form, Request
@@ -306,6 +307,140 @@ async def _latest_fetch_logs(session: AsyncSession, ext_ids: list[int]) -> dict[
     return {fl.extension_id: fl for fl in rows}
 
 
+def _is_stale(watchlist: bool, last_fetched_at, now: datetime, stale_after: timedelta) -> bool:
+    """Whether a watchlist extension is stale — gone longer than ``stale_after``
+    without a successful refresh (a never-fetched watchlist extension counts as
+    stale). Non-watchlist extensions are never stale. Pure, so the fetch-health
+    rules are unit-testable without the dashboard route (#165)."""
+    if not watchlist:
+        return False
+    if last_fetched_at is None:
+        return True
+    if last_fetched_at.tzinfo is None:
+        last_fetched_at = last_fetched_at.replace(tzinfo=timezone.utc)
+    return (now - last_fetched_at) > stale_after
+
+
+@dataclass
+class FleetStats:
+    extensions_count: int
+    high_risk: int
+    watchlist_count: int
+    last_refresh: datetime | None
+    next_refresh: datetime | None
+    unhealthy: int
+    # Most-recent FetchLog per extension, computed once here and reused by the
+    # dashboard's per-row table annotation so the query isn't run twice.
+    latest_logs: dict[int, FetchLog]
+
+
+async def _fleet_stats(session: AsyncSession, user_id: int, now: datetime, stale_after: timedelta) -> FleetStats:
+    """Filter-independent fleet snapshot for the stat tiles: counts + fetch health.
+
+    Column-only (no JSON blobs loaded). ``unhealthy`` counts watchlist extensions
+    whose latest fetch failed for a reason that is the extension's fault — a
+    store-outage circuit-breaker skip (#108) is excluded — or that have gone
+    stale. Extracted from ``dashboard()`` so the counting rules are unit-testable
+    without spinning up the route (#165)."""
+    snapshot = (
+        await session.exec(
+            select(Extension.id, Extension.risk_score, Extension.watchlist, Extension.last_fetched_at).where(
+                Extension.user_id == user_id
+            )
+        )
+    ).all()
+    latest_logs = await _latest_fetch_logs(session, [r.id for r in snapshot])
+
+    fetched = [r.last_fetched_at for r in snapshot if r.last_fetched_at]
+    last_refresh = max(fetched) if fetched else None
+    next_refresh = last_refresh + timedelta(minutes=settings.fetch_interval_minutes) if last_refresh else None
+
+    unhealthy = 0
+    for r in snapshot:
+        log = latest_logs.get(r.id)
+        # A store-outage skip (circuit breaker, #108) is not the extension's fault,
+        # so it doesn't count as "failing" — a brief store blip must not spike the
+        # tile. A prolonged outage still surfaces via the staleness check below.
+        failing = log is not None and not log.success and not log.store_outage
+        if r.watchlist and (failing or _is_stale(r.watchlist, r.last_fetched_at, now, stale_after)):
+            unhealthy += 1
+
+    return FleetStats(
+        extensions_count=len(snapshot),
+        high_risk=sum(1 for r in snapshot if r.risk_score is not None and r.risk_score >= 50),
+        watchlist_count=sum(1 for r in snapshot if r.watchlist),
+        last_refresh=last_refresh,
+        next_refresh=next_refresh,
+        unhealthy=unhealthy,
+        latest_logs=latest_logs,
+    )
+
+
+async def _top_exposure(session: AsyncSession, user_id: int) -> list[dict]:
+    """Top-5 extensions by exposure ("blast radius", #29): risk × org footprint,
+    highest first. Column-only select like the fleet snapshot; only extensions
+    with a known footprint and score qualify (exposure is NULL otherwise)."""
+    exposure_rows = (
+        await session.exec(
+            select(
+                Extension.id,
+                Extension.name,
+                Extension.store,
+                Extension.risk_score,
+                Extension.install_footprint,
+            )
+            .where(
+                Extension.user_id == user_id,
+                Extension.install_footprint.is_not(None),
+                Extension.install_footprint > 0,
+                Extension.risk_score.is_not(None),
+            )
+            .order_by(EXPOSURE_EXPR.desc())
+            .limit(5)
+        )
+    ).all()
+    return [
+        {
+            "id": r.id,
+            "name": r.name,
+            "store": r.store,
+            "risk_score": r.risk_score,
+            "install_footprint": r.install_footprint,
+            "exposure": r.risk_score * r.install_footprint,
+        }
+        for r in exposure_rows
+    ]
+
+
+def _build_qs(base_params: dict) -> Callable[..., str]:
+    """Return a helper that builds a relative dashboard URL preserving the current
+    filter/sort/page state with selective overrides (None drops a param), dropping
+    empty values and the defaults (page 1, risk_score sort, desc order) to keep
+    URLs clean. Passed to the template for filter pills, sort headers and
+    pagination links."""
+
+    def qs(**overrides) -> str:
+        params = {**base_params, **overrides}
+        clean = {k: v for k, v in params.items() if v not in (None, "")}
+        if clean.get("page") == 1:
+            clean.pop("page", None)
+        if clean.get("sort") == "risk_score":
+            clean.pop("sort", None)
+        if clean.get("order") == "desc":
+            clean.pop("order", None)
+        return "/?" + urlencode(clean) if clean else "/"
+
+    return qs
+
+
+def _export_url(fmt: str, *, store, risk, q, sort, order) -> str:
+    """Build the CSV/JSON export URL honouring the active filters/sort (but not
+    pagination)."""
+    params = {"format": fmt, "store": store, "risk": risk, "q": q, "sort": sort, "order": order}
+    clean = {k: v for k, v in params.items() if v not in (None, "")}
+    return "/api/extensions/export?" + urlencode(clean)
+
+
 _DASHBOARD_PAGE_SIZE = 25
 
 
@@ -334,78 +469,14 @@ async def dashboard(
     q = (q or "").strip() or None
     page = max(page, 1)
 
-    # Lightweight fleet snapshot for the stat tiles (counts + fetch health) —
-    # independent of the active filter, and cheap (no JSON columns loaded).
-    snapshot = (
-        await session.exec(
-            select(Extension.id, Extension.risk_score, Extension.watchlist, Extension.last_fetched_at).where(
-                Extension.user_id == current_user.id
-            )
-        )
-    ).all()
-    extensions_count = len(snapshot)
-    high_risk = sum(1 for r in snapshot if r.risk_score is not None and r.risk_score >= 50)
-    watchlist_count = sum(1 for r in snapshot if r.watchlist)
-    fetched = [r.last_fetched_at for r in snapshot if r.last_fetched_at]
-    last_refresh = max(fetched) if fetched else None
-    next_refresh = last_refresh + timedelta(minutes=settings.fetch_interval_minutes) if last_refresh else None
-
     now = datetime.now(timezone.utc)
     stale_after = _stale_after()
-    latest_logs = await _latest_fetch_logs(session, [r.id for r in snapshot])
 
-    def _stale(watchlist: bool, lf) -> bool:
-        if not watchlist:
-            return False
-        if lf is None:
-            return True
-        if lf.tzinfo is None:
-            lf = lf.replace(tzinfo=timezone.utc)
-        return (now - lf) > stale_after
-
-    unhealthy = 0
-    for r in snapshot:
-        log = latest_logs.get(r.id)
-        # A store-outage skip (circuit breaker, #108) is not the extension's fault, so
-        # it doesn't count as "failing" — a brief store blip must not spike the tile.
-        # A prolonged outage still surfaces via the staleness check below.
-        failing = log is not None and not log.success and not log.store_outage
-        if r.watchlist and (failing or _stale(r.watchlist, r.last_fetched_at)):
-            unhealthy += 1
-
-    # Top exposure ("blast radius", #29): risk × org footprint, highest first.
-    # Column-only select like the fleet snapshot; only extensions with a known
-    # footprint and score qualify (exposure is NULL otherwise).
-    exposure_rows = (
-        await session.exec(
-            select(
-                Extension.id,
-                Extension.name,
-                Extension.store,
-                Extension.risk_score,
-                Extension.install_footprint,
-            )
-            .where(
-                Extension.user_id == current_user.id,
-                Extension.install_footprint.is_not(None),
-                Extension.install_footprint > 0,
-                Extension.risk_score.is_not(None),
-            )
-            .order_by(EXPOSURE_EXPR.desc())
-            .limit(5)
-        )
-    ).all()
-    top_exposure = [
-        {
-            "id": r.id,
-            "name": r.name,
-            "store": r.store,
-            "risk_score": r.risk_score,
-            "install_footprint": r.install_footprint,
-            "exposure": r.risk_score * r.install_footprint,
-        }
-        for r in exposure_rows
-    ]
+    # Filter-independent stat tiles (counts + fetch health) and the top-exposure
+    # panel — each owns its column-only query so the counting rules are testable
+    # in isolation (#165).
+    stats = await _fleet_stats(session, current_user.id, now, stale_after)
+    top_exposure = await _top_exposure(session, current_user.id)
 
     # Filtered + sorted + paginated page of full rows for the table. Same filter
     # object the API endpoints use (built from coerced params rather than via the
@@ -420,56 +491,36 @@ async def dashboard(
 
     ext_dicts = []
     for e in page_rows:
-        log = latest_logs.get(e.id)
+        log = stats.latest_logs.get(e.id)
         d = _ext_to_dict(e)
         d["last_fetch_ok"] = log.success if log is not None else None
         d["last_fetch_error"] = log.error_message if (log is not None and not log.success) else None
         d["store_outage"] = bool(log.store_outage) if log is not None else False
-        d["stale"] = _stale(e.watchlist, e.last_fetched_at)
+        d["stale"] = _is_stale(e.watchlist, e.last_fetched_at, now, stale_after)
         ext_dicts.append(d)
 
     showing_from = offset + 1 if filtered_total else 0
     showing_to = offset + len(ext_dicts)
 
-    # Build relative dashboard URLs that preserve the current filter/sort/page
-    # state with selective overrides (None drops a param). Used by the template's
-    # filter pills, sort headers and pagination links.
     base_params = {"store": store, "risk": risk, "q": q, "sort": sort, "order": order, "page": page}
-
-    def qs(**overrides) -> str:
-        params = {**base_params, **overrides}
-        # Drop empty params and defaults (sort/order defaults, page 1) to keep URLs clean.
-        clean = {k: v for k, v in params.items() if v not in (None, "")}
-        if clean.get("page") == 1:
-            clean.pop("page", None)
-        if clean.get("sort") == "risk_score":
-            clean.pop("sort", None)
-        if clean.get("order") == "desc":
-            clean.pop("order", None)
-        return "/?" + urlencode(clean) if clean else "/"
-
-    def export_url(fmt: str) -> str:
-        # Export honours the active filters/sort (but not pagination).
-        params = {"format": fmt, "store": store, "risk": risk, "q": q, "sort": sort, "order": order}
-        clean = {k: v for k, v in params.items() if v not in (None, "")}
-        return "/api/extensions/export?" + urlencode(clean)
+    qs = _build_qs(base_params)
 
     return _render(
         request,
         "dashboard.html",
         {
             "qs": qs,
-            "export_csv_url": export_url("csv"),
-            "export_json_url": export_url("json"),
+            "export_csv_url": _export_url("csv", store=store, risk=risk, q=q, sort=sort, order=order),
+            "export_json_url": _export_url("json", store=store, risk=risk, q=q, sort=sort, order=order),
             "extensions": ext_dicts,
             "top_exposure": top_exposure,
-            "extensions_count": extensions_count,
-            "high_risk_count": high_risk,
-            "watchlist_count": watchlist_count,
-            "unhealthy_count": unhealthy,
-            "last_refresh_label": _ago(last_refresh),
+            "extensions_count": stats.extensions_count,
+            "high_risk_count": stats.high_risk,
+            "watchlist_count": stats.watchlist_count,
+            "unhealthy_count": stats.unhealthy,
+            "last_refresh_label": _ago(stats.last_refresh),
             "next_refresh_label": (
-                f"next ~{next_refresh.strftime('%H:%M')} UTC" if next_refresh else "next: scheduled"
+                f"next ~{stats.next_refresh.strftime('%H:%M')} UTC" if stats.next_refresh else "next: scheduled"
             ),
             # Filter / sort / pagination state for the controls.
             "filter_store": store,
