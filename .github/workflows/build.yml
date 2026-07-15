@@ -5,6 +5,12 @@ name: build
 # so container/Helm deploys report the same version the rail shows. The bare-uvicorn
 # droplet does NOT depend on this workflow — it resolves the version from git at
 # runtime. If you don't use GHCR, drop the login + set `push: false` below.
+#
+# This publishes DEV images only: an immutable :<sha> plus a moving :edge pointer
+# for "latest main" — NOT a release, and NOT what you deploy. Signed, attested,
+# SemVer-tagged release images come from release.yml (tag a `v*` SemVer tag). There
+# is deliberately no :latest here: a mutable :latest reads as "deploy me" and, with
+# the Helm chart's IfNotPresent, silently ships stale code (#88).
 
 on:
   push:
@@ -55,4 +61,4 @@ jobs:
             ICEBERG_EBS_VERSION=${{ env.ICEBERG_EBS_VERSION }}
           tags: |
             ${{ env.IMAGE }}:${{ github.sha }}
-            ${{ env.IMAGE }}:latest
+            ${{ env.IMAGE }}:edge

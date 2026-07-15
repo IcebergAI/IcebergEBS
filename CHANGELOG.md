@@ -103,5 +103,11 @@ release to diff against.
   security: unpinned actions, credential persistence, template injection, over-broad permissions)
   and **actionlint** (syntax + shellcheck), so the pinning/least-privilege posture above cannot
   silently regress (#97).
+- **Signed, attested release pipeline** (`release.yml`) — pushing a `v*` SemVer tag verifies the tag
+  matches `pyproject.toml`, then builds a release image with an **SBOM** and **SLSA build provenance**,
+  **attests** the provenance to GHCR, **signs it keylessly with cosign**, and cuts the GitHub Release.
+  Release images are immutable and digest-pinnable, so a consumer can verify what is in the image and
+  that this repo's CI built it. `build.yml` no longer publishes a mutable `:latest` — main pushes are
+  dev-only `:<sha>` + `:edge`; deployables come only from a tagged release (#99).
 
 [0.1.0-beta.1]: https://github.com/IcebergAI/IcebergEBS/commits/main

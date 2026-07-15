@@ -49,14 +49,47 @@ so the same version has two forms and you must use the right one in the right pl
    git tag -a v0.1.0-beta.1 -m "v0.1.0-beta.1"
    git push origin v0.1.0-beta.1
    ```
-6. **Publish the GitHub Release** against that tag, with the changelog section as its notes.
+
+   Pushing the tag is the whole release. [`.github/workflows/release.yml`](../.github/workflows/release.yml)
+   fires on `v*` tags and does the rest automatically: it **verifies the tag matches
+   `pyproject.toml`** (and fails the release if they disagree — see the normalization table
+   above), builds and pushes the image to GHCR under its SemVer tag(s), emits an **SBOM** and
+   **SLSA build provenance**, **attests** the provenance to the registry, **signs the image
+   keylessly with cosign**, and **creates the GitHub Release** with generated notes
+   (`--prerelease` when the tag has a `-beta`/`-rc` suffix). A `workflow_dispatch` run of the
+   same workflow is a **build-only dry run** — no push, sign, attest, or release.
+6. **Check the release.** Confirm the workflow run is green, the GitHub Release exists, and the
+   image verifies (below). Only a stable tag (no `-suffix`) also moves `:latest` / `:MAJOR.MINOR`.
+
+## Verifying a release
+
+Release images are the only deployable artefacts (the `build.yml` `:edge` / `:<sha>` images are
+dev-only). Verify before deploying, and **deploy by immutable tag or digest — never `:latest`
+or `:edge`.**
+
+```bash
+IMAGE=ghcr.io/icebergai/icebergebs
+
+# SLSA build provenance (that this repo's CI built the image):
+gh attestation verify "oci://${IMAGE}:v0.1.0-beta.1" --repo IcebergAI/IcebergEBS
+
+# Keyless cosign signature (identity = the release workflow, issuer = GitHub Actions OIDC):
+cosign verify "${IMAGE}:v0.1.0-beta.1" \
+  --certificate-identity-regexp "^https://github.com/IcebergAI/IcebergEBS/\.github/workflows/release\.yml@refs/tags/v" \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com
+```
+
+Pin the verified **digest** (`ghcr.io/icebergai/icebergebs@sha256:…`) in whatever drives the
+deploy — see [DEPLOYMENT.md](../DEPLOYMENT.md) for the Helm `--set image.tag=` / digest flow.
 
 ## Checks that keep the versions honest
 
-- `app/version.py:_format()` and the **"Compute version"** step of
-  `.github/workflows/build.yml` build the same string. If you change one, change the
-  other — a drift is invisible until a container deploy reports a different version from
-  the bare-uvicorn droplet. Both read the SemVer from `pyproject.toml`; neither hardcodes it.
+- `app/version.py:_format()` and the version-compute steps of both
+  `.github/workflows/build.yml` and `.github/workflows/release.yml` build the same string. If
+  you change one, change the others — a drift is invisible until a container deploy reports a
+  different version from the bare-uvicorn droplet. All read the SemVer from `pyproject.toml`;
+  none hardcode it. `release.yml` additionally **asserts the git tag matches** that SemVer
+  before it builds anything.
 - The bare-uvicorn deployment resolves the version from git at runtime, so a `git pull` of
   `main` is all it needs. The Docker/Helm images have no `.git`, so `build.yml` bakes
   `ICEBERG_EBS_VERSION` in at build time.

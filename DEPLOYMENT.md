@@ -723,6 +723,7 @@ helm dependency update helm/iceberg-ebs
 # Install (generate strong values; never commit these)
 helm upgrade --install icebergebs helm/iceberg-ebs \
   --namespace icebergebs --create-namespace \
+  --set image.tag="v0.1.0-beta.1" \
   --set icebergEbs.adminPassword="$(openssl rand -hex 16)" \
   --set icebergEbs.secretKey="$(openssl rand -hex 32)" \
   --set postgresql.auth.password="$(openssl rand -hex 32)" \
@@ -733,7 +734,14 @@ helm upgrade --install icebergebs helm/iceberg-ebs \
 kubectl rollout status deployment/icebergebs -n icebergebs
 ```
 
-For GitOps (Flux / ArgoCD): use `SealedSecret` or an ExternalSecrets `ExternalSecret` object to inject passwords from your secrets store rather than `--set`.
+**Always pin an immutable release tag** (`--set image.tag=v0.1.0-beta.1`) or, better, a digest
+(`--set image.tag=@sha256:…`) from a verified release — see
+[docs/RELEASING.md → Verifying a release](docs/RELEASING.md). Do **not** deploy `:latest` or the
+`:edge` tag: `:edge` is the moving "latest `main`" dev image from `build.yml`, not a release, and a
+mutable tag with the chart's `pullPolicy: IfNotPresent` silently ships stale code on upgrade (#88).
+Verify the image (`cosign verify` / `gh attestation verify`) before rolling it out.
+
+For GitOps (Flux / ArgoCD): use `SealedSecret` or an ExternalSecrets `ExternalSecret` object to inject passwords from your secrets store rather than `--set`, and pin the same immutable release tag/digest there.
 
 ---
 
@@ -746,5 +754,5 @@ For GitOps (Flux / ArgoCD): use `SealedSecret` or an ExternalSecrets `ExternalSe
 | Scaling | Single host | Multi-node |
 | Secret management | `.env` file | K8s Secret / ExternalSecret |
 | PostgreSQL | Docker volume | Bitnami subchart (StatefulSet) |
-| Upgrades | `docker compose pull && up` | `helm upgrade` |
+| Upgrades | rebuild / repin image, `up` | `helm upgrade --set image.tag=<new release>` |
 | Best for | Single-server / homelab | Cloud / team deployments |
