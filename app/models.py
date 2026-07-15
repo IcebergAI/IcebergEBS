@@ -59,6 +59,11 @@ class Extension(SQLModel, table=True):
     # maintained on each /api/inventory upsert. Exposure ("blast radius") is computed
     # downstream as risk_score × install_footprint (never stored).
     install_footprint: Optional[int] = None
+    # Change events staged in the SAME commit as a state change, so an alert missed
+    # because the process died between the commit and webhook delivery is re-fired on
+    # the next scheduler cycle rather than lost (#109). JSON list of
+    # {event_type, old_value, new_value}; cleared once fire_alerts has processed them.
+    pending_alert_events: Optional[str] = None
 
 
 class FetchLog(SQLModel, table=True):

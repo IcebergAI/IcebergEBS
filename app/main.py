@@ -59,9 +59,22 @@ async def lifespan(app: FastAPI):
     scheduler.start()
     app.state.scheduler = scheduler
 
+    # Re-fire alerts persisted-but-not-delivered before the previous shutdown/crash, so a
+    # restart recovers them promptly rather than waiting for the next scheduled cycle (#109).
+    from app.database import engine as _engine
+    from app.services import recover_pending_alerts
+
+    await recover_pending_alerts(_engine, client)
+
     yield
 
-    scheduler.shutdown(wait=False)
+    # Drain in-flight jobs on shutdown (wait=True) so a refresh mid-flight isn't abandoned
+    # between committing a state change and firing its alert. The durable pending-alert
+    # marker (#109) is the backstop if the grace period is exceeded (SIGKILL): the next
+    # startup's recover_pending_alerts re-fires anything still marked. Set the container
+    # grace period (terminationGracePeriodSeconds / stop_grace_period) above the worst-case
+    # job time so the drain can finish.
+    scheduler.shutdown(wait=True)
     await client.aclose()
 
 

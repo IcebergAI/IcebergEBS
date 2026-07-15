@@ -12,7 +12,7 @@ from app.fetchers.base import FetchError
 from app.models import Extension, FetchLog
 from app.retention import run_retention_prune
 from app.scheduler_state import mark_scheduler_run
-from app.services import fetch_and_store, fire_pending_alerts
+from app.services import fetch_and_store, fire_pending_alerts, recover_pending_alerts
 
 logger = logging.getLogger(__name__)
 
@@ -125,6 +125,9 @@ async def _record_store_outage(ext_id: int, store: str) -> None:
 
 async def refresh_watchlist(client: httpx.AsyncClient) -> None:
     logger.info("Starting watchlist refresh")
+    # Re-fire any alerts persisted-but-not-delivered before a prior shutdown/crash (#109),
+    # before the new cycle overwrites the state they describe.
+    await recover_pending_alerts(engine, client)
     async with AsyncSession(engine) as session:
         rows = (
             await session.exec(

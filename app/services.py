@@ -158,6 +158,11 @@ async def fetch_and_store(
         logger.exception("Change detection failed for %s", ext.extension_id)
         events = []
 
+    # Persist the pending events in the SAME session as the state change so they commit
+    # atomically (#109). If the process dies before fire_pending_alerts runs, the marker
+    # survives and the next cycle re-fires them; fire_pending_alerts clears it on success.
+    ext.pending_alert_events = json.dumps([asdict(e) for e in events]) if events else None
+
     return ext, events
 
 
@@ -176,6 +181,9 @@ async def fire_pending_alerts(
     since fire_alerts reads them to build the webhook payload.
     """
     if not events:
+        # No events to fire, but a stale marker (e.g. from an interrupted prior run with
+        # no matching rules) should not linger — clear it so recovery doesn't retry forever.
+        await _clear_pending_alerts(ext.id, engine)
         return
     try:
         await fire_alerts(events, ext, engine, client)
@@ -184,3 +192,41 @@ async def fire_pending_alerts(
             "Alert processing failed for %s — any delivered webhooks may not have been recorded in the alert log",
             ext.extension_id,
         )
+        # Keep the durable marker so a shutdown-dropped alert is retried next cycle (#109).
+        return
+    # Delivered + recorded: clear the durable marker so it isn't re-fired.
+    await _clear_pending_alerts(ext.id, engine)
+
+
+async def _clear_pending_alerts(ext_id: int | None, engine: AsyncEngine) -> None:
+    """Clear an extension's pending-alert marker in its own committed session (#109)."""
+    if ext_id is None:
+        return
+    async with AsyncSession(engine) as session:
+        ext = await session.get(Extension, ext_id)
+        if ext is not None and ext.pending_alert_events is not None:
+            ext.pending_alert_events = None
+            await session.commit()
+
+
+async def recover_pending_alerts(engine: AsyncEngine, client: httpx.AsyncClient) -> None:
+    """Re-fire alerts persisted-but-not-delivered before a prior shutdown/crash (#109).
+
+    Scans for extensions whose ``pending_alert_events`` marker is still set — meaning the
+    process died between committing a state change and delivering its alert — and fires
+    them. Called at startup and at the head of each refresh cycle. ``fire_pending_alerts``
+    clears the marker on success, so this is idempotent and self-healing.
+    """
+    async with AsyncSession(engine) as session:
+        pending = (await session.exec(select(Extension).where(Extension.pending_alert_events.is_not(None)))).all()
+
+    for ext in pending:
+        try:
+            raw = json.loads(ext.pending_alert_events or "[]")
+            events = [ChangeEvent(**e) for e in raw]
+        except Exception:
+            logger.exception("Discarding unparsable pending_alert_events for %s", ext.extension_id)
+            await _clear_pending_alerts(ext.id, engine)
+            continue
+        logger.info("Recovering %d pending alert(s) for %s after restart", len(events), ext.extension_id)
+        await fire_pending_alerts(events, ext, engine, client)
