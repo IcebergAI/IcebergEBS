@@ -882,10 +882,12 @@ docker compose exec -T postgres \
   for a log collector. nginx's access log includes referer, user-agent, and request/upstream timing.
 - **Liveness / readiness** — point orchestrator probes at `/healthz` (process up) and `/readyz`
   (DB reachable → 503 if not). Both are unauthenticated and cheap.
-- **Scheduler freshness** — `/readyz`'s JSON body carries `last_successful_refresh` (ISO timestamp or
-  `null`). Add an **external uptime check** that alerts when it falls too far behind the configured
-  `ICEBERG_EBS_FETCH_INTERVAL_MINUTES` — this catches "the app is up but hasn't successfully refreshed
-  the watchlist in a day", which a plain 200 on `/readyz` would miss. It is advisory only: a stale
-  refresh does not make the pod unready (the app still serves).
+- **Scheduler freshness** — `/readyz`'s JSON body carries `last_scheduler_run` (ISO timestamp or
+  `null`), an in-process signal recorded when the background scheduler completes a refresh cycle (no
+  history-table scan on the probe path, and scheduler-only so an API-triggered fetch can't mask a
+  stall). Add an **external uptime check** that alerts when it falls too far behind the configured
+  `ICEBERG_EBS_FETCH_INTERVAL_MINUTES` — this catches "the app is up but the scheduler has stopped
+  running its cycles", which a plain 200 on `/readyz` would miss. It is advisory only: a stale
+  scheduler run does not make the pod unready (the app still serves).
 - **Error tracking** — aggregating unhandled exceptions to a Sentry-style DSN is a documented
   follow-up; it needs a runtime dependency, so it isn't wired in yet.
