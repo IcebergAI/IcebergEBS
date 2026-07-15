@@ -72,10 +72,6 @@ async def fetch_and_store(
         except InspectorError as exc:
             logger.debug("Inspector failed for %s: %s", ext.extension_id, exc)
 
-    if analysis:
-        if not metadata.publisher and analysis.author:
-            metadata.publisher = analysis.author
-
     # When analysis is unavailable, fall back to stored values so that a
     # transient package download failure doesn't look like permissions being
     # removed and trigger spurious permission_change / risk_level_change alerts.
@@ -87,22 +83,40 @@ async def fetch_and_store(
         stored_pkg = json.loads(ext.package_analysis or "null") or {}
         host_permissions = stored_pkg.get("host_permissions", [])
 
-    publisher_changed = bool(ext.last_fetched_at and ext.publisher and ext.publisher != metadata.publisher)
+    # A 200-status scrape can still be a partial parse (publisher="",
+    # install_count=None, last_updated=None — Chrome HTML never raises on a
+    # shifted layout). Like version/permissions, fall back to the stored values
+    # so one bad response can't swing the score (~+31 across publisher/
+    # popularity/staleness) and fire a spurious risk_level_change alert (#142).
+    # The manifest author fills the publisher gap only when no store-sourced
+    # publisher has ever been seen — it must never override a stored one, or an
+    # author/publisher mismatch would flap publisher_change alerts on every
+    # partial parse. publisher_changed likewise requires a non-empty
+    # store-sourced publisher: an empty parse is not a change signal.
+    publisher_changed = bool(
+        ext.last_fetched_at and ext.publisher and metadata.publisher and ext.publisher != metadata.publisher
+    )
+    publisher = metadata.publisher or ext.publisher or (analysis.author if analysis else "")
+    install_count = metadata.install_count if metadata.install_count is not None else ext.install_count
+    last_updated = metadata.last_updated or ext.last_updated
 
     risk = compute_risk_score(
         permissions=permissions,
         host_permissions=host_permissions,
-        install_count=metadata.install_count,
+        install_count=install_count,
         install_history=history,
-        publisher=metadata.publisher,
+        publisher=publisher,
         publisher_changed=publisher_changed,
         publisher_verified=metadata.publisher_verified,
-        last_updated=metadata.last_updated,
+        last_updated=last_updated,
         analysis=analysis,
     )
 
+    # name/description are deliberately unguarded (cosmetic, no score or alert
+    # impact) — a partial Chrome parse can transiently persist name=extension_id
+    # until the next good fetch.
     ext.name = metadata.name
-    ext.publisher = metadata.publisher
+    ext.publisher = publisher
     ext.description = metadata.description
     ext.store_url = metadata.store_url
     # Only update version when the store returns a non-empty value; keeping
@@ -110,8 +124,10 @@ async def fetch_and_store(
     # scraping temporarily fails and returns an empty string.
     if metadata.version:
         ext.version = metadata.version
-    ext.install_count = metadata.install_count
-    ext.last_updated = metadata.last_updated
+    # Persist the same effective values that were scored, so risk_detail stays
+    # consistent with the stored row (#142).
+    ext.install_count = install_count
+    ext.last_updated = last_updated
     if analysis:
         # Only update stored permissions from a fresh successful inspection;
         # keeping stale values avoids spurious permission_change alerts when

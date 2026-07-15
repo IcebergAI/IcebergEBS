@@ -90,6 +90,11 @@ release to diff against.
 
 ### Fixed
 
+- A transient Chrome scrape mis-parse (a 200 page with a shifted layout) no longer clobbers
+  the stored publisher/install count/last-updated date, spiking the risk score ~+31 and firing
+  spurious `risk_level_change` alerts — stored values are kept, matching the existing guards
+  on `version` and `permissions`. The user-count/version scrapers also now only read visible
+  page text, so a store description like "Join 1,000,000 users" can't hijack them (#142).
 - `store_url` was never persisted — every enrolled extension had an empty store URL (#72).
 - Infinite redirect loop between `/` and `/login` for a stale-but-signed session cookie (#73).
 - Admin UI pages returned raw 401/403 JSON instead of redirecting to the login page (#7).
