@@ -1,6 +1,9 @@
 from datetime import datetime, timedelta, timezone
 
+import pytest
+
 from app.inspector import PackageAnalysis, PackageFinding
+from app.permissions import BROAD_HOST_PATTERNS
 from app.scoring import (
     compute_risk_score,
     score_code_behaviour,
@@ -40,6 +43,19 @@ def test_permissions_empty():
 
 def test_host_permissions_all_urls_critical():
     assert score_permissions([], ["<all_urls>"]) == 25
+
+
+@pytest.mark.parametrize("pattern", sorted(BROAD_HOST_PATTERNS))
+def test_broad_host_patterns_score_like_all_urls(pattern):
+    # Every spelling of "all sites" must score identically to <all_urls> (#141).
+    assert score_permissions([], [pattern]) == score_permissions([], ["<all_urls>"]) == 25
+
+
+@pytest.mark.parametrize("pattern", sorted(BROAD_HOST_PATTERNS))
+def test_broad_host_pattern_in_permissions_list_scores_critical(pattern):
+    # MV2 manifests may carry host patterns in `permissions`; the score must not
+    # depend on which of the two lists the pattern arrives in (#141).
+    assert score_permissions([pattern], []) == 25
 
 
 # ---------------------------------------------------------------------------

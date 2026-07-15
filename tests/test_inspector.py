@@ -251,6 +251,45 @@ def test_manifest_risk_findings():
     assert "csp_wildcard_script_source" in codes
 
 
+def test_mv2_wildcard_host_pattern_merged_and_flagged():
+    # MV2 spells all-sites access as "*://*/*" inside `permissions`; it must be
+    # merged into host_permissions and produce the broad-host finding (#141).
+    data = make_zip(
+        {
+            "manifest.json": json.dumps(
+                {
+                    "manifest_version": 2,
+                    "name": "x",
+                    "version": "1",
+                    "permissions": ["*://*/*", "storage"],
+                }
+            ),
+        }
+    )
+    result = inspect_package(data)
+    assert result.host_permissions == ["*://*/*"]
+    assert result.permissions == ["storage"]
+    assert "broad_host_access" in _finding_codes(result)
+
+
+def test_mv2_file_scheme_host_pattern_merged():
+    data = make_zip(
+        {
+            "manifest.json": json.dumps(
+                {
+                    "manifest_version": 2,
+                    "name": "x",
+                    "version": "1",
+                    "permissions": ["file:///*", "storage"],
+                }
+            ),
+        }
+    )
+    result = inspect_package(data)
+    assert result.host_permissions == ["file:///*"]
+    assert result.permissions == ["storage"]
+
+
 def test_minified_and_obfuscated_findings():
     compressed = " ".join(["a"] * 600)
     data = make_zip(

@@ -224,9 +224,12 @@ def _extract_manifest_fields(manifest: dict, analysis: PackageAnalysis) -> None:
     elif isinstance(host_permissions, str):
         analysis.host_permissions = [host_permissions]
 
-    # Merge host patterns from permissions (MV2 style)
+    # Merge host patterns from permissions (MV2 style). Must cover every host
+    # scheme spelling — MV2 commonly uses *://*/* and file:///* — or a broad
+    # pattern stays in `permissions`, where the broad-host finding and the
+    # permission scoring never look for it (#141).
     for p in list(analysis.permissions):
-        if p.startswith("http") or p.startswith("<"):
+        if p.startswith(("http", "<", "*", "file")):
             analysis.host_permissions.append(p)
             analysis.permissions.remove(p)
 

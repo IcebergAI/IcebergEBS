@@ -101,6 +101,10 @@ release to diff against.
   would then fail against the missing columns/tables). Databases already corrupted by that
   false stamp are detected at startup (baseline-era schema behind a post-baseline revision)
   and repaired the same way (#143).
+- Broad host patterns (`*://*/*`, `http://*/*`, `https://*/*`) now score as critical like
+  `<all_urls>` — previously only the literal `<all_urls>` spelling affected the risk score,
+  and MV2 manifests carrying `*://*/*` or `file:///*` in `permissions` were missed by the
+  broad-host finding entirely (#141).
 - `store_url` was never persisted — every enrolled extension had an empty store URL (#72).
 - Infinite redirect loop between `/` and `/login` for a stale-but-signed session cookie (#73).
 - Admin UI pages returned raw 401/403 JSON instead of redirecting to the login page (#7).
