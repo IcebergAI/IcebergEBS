@@ -2,8 +2,9 @@
 
 The hand-rolled `_migrate_sqlite`/`_migrate_postgres` functions were replaced by
 Alembic. `_run_migrations` either upgrades a fresh/empty database to head or, for
-a database created the old way (tables present, no alembic_version), stamps it to
-head without recreating anything.
+a database created the old way (tables present, no alembic_version), stamps it at
+the baseline revision its schema matches and upgrades to head, without recreating
+anything (#143).
 
 Each test runs against a freshly CREATEd Postgres database on the configured test
 server (dropped afterwards), so migrations always start from a clean target.
@@ -16,13 +17,15 @@ from datetime import datetime, timezone
 import pytest
 from alembic.autogenerate import compare_metadata
 from alembic.runtime.migration import MigrationContext
+from alembic.script import ScriptDirectory
 from sqlalchemy import create_engine, inspect, make_url, text
 from sqlalchemy.ext.asyncio import create_async_engine
 from sqlmodel import SQLModel
 
 import app.models  # noqa: F401 — register tables on SQLModel.metadata
+from alembic import command
 from app.config import settings
-from app.database import _run_migrations
+from app.database import _PRE_ALEMBIC_BASELINE, _alembic_config, _run_migrations
 
 TEST_DATABASE_URL = os.environ.get("ICEBERG_EBS_TEST_DATABASE_URL", settings.database_url)
 
@@ -124,16 +127,26 @@ async def test_migration_is_idempotent(temp_db):
     assert _version(temp_db) == first
 
 
-async def test_existing_pre_alembic_db_is_stamped_not_recreated(temp_db):
-    """A database built the old way (create_all, no alembic_version) is adopted."""
-    engine = create_async_engine(_async_url(temp_db))
-    async with engine.begin() as conn:
-        await conn.run_sync(SQLModel.metadata.create_all)
-    await engine.dispose()
+async def test_existing_pre_alembic_db_is_adopted_and_upgraded(temp_db):
+    """A database built the old way is stamped at the BASELINE and upgraded to head.
 
-    # Seed a row so we can prove the tables were not dropped/recreated.
+    A genuinely pre-Alembic database has the baseline-era schema — stamping it at
+    head would silently skip every post-baseline migration with no recovery path
+    (#143). The fixture must therefore build the real baseline schema (not
+    ``create_all`` from current models, which already contains the migrations'
+    end state and would mask exactly that bug).
+    """
+    # Build the baseline-era schema, then remove alembic_version to simulate a
+    # database created by the retired create_all/_migrate_* path.
     sync = create_engine(_sync_url(temp_db))
+    with sync.connect() as conn:
+        cfg = _alembic_config()
+        cfg.attributes["connection"] = conn
+        command.upgrade(cfg, _PRE_ALEMBIC_BASELINE)
+        conn.commit()
     with sync.begin() as conn:
+        conn.execute(text("DROP TABLE alembic_version"))
+        # Seed a row so we can prove the tables were not dropped/recreated.
         conn.execute(
             text('INSERT INTO "user"(username, password_hash, is_admin, created_at) VALUES (:u, :p, :a, :t)'),
             {"u": "bob", "p": "h", "a": False, "t": datetime(2024, 1, 1, tzinfo=timezone.utc)},
@@ -142,11 +155,20 @@ async def test_existing_pre_alembic_db_is_stamped_not_recreated(temp_db):
 
     await _migrate(temp_db)
 
-    assert _version(temp_db) is not None
+    # Adopted at head — not just stamped: the post-baseline schema must exist.
+    head = ScriptDirectory.from_config(_alembic_config()).get_current_head()
+    assert _version(temp_db) == (head,)
+    assert "installobservation" in _tables(temp_db)  # inventory migration
+    assert "store_outage" in _columns(temp_db, "fetchlog")  # store-outage migration
+    assert "pending_alert_events" in _columns(temp_db, "extension")  # pending-alerts migration
     sync = create_engine(_sync_url(temp_db))
     try:
         with sync.connect() as conn:
+            # Data survived adoption (nothing was dropped/recreated) …
             assert conn.execute(text('SELECT username FROM "user"')).fetchone() == ("bob",)
+            # … and the adopted schema fully matches the models.
+            ctx = MigrationContext.configure(conn, opts={"compare_type": True})
+            assert compare_metadata(ctx, SQLModel.metadata) == []
     finally:
         sync.dispose()
 
