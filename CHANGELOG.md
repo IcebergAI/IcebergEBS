@@ -111,6 +111,21 @@ release to diff against.
   image — deploys silently shipped stale code, and `helm rollback` couldn't restore a known-good
   build. `image.tag` now has **no default** and is `required` at render time, forcing an explicit
   immutable release tag (`--set image.tag=v0.1.0-beta.1`) (#88).
+- **Alerts could be silently dropped on restart** — the scheduler shut down with `wait=False`,
+  abandoning an in-flight refresh; a shutdown between committing a state change and firing its alert
+  left the change persisted but the alert never sent (and never retried, since the next cycle sees no
+  diff). Pending change events are now persisted in the **same commit** as the state change
+  (`Extension.pending_alert_events`) and **merged** across refreshes (never overwritten), so a restart
+  re-fires anything undelivered; delivery clears the marker with **compare-and-clear**. Both are
+  **atomic against a concurrent refresh of the same extension** (a manual API refresh racing the
+  scheduler): the merge re-reads the marker under a `SELECT … FOR UPDATE` row lock before appending,
+  and the clear is a single conditional `UPDATE … WHERE pending_alert_events = <delivered>` — so
+  neither a lost-update nor a TOCTOU clear can drop an alert. Shutdown now **explicitly drains the
+  in-flight refresh** (pause
+  + await, bounded by `ICEBERG_EBS_SHUTDOWN_DRAIN_SECONDS`) — APScheduler 3.x's `shutdown(wait=True)`
+  cancels rather than awaits async jobs, so it alone doesn't drain. The container grace period
+  (`terminationGracePeriodSeconds` / `stop_grace_period`) is raised above that window, and the HTTP
+  client is closed on shutdown (#109).
 
 ### Security
 

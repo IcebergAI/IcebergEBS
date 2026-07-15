@@ -16,6 +16,10 @@ class Settings(BaseSettings):
     secure_cookies: bool = True
     fetch_interval_minutes: int = 60
     httpx_timeout: float = 15.0
+    # Graceful-shutdown drain window (#109): how long to await an in-flight watchlist refresh
+    # before giving up and letting the durable pending-alert marker cover the rest on restart.
+    # Keep the container grace period (terminationGracePeriodSeconds / stop_grace_period) above it.
+    shutdown_drain_seconds: float = 55.0
     # Outbound-fetch resilience (#108). The shared client retries transient failures
     # (connect/timeout/429/5xx) on idempotent GETs with exponential backoff + jitter,
     # honouring Retry-After; 404 (delisted) is never retried. Limits cap how many

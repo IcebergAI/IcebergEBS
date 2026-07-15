@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 
 import anyio.to_thread
 import httpx
+from sqlalchemy import update as sa_update
 from sqlalchemy.ext.asyncio import AsyncEngine
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
@@ -158,6 +159,37 @@ async def fetch_and_store(
         logger.exception("Change detection failed for %s", ext.extension_id)
         events = []
 
+    # Persist the pending events in the SAME transaction as the state change so they commit
+    # atomically (#109). If the process dies before fire_pending_alerts runs, the marker
+    # survives and the next cycle re-fires them; fire_pending_alerts clears it on success.
+    #
+    # MERGE rather than overwrite: a prior delivery may have failed and intentionally left
+    # its events in the marker for retry. Overwriting (with the new events, or None when
+    # nothing changed) would silently drop them — and the manual-refresh path doesn't run
+    # recovery first, so it can't rely on the scheduler having drained them.
+    #
+    # The merge is a read-modify-write, so do it under a row lock, or two refreshes of the
+    # SAME extension that overlap (a manual API refresh racing the scheduler cycle) could each
+    # read the old marker and last-writer-wins would drop one side's events (#109 review).
+    # Flush this row's other changes first (also assigns ext.id on a first-time insert), then
+    # SELECT ... FOR UPDATE the marker: the locking read returns the *current committed* value
+    # — not the stale one loaded before a concurrent writer committed — and the lock is held
+    # until the caller commits, so the other writer's events are appended, never clobbered.
+    # We return the full merged set so the caller fires everything pending, not just this
+    # refresh's new events.
+    new_events = [asdict(e) for e in events]
+    await session.flush()
+    locked_marker = (
+        await session.exec(select(Extension.pending_alert_events).where(Extension.id == ext.id).with_for_update())
+    ).one()
+    try:
+        prior = json.loads(locked_marker) if locked_marker else []
+    except (ValueError, TypeError):
+        prior = []  # a corrupt marker can't be delivered anyway; don't fail the fetch over it
+    pending = prior + new_events
+    ext.pending_alert_events = json.dumps(pending) if pending else None
+    events = [ChangeEvent(**e) for e in pending]
+
     return ext, events
 
 
@@ -177,6 +209,9 @@ async def fire_pending_alerts(
     """
     if not events:
         return
+    # Snapshot exactly what we're about to fire; we clear the marker only if it still holds
+    # this same value (compare-and-clear below).
+    fired = json.dumps([asdict(e) for e in events])
     try:
         await fire_alerts(events, ext, engine, client)
     except Exception:
@@ -184,3 +219,67 @@ async def fire_pending_alerts(
             "Alert processing failed for %s — any delivered webhooks may not have been recorded in the alert log",
             ext.extension_id,
         )
+        # Keep the durable marker so a shutdown-dropped alert is retried next cycle (#109).
+        return
+    # Delivered + recorded: clear the durable marker so it isn't re-fired.
+    await _clear_pending_alerts(ext.id, engine, fired)
+
+
+async def _clear_pending_alerts(ext_id: int | None, engine: AsyncEngine, expected: str) -> None:
+    """Clear an extension's pending-alert marker with an atomic compare-and-clear (#109).
+
+    A single conditional UPDATE (``... WHERE pending_alert_events = :expected``) wipes the
+    marker only if it still holds exactly what we delivered. Doing the compare inside the
+    WHERE — evaluated under the row's write lock at UPDATE time — rather than reading then
+    writing in Python closes the TOCTOU window where a concurrent refresh appends new events
+    between the read and the clear, which a blind read-then-clear would erase (#109 review).
+    If the marker no longer matches, it's left for the next cycle to deliver.
+    """
+    if ext_id is None:
+        return
+    async with AsyncSession(engine) as session:
+        await session.execute(
+            sa_update(Extension)
+            .where(Extension.id == ext_id, Extension.pending_alert_events == expected)
+            .values(pending_alert_events=None)
+        )
+        await session.commit()
+
+
+async def recover_pending_alerts(engine: AsyncEngine, client: httpx.AsyncClient) -> None:
+    """Re-fire alerts persisted-but-not-delivered before a prior shutdown/crash (#109).
+
+    Scans for extensions whose ``pending_alert_events`` marker is still set — meaning the
+    process died between committing a state change and delivering its alert — and fires
+    them. Called at startup and at the head of each refresh cycle. ``fire_pending_alerts``
+    clears the marker on success, so this is idempotent and self-healing.
+    """
+    async with AsyncSession(engine) as session:
+        ext_ids = (await session.exec(select(Extension.id).where(Extension.pending_alert_events.is_not(None)))).all()
+
+    for ext_id in ext_ids:
+        async with AsyncSession(engine) as session:
+            ext = await session.get(Extension, ext_id)
+            if ext is None or ext.pending_alert_events is None:
+                continue
+            raw = ext.pending_alert_events
+            try:
+                events = [ChangeEvent(**e) for e in json.loads(raw)]
+            except Exception:
+                logger.exception("Discarding unparsable pending_alert_events for %s", ext.extension_id)
+                # Compare-and-clear so a concurrent refresh that replaced the corrupt marker
+                # with real events isn't wiped along with it.
+                await _clear_pending_alerts(ext_id, engine, raw)
+                continue
+            if not events:
+                # An empty marker ("[]") has nothing to deliver — compare-and-clear it so it
+                # doesn't linger (and so a concurrent append isn't erased).
+                await _clear_pending_alerts(ext_id, engine, raw)
+                continue
+            logger.info("Recovering %d pending alert(s) for %s after restart", len(events), ext.extension_id)
+            # Mirror _refresh_one exactly: commit + refresh so ext is attached and fresh
+            # when fire_pending_alerts (which opens its own session) reads its attributes —
+            # firing off a detached/uncommitted object trips MissingGreenlet.
+            await session.commit()
+            await session.refresh(ext)
+            await fire_pending_alerts(events, ext, engine, client)

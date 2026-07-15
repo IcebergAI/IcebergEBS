@@ -68,6 +68,10 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+    # Give the scheduler time to drain an in-flight watchlist refresh on shutdown before
+    # SIGKILL, so a job isn't abandoned between committing a state change and firing its
+    # alert (#109). Raise above your worst-case single-extension refresh time.
+    stop_grace_period: 60s
     restart: unless-stopped
 
   nginx:
