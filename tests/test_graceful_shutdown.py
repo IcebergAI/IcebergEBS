@@ -91,6 +91,7 @@ async def test_recover_refires_and_records_alertlog(test_db, admin_user):
         session.add(dest)
         await session.commit()
         await session.refresh(dest)
+        dest_id = dest.id  # capture now: the ext commit below re-expires every instance in the session
         ext = Extension(
             user_id=admin_user.id,
             store="vscode",
@@ -109,7 +110,7 @@ async def test_recover_refires_and_records_alertlog(test_db, admin_user):
         await session.refresh(ext)  # reload expired PK before reading it outside the session
         ext_id = ext.id
         session.add(
-            AlertRule(user_id=admin_user.id, destination_id=dest.id, event_type="risk_level_change", enabled=True)
+            AlertRule(user_id=admin_user.id, destination_id=dest_id, event_type="risk_level_change", enabled=True)
         )
         await session.commit()
 
