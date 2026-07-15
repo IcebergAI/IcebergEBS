@@ -6,6 +6,10 @@ name: iceberg-ebs
 services:
   postgres:
     image: postgres:16-alpine
+    # Postgres' entrypoint needs its default caps to chown PGDATA and drop to the
+    # postgres user, so caps are NOT dropped here; just block privilege escalation.
+    security_opt:
+      - no-new-privileges:true
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-iceberg_ebs}
       POSTGRES_USER: ${POSTGRES_USER:-iceberg_ebs}
@@ -21,6 +25,17 @@ services:
 
   app:
     build: .
+    # The app parses untrusted extension archives, so give it the tightest sandbox
+    # Compose offers: no privilege escalation, no Linux capabilities, and a read-only
+    # root filesystem. The image already runs as the non-root `appuser` (see Dockerfile)
+    # and writes nothing outside /tmp, so a writable tmpfs there is all it needs.
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp
     environment:
       ICEBERG_EBS_DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-iceberg_ebs}:${POSTGRES_PASSWORD}@postgres/${POSTGRES_DB:-iceberg_ebs}
       ICEBERG_EBS_ADMIN_USERNAME: ${ICEBERG_EBS_ADMIN_USERNAME}
@@ -38,6 +53,16 @@ services:
       # HTTP timeout. Other app/config.py settings use their defaults unless added here.
       ICEBERG_EBS_SESSION_MAX_AGE: ${ICEBERG_EBS_SESSION_MAX_AGE:-86400}
       ICEBERG_EBS_HTTPX_TIMEOUT: ${ICEBERG_EBS_HTTPX_TIMEOUT:-15.0}
+      # Don't attempt to write .pyc into the read-only /app tree.
+      PYTHONDONTWRITEBYTECODE: "1"
+    healthcheck:
+      # python:3.14-slim has no curl/wget — probe /readyz via the stdlib. urlopen
+      # raises on a non-2xx (e.g. 503 when the DB is down), which fails the check.
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/readyz', timeout=5)"]
+      interval: 15s
+      timeout: 5s
+      start_period: 30s
+      retries: 5
     depends_on:
       postgres:
         condition: service_healthy
@@ -47,6 +72,28 @@ services:
     # Pinned to a minor: `nginx:alpine` floats, so the TLS-terminating proxy
     # would silently change version on every `docker compose pull`.
     image: nginx:1.29-alpine
+    security_opt:
+      - no-new-privileges:true
+    # cap_drop ALL, then add back only what the stock nginx image needs under a
+    # read-only rootfs: NET_BIND_SERVICE to bind :80/:443, and CHOWN/SETUID/SETGID/
+    # DAC_OVERRIDE for the root master to drop its workers to the `nginx` user.
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+      - CHOWN
+      - SETUID
+      - SETGID
+      - DAC_OVERRIDE
+    read_only: true
+    # nginx writes its pid and proxy temp files; back those with tmpfs so the rest of
+    # the root filesystem stays read-only. Do NOT tmpfs /var/log/nginx — the official
+    # image symlinks access.log/error.log to /dev/stdout|stderr (which stay writable
+    # under a read-only rootfs), and a tmpfs there would shadow those symlinks so nginx
+    # writes real files no one collects, swallowing container logs.
+    tmpfs:
+      - /var/cache/nginx
+      - /var/run
     ports:
       - "80:80"
       - "443:443"
@@ -55,8 +102,17 @@ services:
       - ./nginx/security_headers.conf:/etc/nginx/security_headers.conf:ro
       - ./nginx/certs:/etc/nginx/certs:ro
       - ./static:/app/static:ro
+    healthcheck:
+      # Plain-HTTP nginx-local liveness on :80 (returns 200 without redirecting to
+      # HTTPS or proxying to the app — see the /nginx-health location in nginx.conf).
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:80/nginx-health"]
+      interval: 15s
+      timeout: 5s
+      start_period: 10s
+      retries: 5
     depends_on:
-      - app
+      app:
+        condition: service_healthy
     restart: unless-stopped
 
 volumes:
