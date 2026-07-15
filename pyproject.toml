@@ -119,9 +119,10 @@ exclude_dirs = ["tests"]
 # Dead-code gate (#101). Run in CI via `uvx vulture` (not the dev group: vulture would
 # need a uv.lock refresh, and this repo runs standalone linters ephemerally like zizmor).
 # The decorator/name allowlist is the whole trick — without it vulture flags every
-# FastAPI route handler and Pydantic validator as dead. vulture_whitelist.py carries the
-# reviewed false positives (NamedTuple / SQLModel / response-model fields).
+# FastAPI route handler and Pydantic validator as dead. `dispatch` is the Starlette
+# BaseHTTPMiddleware hook (framework-invoked, never called by us). vulture_whitelist.py
+# carries the reviewed false positives (NamedTuple / SQLModel / response-model fields).
 min_confidence = 60
 paths = ["app", "vulture_whitelist.py"]
 ignore_decorators = ["@router.*", "@app.*", "@field_validator", "@model_validator", "@asynccontextmanager"]
-ignore_names = ["model_config", "cls"]
+ignore_names = ["model_config", "cls", "dispatch"]
