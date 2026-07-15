@@ -60,6 +60,6 @@ def test_restore_docs_use_container_side_expansion():
     # $POSTGRES_DB must be expanded inside the container (single-quoted `sh -c`), not by the
     # host shell where they'd be empty. Also stop the backup service during a restore.
     doc = _DEPLOYMENT.read_text()
-    assert "sh -c 'pg_restore -U \"$POSTGRES_USER\" -d \"$POSTGRES_DB\"" in doc
-    assert "sh -c 'pg_dump -U \"$POSTGRES_USER\" -d \"$POSTGRES_DB\"" in doc
+    assert 'sh -c \'pg_restore -U "$POSTGRES_USER" -d "$POSTGRES_DB"' in doc
+    assert 'sh -c \'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB"' in doc
     assert "docker compose stop app backup" in doc
