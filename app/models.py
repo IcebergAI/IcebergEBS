@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 from typing import Any, Optional
 
-from sqlalchemy import Column, DateTime
+from sqlalchemy import Column, DateTime, Index, desc
 from sqlmodel import Field, SQLModel, UniqueConstraint
 
 
@@ -82,6 +82,15 @@ class FetchLog(SQLModel, table=True):
 
 
 class InstallCountHistory(SQLModel, table=True):
+    __table_args__ = (
+        Index(
+            "ix_installcounthistory_extension_recorded_id",
+            "extension_id",
+            desc("recorded_at"),
+            desc("id"),
+        ),
+    )
+
     id: Optional[int] = Field(default=None, primary_key=True)
     extension_id: int = Field(foreign_key="extension.id", ondelete="CASCADE", index=True)
     recorded_at: datetime = Field(default_factory=_utcnow, sa_column=_tz_column(nullable=False))

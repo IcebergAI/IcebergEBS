@@ -45,6 +45,23 @@ async def fetch_and_store(
 
     metadata, pkg_bytes = await fetcher.fetch(ext.extension_id)
 
+    # score_popularity's sudden-drop check only compares the current reading
+    # against the immediately preceding one (history[-2]), so load just the two
+    # most recent stored counts instead of scanning the whole install-count
+    # history — which is unbounded when retention is disabled (the default) and
+    # was being fully hydrated on every refresh of every watchlist extension,
+    # O(watchlist × history) per scheduler cycle (#146). Query column-only and
+    # before staging the new row, so the "previous" reading is the last real
+    # fetch rather than the row we're about to add.
+    previous_counts = (
+        await session.exec(
+            select(InstallCountHistory.install_count)
+            .where(InstallCountHistory.extension_id == ext.id)
+            .order_by(InstallCountHistory.recorded_at.desc(), InstallCountHistory.id.desc())
+            .limit(2)
+        )
+    ).all()
+
     if metadata.install_count is not None:
         session.add(
             InstallCountHistory(
@@ -52,15 +69,12 @@ async def fetch_and_store(
                 install_count=metadata.install_count,
             )
         )
-
-    history_rows = (
-        await session.exec(
-            select(InstallCountHistory)
-            .where(InstallCountHistory.extension_id == ext.id)
-            .order_by(InstallCountHistory.recorded_at)
-        )
-    ).all()
-    history = [r.install_count for r in history_rows]
+        # Ascending (oldest→newest) with the new reading last, so history[-2] is
+        # the most recent stored count — the ordering score_popularity expects.
+        history = [*reversed(previous_counts), metadata.install_count]
+    else:
+        # No new reading this cycle: the stored counts alone, oldest→newest.
+        history = list(reversed(previous_counts))
 
     analysis: PackageAnalysis | None = None
     if pkg_bytes:
