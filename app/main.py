@@ -11,6 +11,7 @@ from app.config import settings
 from app.database import init_db
 from app.deps import WebUser
 from app.fetchers.transport import RetryTransport
+from app.logging_config import setup_logging
 from app.middleware import CSRFOriginMiddleware
 from app.routes import alerts as alerts_routes
 from app.routes import api as api_routes
@@ -20,7 +21,7 @@ from app.routes import users as users_routes
 from app.scheduler import create_scheduler
 from app.version import get_version
 
-logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
+setup_logging()
 
 
 @asynccontextmanager
@@ -87,7 +88,13 @@ async def healthz() -> JSONResponse:
 
 @app.get("/readyz", include_in_schema=False)
 async def readyz() -> JSONResponse:
-    """Readiness probe: verify the database is reachable before taking traffic."""
+    """Readiness probe: verify the database is reachable before taking traffic.
+
+    Also reports the fleet's last successful watchlist refresh (#89) so an external
+    monitor can catch "the app is up but the scheduler hasn't refreshed in a day" —
+    invisible to /healthz and to a bare 200 here. It's advisory only: a stale refresh
+    does NOT flip readiness (the app still serves), it just enriches the JSON body.
+    """
     from sqlalchemy import text
 
     from app.database import engine
@@ -95,10 +102,19 @@ async def readyz() -> JSONResponse:
     try:
         async with engine.connect() as conn:
             await conn.execute(text("SELECT 1"))
+            # Raw SQL (not the ORM) keeps this type-clean and dependency-free; `success`
+            # is a boolean column so `WHERE success` selects the successful refreshes.
+            last_success = (await conn.execute(text("SELECT max(fetched_at) FROM fetchlog WHERE success"))).scalar()
     except Exception:
         logging.getLogger(__name__).exception("Readiness check failed: database unreachable")
         return JSONResponse({"status": "unavailable", "database": "down"}, status_code=503)
-    return JSONResponse({"status": "ok", "database": "up"})
+    return JSONResponse(
+        {
+            "status": "ok",
+            "database": "up",
+            "last_successful_refresh": last_success.isoformat() if last_success else None,
+        }
+    )
 
 
 # Conservative app-layer security-header floor (#66, defence-in-depth). In production

@@ -873,3 +873,19 @@ docker compose exec -T postgres \
   sh -c 'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Fc' \
   > "./backups/pre-upgrade-$(date +%Y%m%d-%H%M%S).pgc"
 ```
+
+---
+
+## Monitoring & observability (#89)
+
+- **Logs** — the app logs are timestamped; set `ICEBERG_EBS_LOG_JSON=true` to emit single-line JSON
+  for a log collector. nginx's access log includes referer, user-agent, and request/upstream timing.
+- **Liveness / readiness** — point orchestrator probes at `/healthz` (process up) and `/readyz`
+  (DB reachable → 503 if not). Both are unauthenticated and cheap.
+- **Scheduler freshness** — `/readyz`'s JSON body carries `last_successful_refresh` (ISO timestamp or
+  `null`). Add an **external uptime check** that alerts when it falls too far behind the configured
+  `ICEBERG_EBS_FETCH_INTERVAL_MINUTES` — this catches "the app is up but hasn't successfully refreshed
+  the watchlist in a day", which a plain 200 on `/readyz` would miss. It is advisory only: a stale
+  refresh does not make the pod unready (the app still serves).
+- **Error tracking** — aggregating unhandled exceptions to a Sentry-style DSN is a documented
+  follow-up; it needs a runtime dependency, so it isn't wired in yet.
