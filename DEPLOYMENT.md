@@ -1010,11 +1010,18 @@ and errors on the old mount) — this repo's `docker-compose.yml` already does t
 Compose deployment:
 
 ```bash
-# 1. Dump with the OLD (16) image still running.
+# 1. Dump with the OLD (16) image still running — to a *temp* file, then VERIFY it before
+#    trusting it. Step 2 destroys the only copy of the data, so a truncated/partial dump
+#    (a failed or interrupted pg_dump, which shell redirection would still leave behind)
+#    must NOT be allowed to reach that point. The && chain aborts on any failure, and the
+#    dump only takes its real name after pg_restore --list confirms the archive is intact.
 docker compose exec -T postgres \
-  sh -c 'pg_dump -Fc -U "$POSTGRES_USER" "$POSTGRES_DB"' > ./backups/pre-pg18.pgc
+  sh -c 'pg_dump -Fc -U "$POSTGRES_USER" "$POSTGRES_DB"' > ./backups/pre-pg18.pgc.tmp \
+  && docker compose exec -T postgres sh -c 'pg_restore --list' < ./backups/pre-pg18.pgc.tmp > /dev/null \
+  && mv ./backups/pre-pg18.pgc.tmp ./backups/pre-pg18.pgc \
+  && echo "dump verified: ./backups/pre-pg18.pgc"
 
-# 2. Stop the stack and drop the old data volume (the dump is your safety net).
+# 2. ONLY if step 1 printed "dump verified": stop the stack and drop the old data volume.
 docker compose down
 docker volume rm iceberg-ebs_postgres_data
 
