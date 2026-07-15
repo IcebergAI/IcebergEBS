@@ -221,10 +221,6 @@ async def recover_pending_alerts(engine: AsyncEngine, client: httpx.AsyncClient)
         ext_ids = (await session.exec(select(Extension.id).where(Extension.pending_alert_events.is_not(None)))).all()
 
     for ext_id in ext_ids:
-        # Load and fire each extension inside its own open (read-only) session, so
-        # fire_alerts reads its attributes while attached — a detached ORM object would
-        # trip MissingGreenlet on attribute access. Mirrors _refresh_one, which fires
-        # while the ext is still attached to its session.
         async with AsyncSession(engine) as session:
             ext = await session.get(Extension, ext_id)
             if ext is None or ext.pending_alert_events is None:
@@ -237,4 +233,9 @@ async def recover_pending_alerts(engine: AsyncEngine, client: httpx.AsyncClient)
                 await session.commit()
                 continue
             logger.info("Recovering %d pending alert(s) for %s after restart", len(events), ext.extension_id)
+            # Mirror _refresh_one exactly: commit + refresh so ext is attached and fresh
+            # when fire_pending_alerts (which opens its own session) reads its attributes —
+            # firing off a detached/uncommitted object trips MissingGreenlet.
+            await session.commit()
+            await session.refresh(ext)
             await fire_pending_alerts(events, ext, engine, client)
