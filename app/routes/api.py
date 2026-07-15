@@ -1,9 +1,7 @@
 import csv
 import io
-import json
 import logging
 import re
-from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Annotated, Literal
 from urllib.parse import parse_qs, urlparse
@@ -12,7 +10,7 @@ import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel
-from sqlalchemy import func, or_
+from sqlalchemy import func
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import select
@@ -20,11 +18,13 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.database import engine
 from app.deps import CurrentUser, SessionDep
+from app.extension_queries import ExtensionFilters, build_extension_query, count_rows, exposure
 from app.fetchers.base import FetchError
 from app.models import Extension, FetchLog, InstallCountHistory, InstallObservation
 from app.scoring import risk_level
 from app.services import fetch_and_store, fire_pending_alerts
 from app.threat_intel import build_threat_intel_indicators
+from app.utils import safe_json_loads
 
 logger = logging.getLogger(__name__)
 
@@ -35,64 +35,8 @@ RiskLevel = Literal["low", "medium", "high", "critical"]
 SortField = Literal["name", "risk_score", "publisher", "install_count", "last_updated", "added_at", "exposure"]
 SortOrder = Literal["asc", "desc"]
 
-# Exposure ("blast radius", #29) is risk × org footprint — derived, never stored.
-# A SQL expression lets it be ORDER BY'd without a denormalised column; NULL when
-# either factor is NULL, so the existing nullslast/nullsfirst handling applies.
-_EXPOSURE_EXPR = Extension.risk_score * Extension.install_footprint
-
-# Risk band → score range [low, high) used to filter by risk level. Mirrors the
-# thresholds in app.scoring.risk_level (75/50/25) — the single source of truth.
-_RISK_BANDS: dict[str, tuple[int, int | None]] = {
-    "critical": (75, None),
-    "high": (50, 75),
-    "medium": (25, 50),
-    "low": (0, 25),
-}
-
-_SORT_COLUMNS = {
-    "name": Extension.name,
-    "risk_score": Extension.risk_score,
-    "publisher": Extension.publisher,
-    "install_count": Extension.install_count,
-    "last_updated": Extension.last_updated,
-    "added_at": Extension.added_at,
-    "exposure": _EXPOSURE_EXPR,
-}
-
 DEFAULT_PAGE_LIMIT = 50
 MAX_PAGE_LIMIT = 200
-
-
-def _escape_like(term: str) -> str:
-    """Escape LIKE wildcards so a literal % / _ in a search term isn't treated
-    as a pattern (escape char is backslash, passed via escape="\\")."""
-    return term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-
-
-def _exposure(risk_score: int | None, install_footprint: int | None) -> int | None:
-    """Exposure / "blast radius" = risk_score × org footprint (#29). None unless
-    both factors are known. Mirrors the SQL ``_EXPOSURE_EXPR`` used for sorting."""
-    if risk_score is None or install_footprint is None:
-        return None
-    return risk_score * install_footprint
-
-
-@dataclass(frozen=True)
-class ExtensionFilters:
-    """Shared filter/sort params for the extension list, export and dashboard.
-
-    One definition so the three call sites can't drift. The API endpoints build it
-    from typed Query params (FastAPI 422s on bad input via the ``extension_filters``
-    dependency); the dashboard builds it from coerced raw strings (tolerating junk
-    from a browser). ``build_extension_query`` consumes it. ``publisher`` is only
-    used by the API endpoints — the dashboard leaves it None."""
-
-    store: str | None = None
-    risk: str | None = None
-    publisher: str | None = None
-    q: str | None = None
-    sort: str = "risk_score"
-    order: str = "desc"
 
 
 def extension_filters(
@@ -109,40 +53,6 @@ def extension_filters(
 
 
 FilterParams = Annotated[ExtensionFilters, Depends(extension_filters)]
-
-
-def build_extension_query(user_id: int, filters: ExtensionFilters):
-    """Build the filtered + sorted ``select(Extension)`` shared by the list API,
-    the export endpoint and the dashboard. No limit/offset — the caller paginates.
-    Unknown sort columns fall back to risk_score; an ``id`` tie-breaker keeps
-    pagination stable across pages."""
-    stmt = select(Extension).where(Extension.user_id == user_id)
-    if filters.store:
-        stmt = stmt.where(Extension.store == filters.store)
-    if filters.risk and filters.risk in _RISK_BANDS:
-        low, high = _RISK_BANDS[filters.risk]
-        stmt = stmt.where(Extension.risk_score.is_not(None), Extension.risk_score >= low)
-        if high is not None:
-            stmt = stmt.where(Extension.risk_score < high)
-    if filters.publisher:
-        stmt = stmt.where(Extension.publisher == filters.publisher)
-    if filters.q:
-        like = f"%{_escape_like(filters.q)}%"
-        stmt = stmt.where(
-            or_(
-                Extension.name.ilike(like, escape="\\"),
-                Extension.publisher.ilike(like, escape="\\"),
-                Extension.extension_id.ilike(like, escape="\\"),
-            )
-        )
-    col = _SORT_COLUMNS.get(filters.sort, Extension.risk_score)
-    primary = col.desc().nullslast() if filters.order == "desc" else col.asc().nullsfirst()
-    return stmt.order_by(primary, Extension.id.asc())
-
-
-async def _count(session: AsyncSession, stmt) -> int:
-    """Total rows matching a built query, ignoring its ORDER BY / pagination."""
-    return await session.scalar(select(func.count()).select_from(stmt.order_by(None).subquery())) or 0
 
 
 # ---------------------------------------------------------------------------
@@ -181,16 +91,6 @@ class ThreatIntelIndicatorOut(BaseModel):
     lookups: list[ThreatIntelLookupOut]
 
 
-def _safe_json(raw: str | None, default: str, field: str, ext_id: int | None):
-    """json.loads with a fallback: malformed stored JSON logs a warning instead of
-    raising and 500-ing the endpoint (#17)."""
-    try:
-        return json.loads(raw or default)
-    except (json.JSONDecodeError, TypeError):
-        logger.warning("Malformed %s JSON for extension %s — using fallback", field, ext_id)
-        return json.loads(default)
-
-
 class ExtensionOut(BaseModel):
     id: int
     store: str
@@ -225,12 +125,12 @@ class ExtensionOut(BaseModel):
         """
         # Parse defensively: a partial write or manual DB edit could leave invalid
         # JSON, which must not 500 the endpoint — fall back and log instead (#17).
-        perms = _safe_json(ext.permissions, "[]", "permissions", ext.id)
-        analysis_raw = _safe_json(ext.package_analysis, "null", "package_analysis", ext.id)
+        perms = safe_json_loads(ext.permissions, "[]", "permissions", ext.id)
+        analysis_raw = safe_json_loads(ext.package_analysis, "null", "package_analysis", ext.id)
         host_perms = analysis_raw.get("host_permissions", []) if analysis_raw else []
         findings = analysis_raw.get("findings", []) if analysis_raw else []
         threat_intel_indicators = build_threat_intel_indicators(analysis_raw) if include_threat_intel else []
-        detail = _safe_json(ext.risk_detail, "null", "risk_detail", ext.id)
+        detail = safe_json_loads(ext.risk_detail, "null", "risk_detail", ext.id)
         return cls(
             id=ext.id,
             store=ext.store,
@@ -251,7 +151,7 @@ class ExtensionOut(BaseModel):
             risk_detail=detail,
             risk_level=risk_level(ext.risk_score),
             install_footprint=ext.install_footprint,
-            exposure=_exposure(ext.risk_score, ext.install_footprint),
+            exposure=exposure(ext.risk_score, ext.install_footprint),
             findings=[PackageFindingOut(**finding) for finding in findings],
             threat_intel_indicators=[ThreatIntelIndicatorOut(**indicator) for indicator in threat_intel_indicators],
         )
@@ -629,7 +529,7 @@ async def list_extensions(
     offset: Annotated[int, Query(ge=0)] = 0,
 ) -> PaginatedExtensions:
     stmt = build_extension_query(current_user.id, filters)
-    total = await _count(session, stmt)
+    total = await count_rows(session, stmt)
     rows = (await session.exec(stmt.limit(limit).offset(offset))).all()
     # Skip per-extension threat-intel indicator construction here — the list view
     # doesn't render it, and building it for every row is O(extensions × domains).
@@ -665,7 +565,7 @@ EXPORT_FIELDS = [
 
 
 def _export_row(ext: Extension) -> dict:
-    perms = _safe_json(ext.permissions, "[]", "permissions", ext.id)
+    perms = safe_json_loads(ext.permissions, "[]", "permissions", ext.id)
     return {
         "id": ext.id,
         "store": ext.store,
@@ -678,7 +578,7 @@ def _export_row(ext: Extension) -> dict:
         "risk_score": ext.risk_score,
         "risk_level": risk_level(ext.risk_score),
         "install_footprint": ext.install_footprint,
-        "exposure": _exposure(ext.risk_score, ext.install_footprint),
+        "exposure": exposure(ext.risk_score, ext.install_footprint),
         "permissions": ";".join(perms) if isinstance(perms, list) else "",
         "watchlist": ext.watchlist,
         "added_at": ext.added_at.isoformat() if ext.added_at else None,
