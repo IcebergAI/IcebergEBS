@@ -65,7 +65,8 @@ def _backoff_delay(attempt: int, *, base: float, cap: float) -> float:
     a fleet of simultaneous scheduler retries so they don't re-synchronise on a store.
     """
     ceiling = min(cap, base * (2**attempt))
-    return random.uniform(0, max(ceiling, 0.0))
+    # Jitter for retry backoff — decorrelating retries, not a security/crypto context.
+    return random.uniform(0, max(ceiling, 0.0))  # nosec B311
 
 
 class RetryTransport(httpx.AsyncBaseTransport):
