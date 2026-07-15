@@ -118,6 +118,11 @@ release to diff against.
   Release images are immutable and digest-pinnable, so a consumer can verify what is in the image and
   that this repo's CI built it. `build.yml` no longer publishes a mutable `:latest` — main pushes are
   dev-only `:<sha>` + `:edge`; deployables come only from a tagged release (#99).
+- **CSRF origin-check middleware (#107)** — a `CSRFOriginMiddleware` now rejects
+  cookie-authenticated, state-changing requests (POST/PUT/PATCH/DELETE) whose `Origin`/`Referer`
+  doesn't match the request host (or `ICEBERG_EBS_TRUSTED_ORIGINS`), as defence-in-depth over the
+  existing `SameSite=Lax` posture (#16). Bearer-token (M2M) requests carry no session cookie and are
+  never checked, so the API's primary credential is unaffected.
 - **Kubernetes NetworkPolicies (#103)** — the Helm chart adds default-deny ingress plus named hops
   (ingress-controller → app:8000, app → postgres:5432), turning the previously flat namespace into
   a segmented one so a single compromised pod can't reach Postgres directly. Egress is left open
