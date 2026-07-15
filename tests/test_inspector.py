@@ -290,6 +290,27 @@ def test_mv2_file_scheme_host_pattern_merged():
     assert result.permissions == ["storage"]
 
 
+def test_named_api_permissions_not_mistaken_for_host_patterns():
+    # fileSystemProvider/fileSystem are real API permissions that share a word
+    # prefix with the file:// scheme — the MV2 merge must match full scheme
+    # prefixes only, or they'd be misclassified as host permissions (#141 review).
+    data = make_zip(
+        {
+            "manifest.json": json.dumps(
+                {
+                    "manifest_version": 2,
+                    "name": "x",
+                    "version": "1",
+                    "permissions": ["fileSystemProvider", "fileSystem", "file:///*"],
+                }
+            ),
+        }
+    )
+    result = inspect_package(data)
+    assert result.permissions == ["fileSystemProvider", "fileSystem"]
+    assert result.host_permissions == ["file:///*"]
+
+
 def test_minified_and_obfuscated_findings():
     compressed = " ".join(["a"] * 600)
     data = make_zip(
