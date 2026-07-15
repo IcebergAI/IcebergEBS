@@ -99,5 +99,9 @@ release to diff against.
   credential persistence is disabled, so a repointed action tag cannot run arbitrary code in CI —
   including the GHCR-pushing build job — and the repo token is no longer left in the workspace
   `.git/config` (OWASP CICD-SEC-3/4) (#96).
+- **A blocking `lint-workflows` CI job** audits the workflows on every PR with **zizmor** (CI/CD
+  security: unpinned actions, credential persistence, template injection, over-broad permissions)
+  and **actionlint** (syntax + shellcheck), so the pinning/least-privilege posture above cannot
+  silently regress (#97).
 
 [0.1.0-beta.1]: https://github.com/IcebergAI/IcebergEBS/commits/main
