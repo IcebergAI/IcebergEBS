@@ -84,12 +84,28 @@ async def readyz() -> JSONResponse:
     return JSONResponse({"status": "ok", "database": "up"})
 
 
+# Conservative app-layer security-header floor (#66, defence-in-depth). In production
+# the reverse proxy (nginx/security_headers.conf) is the source of truth: it strips
+# these upstream copies and re-adds its own canonical CSP + HSTS, so exactly one value
+# reaches the client. This floor only matters on a non-proxied path (or if the proxy
+# header config regresses). script-src/default-src are deliberately omitted so that on
+# any path where both the app and proxy CSPs are enforced, the app policy can never
+# intersect with — and break — the proxy's CDN asset loading.
+_BASELINE_CSP = "frame-ancestors 'none'; base-uri 'self'; object-src 'none'; form-action 'self'"
+
+
 @app.middleware("http")
 async def security_headers(request: Request, call_next) -> Response:
     response = await call_next(request)
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["X-Frame-Options"] = "DENY"
     response.headers["Referrer-Policy"] = "same-origin"
+    response.headers.setdefault("Content-Security-Policy", _BASELINE_CSP)
+    # HSTS only when the deployment is HTTPS (secure_cookies is the prod signal).
+    # Sending it over plain-HTTP dev is meaningless and could poison a later
+    # localhost HTTPS listener.
+    if settings.secure_cookies:
+        response.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
     return response
 
 
