@@ -11,6 +11,7 @@ from app.config import settings
 from app.database import init_db
 from app.deps import WebUser
 from app.fetchers.transport import RetryTransport
+from app.logging_config import setup_logging
 from app.middleware import CSRFOriginMiddleware
 from app.routes import alerts as alerts_routes
 from app.routes import api as api_routes
@@ -20,7 +21,7 @@ from app.routes import users as users_routes
 from app.scheduler import create_scheduler
 from app.version import get_version
 
-logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
+setup_logging()
 
 
 @asynccontextmanager
@@ -87,10 +88,18 @@ async def healthz() -> JSONResponse:
 
 @app.get("/readyz", include_in_schema=False)
 async def readyz() -> JSONResponse:
-    """Readiness probe: verify the database is reachable before taking traffic."""
+    """Readiness probe: verify the database is reachable before taking traffic.
+
+    Also reports when the background scheduler last completed a refresh cycle (#89) so an
+    external monitor can catch "the app is up but the scheduler has stalled" — invisible to
+    /healthz and a bare 200 here. The value is an in-process signal (no history-table scan
+    on the probe path, and it reflects only the *scheduler*, so an API-triggered fetch can't
+    mask a stall). It's advisory: a stale/None value does NOT flip readiness.
+    """
     from sqlalchemy import text
 
     from app.database import engine
+    from app.scheduler_state import last_scheduler_run
 
     try:
         async with engine.connect() as conn:
@@ -98,7 +107,14 @@ async def readyz() -> JSONResponse:
     except Exception:
         logging.getLogger(__name__).exception("Readiness check failed: database unreachable")
         return JSONResponse({"status": "unavailable", "database": "down"}, status_code=503)
-    return JSONResponse({"status": "ok", "database": "up"})
+    last_run = last_scheduler_run()
+    return JSONResponse(
+        {
+            "status": "ok",
+            "database": "up",
+            "last_scheduler_run": last_run.isoformat() if last_run else None,
+        }
+    )
 
 
 # Conservative app-layer security-header floor (#66, defence-in-depth). In production

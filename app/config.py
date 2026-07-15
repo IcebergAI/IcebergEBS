@@ -42,6 +42,8 @@ class Settings(BaseSettings):
     login_attempt_window_seconds: int = 300
     login_lockout_seconds: int = 300
     app_base_url: str = ""  # e.g. "https://icebergebs.example.com" — used in webhook payloads
+    # Emit logs as single-line JSON (for a log collector) instead of timestamped text (#89).
+    log_json: bool = False
     # Comma-separated extra origins allowed by the CSRF origin check (#107), for proxy
     # deployments that rewrite Host so the app-observed origin differs from the browser's.
     # Same-origin requests are always allowed with no configuration.
