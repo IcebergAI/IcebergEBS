@@ -29,6 +29,10 @@ class Settings(BaseSettings):
     login_attempt_window_seconds: int = 300
     login_lockout_seconds: int = 300
     app_base_url: str = ""  # e.g. "https://icebergebs.example.com" — used in webhook payloads
+    # Comma-separated extra origins allowed by the CSRF origin check (#107), for proxy
+    # deployments that rewrite Host so the app-observed origin differs from the browser's.
+    # Same-origin requests are always allowed with no configuration.
+    trusted_origins: str = ""
 
     model_config = SettingsConfigDict(env_file=".env", env_prefix="ICEBERG_EBS_")
 
