@@ -7,6 +7,12 @@ image:
 # independently refresh watchlisted extensions and write duplicate AlertLog rows.
 replicaCount: 1
 
+# With replicaCount 1 the PDB uses maxUnavailable: 0 — it blocks *voluntary* disruption
+# (node drains/evictions) so the cluster never runs the singleton at 0 or 2 replicas.
+# Disable it to allow drains (accepting brief downtime). See templates/pdb.yaml.
+podDisruptionBudget:
+  enabled: true
+
 icebergEbs:
   adminUsername: admin
   adminPassword: ""        # required — set via --set or existingSecret; never commit a value here

@@ -118,5 +118,11 @@ release to diff against.
   Release images are immutable and digest-pinnable, so a consumer can verify what is in the image and
   that this repo's CI built it. `build.yml` no longer publishes a mutable `:latest` — main pushes are
   dev-only `:<sha>` + `:edge`; deployables come only from a tagged release (#99).
+- **Completed the Helm pod-security baseline (#104)** — the deployment adds
+  `seccompProfile: RuntimeDefault` and `automountServiceAccountToken: false` (the app never calls the
+  Kubernetes API), and a `PodDisruptionBudget` (`maxUnavailable: 0`, toggleable) that blocks
+  voluntary disruption of the mandatory single replica so the cluster never runs zero or two
+  schedulers. `runAsNonRoot`/`readOnlyRootFilesystem`/`cap_drop: [ALL]`/`allowPrivilegeEscalation:
+  false` were already in place — the chart now meets Pod Security Standards *restricted*.
 
 [0.1.0-beta.1]: https://github.com/IcebergAI/IcebergEBS/commits/main

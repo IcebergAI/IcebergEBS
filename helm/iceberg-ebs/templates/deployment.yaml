@@ -14,10 +14,15 @@ spec:
       labels:
         {{- include "iceberg-ebs.selectorLabels" . | nindent 8 }}
     spec:
+      # The app never talks to the Kubernetes API, so don't mount a token an attacker
+      # who compromised the untrusted-package parser could pivot with.
+      automountServiceAccountToken: false
       securityContext:
         runAsNonRoot: true
         runAsUser: 1000
         fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
       volumes:
         - name: tmp
           emptyDir: {}
