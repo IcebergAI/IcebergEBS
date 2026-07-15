@@ -95,6 +95,12 @@ release to diff against.
   spurious `risk_level_change` alerts — stored values are kept, matching the existing guards
   on `version` and `permissions`. The user-count/version scrapers also now only read visible
   page text, so a store description like "Join 1,000,000 users" can't hijack them (#142).
+- Adopting a pre-Alembic database now stamps it at the **baseline** revision and upgrades to
+  head, instead of stamping it at head — which silently marked every post-baseline migration
+  as applied without running it, permanently (first watchlist refresh and inventory pushes
+  would then fail against the missing columns/tables). Databases already corrupted by that
+  false stamp are detected at startup (baseline-era schema behind a post-baseline revision)
+  and repaired the same way (#143).
 - `store_url` was never persisted — every enrolled extension had an empty store URL (#72).
 - Infinite redirect loop between `/` and `/login` for a stale-but-signed session cookie (#73).
 - Admin UI pages returned raw 401/403 JSON instead of redirecting to the login page (#7).
