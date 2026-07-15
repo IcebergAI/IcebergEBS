@@ -1025,7 +1025,7 @@ then
   mv ./backups/pre-pg18.pgc.tmp ./backups/pre-pg18.pgc \
     && docker compose down \
     && docker volume rm iceberg-ebs_postgres_data \
-    && docker compose up -d postgres \
+    && docker compose up -d --wait --wait-timeout 120 postgres \
     && docker compose exec -T postgres sh -c 'pg_restore -U "$POSTGRES_USER" -d "$POSTGRES_DB" --clean --if-exists' < ./backups/pre-pg18.pgc \
     && docker compose up -d
 else
