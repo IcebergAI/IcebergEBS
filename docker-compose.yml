@@ -15,7 +15,11 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-iceberg_ebs}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      # Postgres 18+ images store data in a major-version subdirectory and want the
+      # volume at /var/lib/postgresql (NOT .../data as ≤17 did) — mounting the old
+      # path makes the 18 entrypoint hard-error ("unused mount/volume"). Keep this at
+      # /var/lib/postgresql so the versioned data dir persists inside the volume.
+      - postgres_data:/var/lib/postgresql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-iceberg_ebs} -d ${POSTGRES_DB:-iceberg_ebs}"]
       interval: 5s

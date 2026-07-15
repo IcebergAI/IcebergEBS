@@ -194,7 +194,9 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-iceberg_ebs}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      # Postgres 18+ wants the volume at /var/lib/postgresql (data lives in a
+      # major-version subdirectory); the old .../data mount makes the 18 entrypoint error.
+      - postgres_data:/var/lib/postgresql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-iceberg_ebs} -d ${POSTGRES_DB:-iceberg_ebs}"]
       interval: 5s
@@ -1001,8 +1003,11 @@ A Postgres **major** bump changes the on-disk data-directory format: pointing an
 `postgres_data` volume initialised by 16 fails to start (`database files are incompatible with
 server`). The stack pins the same major across the **server**, the **`backup`** service (so
 `pg_dump`'s version always matches the server's), and the **CI test** container — always bump them
-together, never one in isolation. A fresh install (no existing volume) needs none of the below —
-18 initialises cleanly. To migrate an existing Compose deployment:
+together, never one in isolation. Note the 18 bump also **moves the volume mount** from
+`/var/lib/postgresql/data` to `/var/lib/postgresql` (18+ stores data in a major-version subdirectory
+and errors on the old mount) — this repo's `docker-compose.yml` already does that. A fresh install
+(no existing volume) needs none of the below — 18 initialises cleanly. To migrate an existing
+Compose deployment:
 
 ```bash
 # 1. Dump with the OLD (16) image still running.
