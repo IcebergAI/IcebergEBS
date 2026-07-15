@@ -22,6 +22,11 @@ spec:
       labels:
         {{- include "iceberg-ebs.selectorLabels" . | nindent 8 }}
     spec:
+      # Give the scheduler time to drain an in-flight watchlist refresh on shutdown before
+      # SIGKILL, so a job isn't abandoned between committing a state change and firing its
+      # alert (#109). Exceed the worst-case single-extension refresh time. (The durable
+      # pending-alert marker recovers anything still dropped past this window.)
+      terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds }}
       # The app never talks to the Kubernetes API, so don't mount a token an attacker
       # who compromised the untrusted-package parser could pivot with.
       automountServiceAccountToken: false

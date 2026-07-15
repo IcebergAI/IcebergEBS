@@ -14,6 +14,11 @@ image:
 # independently refresh watchlisted extensions and write duplicate AlertLog rows.
 replicaCount: 1
 
+# Grace period for the scheduler to drain an in-flight watchlist refresh on shutdown
+# before SIGKILL (#109). Raise it above your worst-case single-extension refresh time
+# (metadata fetch + package download + inspection); k8s default is 30s.
+terminationGracePeriodSeconds: 60
+
 # With replicaCount 1 the PDB uses maxUnavailable: 0 — it blocks *voluntary* disruption
 # (node drains/evictions) so an eviction can't take the singleton to 0. Rollouts are
 # handled separately by the Deployment's `strategy: Recreate`, which prevents the
