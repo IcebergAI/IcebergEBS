@@ -43,6 +43,16 @@ services:
       ICEBERG_EBS_SECRET_KEY: ${ICEBERG_EBS_SECRET_KEY}
       ICEBERG_EBS_APP_BASE_URL: ${ICEBERG_EBS_APP_BASE_URL:-}
       ICEBERG_EBS_SECURE_COOKIES: "true"
+      # Forwarded so an operator who sets these in .env actually gets them (#87):
+      # without these lines pydantic-settings never sees the value (.env is excluded
+      # from the image by .dockerignore) and retention/fetch-interval silently
+      # fall back to their defaults (retention off, 60-minute interval).
+      ICEBERG_EBS_RETENTION_DAYS: ${ICEBERG_EBS_RETENTION_DAYS:-0}
+      ICEBERG_EBS_FETCH_INTERVAL_MINUTES: ${ICEBERG_EBS_FETCH_INTERVAL_MINUTES:-60}
+      # Also forwarded (advertised as tunable in README): session lifetime + outbound
+      # HTTP timeout. Other app/config.py settings use their defaults unless added here.
+      ICEBERG_EBS_SESSION_MAX_AGE: ${ICEBERG_EBS_SESSION_MAX_AGE:-86400}
+      ICEBERG_EBS_HTTPX_TIMEOUT: ${ICEBERG_EBS_HTTPX_TIMEOUT:-15.0}
       # Don't attempt to write .pyc into the read-only /app tree.
       PYTHONDONTWRITEBYTECODE: "1"
     healthcheck:

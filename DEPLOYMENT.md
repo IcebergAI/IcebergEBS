@@ -233,6 +233,33 @@ ICEBERG_EBS_SECRET_KEY=<generate: python -c "import secrets; print(secrets.token
 ICEBERG_EBS_APP_BASE_URL=https://your-domain.example.com
 ```
 
+### Supported environment variables
+
+The deploy stacks forward the environment variables **listed below** into the app container. This
+table is *not* the full set of `app/config.py` settings — **any other setting uses its default and
+is not overridable** until you add it to both the Compose `app.environment` block and the Helm
+ConfigMap (`.env` is excluded from the image by `.dockerignore`, so an unforwarded variable is
+silently ignored — #87). All settings use the `ICEBERG_EBS_` prefix.
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `ICEBERG_EBS_DATABASE_URL` | local dev URL | Postgres DSN (`postgresql+asyncpg://…`) |
+| `ICEBERG_EBS_ADMIN_USERNAME` | — (required) | Seeded admin username (first boot only) |
+| `ICEBERG_EBS_ADMIN_PASSWORD` | — (required) | Seeded admin password (first boot only) |
+| `ICEBERG_EBS_SECRET_KEY` | — (required) | Cookie/flash signing key; **≥ 32 chars** |
+| `ICEBERG_EBS_APP_BASE_URL` | `""` | Base URL used in webhook payloads |
+| `ICEBERG_EBS_SECURE_COOKIES` | `true` | `Secure` flag on the session cookie (HTTPS) |
+| `ICEBERG_EBS_FETCH_INTERVAL_MINUTES` | `60` | Watchlist refresh interval |
+| `ICEBERG_EBS_RETENTION_DAYS` | `0` | Prune history older than N days; `0` disables |
+| `ICEBERG_EBS_SESSION_MAX_AGE` | `86400` | Session lifetime in seconds |
+| `ICEBERG_EBS_HTTPX_TIMEOUT` | `15.0` | Outbound HTTP timeout in seconds |
+
+Settings **not** in this table (e.g. the login rate-limit tuning `ICEBERG_EBS_LOGIN_MAX_ATTEMPTS` /
+`…_LOGIN_ATTEMPT_WINDOW_SECONDS` / `…_LOGIN_LOCKOUT_SECONDS`, `ICEBERG_EBS_API_KEY_LAST_USED_THROTTLE_SECONDS`,
+and `ICEBERG_EBS_SESSION_COOKIE_NAME`) run at their `app/config.py` defaults; to make one tunable in
+production, add it to the Compose `app.environment` block and the Helm ConfigMap (and a
+`icebergEbs.*` value) the same way the rows above are wired.
+
 ---
 
 ## 8. `nginx/generate-dev-cert.sh`
@@ -513,6 +540,9 @@ icebergEbs:
   secretKey: ""            # override with --set or existingSecret
   appBaseUrl: ""           # e.g. https://icebergebs.example.com
   fetchIntervalMinutes: 60
+  retentionDays: 0         # prune history older than N days; 0 disables (#22, #87)
+  sessionMaxAge: 86400     # session lifetime in seconds
+  httpxTimeout: 15.0       # outbound HTTP timeout in seconds
   secureCookies: true
 
 postgresql:
@@ -565,6 +595,9 @@ data:
   ICEBERG_EBS_ADMIN_USERNAME:        {{ .Values.icebergEbs.adminUsername | quote }}
   ICEBERG_EBS_APP_BASE_URL:          {{ .Values.icebergEbs.appBaseUrl | quote }}
   ICEBERG_EBS_FETCH_INTERVAL_MINUTES: {{ .Values.icebergEbs.fetchIntervalMinutes | quote }}
+  ICEBERG_EBS_RETENTION_DAYS:        {{ .Values.icebergEbs.retentionDays | quote }}
+  ICEBERG_EBS_SESSION_MAX_AGE:       {{ .Values.icebergEbs.sessionMaxAge | quote }}
+  ICEBERG_EBS_HTTPX_TIMEOUT:         {{ .Values.icebergEbs.httpxTimeout | quote }}
   ICEBERG_EBS_SECURE_COOKIES:        {{ .Values.icebergEbs.secureCookies | quote }}
 ```
 
