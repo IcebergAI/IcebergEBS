@@ -118,5 +118,11 @@ release to diff against.
   Release images are immutable and digest-pinnable, so a consumer can verify what is in the image and
   that this repo's CI built it. `build.yml` no longer publishes a mutable `:latest` — main pushes are
   dev-only `:<sha>` + `:edge`; deployables come only from a tagged release (#99).
+- **Hardened the Docker Compose stack (#102)** — the `app` and `nginx` services now run with
+  `no-new-privileges`, `cap_drop: [ALL]` (nginx adds back only `NET_BIND_SERVICE` + the master's
+  user-drop caps), a **read-only root filesystem** with tmpfs for the few writable paths, and
+  healthchecks (app → `/readyz`, nginx → a plain-HTTP `/nginx-health`); `postgres` gets
+  `no-new-privileges` (keeping the caps its entrypoint needs). nginx now waits for the app to be
+  `service_healthy` before starting.
 
 [0.1.0-beta.1]: https://github.com/IcebergAI/IcebergEBS/commits/main
