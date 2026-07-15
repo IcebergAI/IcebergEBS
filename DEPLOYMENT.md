@@ -527,7 +527,9 @@ dependencies:
 ```yaml
 image:
   repository: ghcr.io/yourorg/icebergebs   # or local registry
-  tag: latest
+  tag: ""                                   # no default — pin an immutable release tag at
+                                            # install/upgrade (--set image.tag=…); an empty
+                                            # value fails the render, never deploys :latest (#88)
   pullPolicy: IfNotPresent
 
 # Must stay at 1 — APScheduler runs per-process; multiple replicas would
@@ -626,7 +628,7 @@ spec:
         fsGroup: 1000
       containers:
         - name: iceberg-ebs
-          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          image: "{{ .Values.image.repository }}:{{ required "image.tag is required — pin an immutable release tag (never :latest); see #88" .Values.image.tag }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           ports:
             - containerPort: 8000
