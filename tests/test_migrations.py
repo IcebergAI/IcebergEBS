@@ -173,6 +173,47 @@ async def test_existing_pre_alembic_db_is_adopted_and_upgraded(temp_db):
         sync.dispose()
 
 
+async def test_falsely_head_stamped_baseline_db_is_repaired(temp_db):
+    """A database corrupted by the retired stamp-to-head adoption is repaired (#143 review).
+
+    The old adoption path stamped a baseline-schema database at head without
+    running any migrations, so its revision is non-null and a plain
+    ``upgrade head`` is a permanent no-op. `_run_migrations` must detect the
+    baseline-era schema behind the false stamp (via the still-naive timestamp
+    columns) and re-stamp + upgrade.
+    """
+    sync = create_engine(_sync_url(temp_db))
+    with sync.connect() as conn:
+        cfg = _alembic_config()
+        cfg.attributes["connection"] = conn
+        command.upgrade(cfg, _PRE_ALEMBIC_BASELINE)
+        # Simulate the old bug: mark head as applied without running any DDL.
+        command.stamp(cfg, "head")
+        conn.commit()
+    with sync.begin() as conn:
+        conn.execute(
+            text('INSERT INTO "user"(username, password_hash, is_admin, created_at) VALUES (:u, :p, :a, :t)'),
+            {"u": "bob", "p": "h", "a": False, "t": datetime(2024, 1, 1, tzinfo=timezone.utc)},
+        )
+    sync.dispose()
+
+    await _migrate(temp_db)
+
+    head = ScriptDirectory.from_config(_alembic_config()).get_current_head()
+    assert _version(temp_db) == (head,)
+    assert "installobservation" in _tables(temp_db)
+    assert "store_outage" in _columns(temp_db, "fetchlog")
+    assert "pending_alert_events" in _columns(temp_db, "extension")
+    sync = create_engine(_sync_url(temp_db))
+    try:
+        with sync.connect() as conn:
+            assert conn.execute(text('SELECT username FROM "user"')).fetchone() == ("bob",)
+            ctx = MigrationContext.configure(conn, opts={"compare_type": True})
+            assert compare_metadata(ctx, SQLModel.metadata) == []
+    finally:
+        sync.dispose()
+
+
 def test_head_matches_models(temp_db):
     """Autogenerate finds no diff between the migrations head and the models.
 

@@ -47,12 +47,15 @@ def _alembic_config() -> Config:
 def _run_migrations(sync_conn) -> None:
     """Bring the database to head, adopting pre-Alembic databases by stamping.
 
-    Runs on a sync connection handed in by ``run_sync``. Three cases:
+    Runs on a sync connection handed in by ``run_sync``. Four cases:
     - alembic_version present  → ``upgrade head`` applies any new revisions.
     - no alembic_version, core tables already exist (a database created by the
       old create_all/_migrate_* path) → stamp it at the *baseline* revision its
       schema actually matches (WITHOUT recreating anything), then upgrade to
       head like everyone else.
+    - alembic_version present but the schema is still baseline-era (a database
+      corrupted by the retired stamp-to-head adoption, #143) → re-stamp it at
+      the baseline and upgrade, repairing the false stamp.
     - empty database → ``upgrade head`` creates everything from the baseline.
     """
     cfg = _alembic_config()
@@ -65,7 +68,40 @@ def _run_migrations(sync_conn) -> None:
         # it, with no recovery path (upgrade becomes a permanent no-op) (#143).
         logger.info("Adopting existing pre-Alembic database — stamping baseline, then upgrading")
         command.stamp(cfg, _PRE_ALEMBIC_BASELINE)
+    elif current is not None and _is_falsely_stamped_baseline(sync_conn, current):
+        # The retired adoption stamped pre-Alembic databases at whatever head was
+        # at the time, without running any DDL — leaving the baseline schema
+        # marked as fully migrated. Re-stamp at the baseline it actually has so
+        # the upgrade below finally applies the skipped migrations (#143).
+        logger.warning(
+            "Database claims revision %s but still has the baseline-era schema "
+            "(falsely stamped by the retired adoption path, #143) — re-stamping baseline and upgrading",
+            current,
+        )
+        command.stamp(cfg, _PRE_ALEMBIC_BASELINE)
     command.upgrade(cfg, "head")
+
+
+def _is_falsely_stamped_baseline(sync_conn, current: str) -> bool:
+    """True if the database was corrupted by the retired stamp-to-head adoption (#143).
+
+    That bug stamped a baseline-schema database at a post-baseline revision without
+    running any DDL. The *first* post-baseline migration (``a1b2c3d4e5f6``) converted
+    every timestamp column to timestamptz, so a database claiming any revision past
+    the baseline while ``user.created_at`` is still a naive timestamp can only be
+    the false stamp — a legitimately upgraded database always has timestamptz there.
+    """
+    if current == _PRE_ALEMBIC_BASELINE:
+        return False
+    insp = inspect(sync_conn)
+    if "user" not in insp.get_table_names():
+        # Stamped but empty (see #113) — nothing to repair here; leave it to the
+        # normal upgrade path, which is a no-op exactly as before this check.
+        return False
+    for col in insp.get_columns("user"):
+        if col["name"] == "created_at":
+            return not getattr(col["type"], "timezone", True)
+    return False
 
 
 async def init_db() -> None:
