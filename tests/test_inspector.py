@@ -251,6 +251,66 @@ def test_manifest_risk_findings():
     assert "csp_wildcard_script_source" in codes
 
 
+def test_mv2_wildcard_host_pattern_merged_and_flagged():
+    # MV2 spells all-sites access as "*://*/*" inside `permissions`; it must be
+    # merged into host_permissions and produce the broad-host finding (#141).
+    data = make_zip(
+        {
+            "manifest.json": json.dumps(
+                {
+                    "manifest_version": 2,
+                    "name": "x",
+                    "version": "1",
+                    "permissions": ["*://*/*", "storage"],
+                }
+            ),
+        }
+    )
+    result = inspect_package(data)
+    assert result.host_permissions == ["*://*/*"]
+    assert result.permissions == ["storage"]
+    assert "broad_host_access" in _finding_codes(result)
+
+
+def test_mv2_file_scheme_host_pattern_merged():
+    data = make_zip(
+        {
+            "manifest.json": json.dumps(
+                {
+                    "manifest_version": 2,
+                    "name": "x",
+                    "version": "1",
+                    "permissions": ["file:///*", "storage"],
+                }
+            ),
+        }
+    )
+    result = inspect_package(data)
+    assert result.host_permissions == ["file:///*"]
+    assert result.permissions == ["storage"]
+
+
+def test_named_api_permissions_not_mistaken_for_host_patterns():
+    # fileSystemProvider/fileSystem are real API permissions that share a word
+    # prefix with the file:// scheme — the MV2 merge must match full scheme
+    # prefixes only, or they'd be misclassified as host permissions (#141 review).
+    data = make_zip(
+        {
+            "manifest.json": json.dumps(
+                {
+                    "manifest_version": 2,
+                    "name": "x",
+                    "version": "1",
+                    "permissions": ["fileSystemProvider", "fileSystem", "file:///*"],
+                }
+            ),
+        }
+    )
+    result = inspect_package(data)
+    assert result.permissions == ["fileSystemProvider", "fileSystem"]
+    assert result.host_permissions == ["file:///*"]
+
+
 def test_minified_and_obfuscated_findings():
     compressed = " ".join(["a"] * 600)
     data = make_zip(

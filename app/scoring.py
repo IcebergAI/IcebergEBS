@@ -4,6 +4,9 @@ from typing import NamedTuple, overload
 
 from app.inspector import PackageAnalysis
 from app.permissions import (
+    BROAD_HOST_PATTERNS as _BROAD_HOST_PATTERNS,
+)
+from app.permissions import (
     CRITICAL_PERMISSIONS as _CRITICAL_PERMISSIONS,
 )
 from app.permissions import (
@@ -33,7 +36,11 @@ class RiskDetail(NamedTuple):
 
 def score_permissions(permissions: list[str], host_permissions: list[str] | None = None) -> int:
     all_perms = set(permissions) | set(host_permissions or [])
-    if all_perms & _CRITICAL_PERMISSIONS:
+    # Broad host patterns (*://*/*, http(s)://*/*) are functionally <all_urls>;
+    # every spelling of "all sites" must score identically (#141). Checking the
+    # union of both lists also covers MV2 manifests, where the pattern may still
+    # sit in `permissions` rather than `host_permissions`.
+    if all_perms & (_CRITICAL_PERMISSIONS | _BROAD_HOST_PATTERNS):
         # Any critical permission maxes out this category (capped at 25).
         return 25
     if all_perms & _HIGH_PERMISSIONS:
