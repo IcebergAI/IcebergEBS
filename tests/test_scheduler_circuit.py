@@ -111,6 +111,46 @@ async def test_refresh_watchlist_records_store_outage(test_db, admin_user, monke
     assert all(lg.success is False for lg in outages)
 
 
+async def test_transport_error_opens_circuit(test_db, admin_user, monkeypatch):
+    # A raw httpx.TransportError (e.g. connection refused after RetryTransport exhausted its
+    # retries) is a genuine store outage, not an internal bug: it must be classified FAILED so
+    # the circuit opens and the store's remaining extensions are skipped as outages — the same
+    # behaviour as a FetchError, and unlike the neutral RuntimeError case below.
+    monkeypatch.setattr(scheduler, "engine", test_db)
+    monkeypatch.setattr(scheduler.settings, "store_circuit_failure_threshold", 2)
+
+    async with AsyncSession(test_db) as s:
+        for i in range(4):
+            s.add(
+                Extension(
+                    user_id=admin_user.id,
+                    store="vscode",
+                    extension_id=f"pub.net{i}",
+                    name=f"Net {i}",
+                    publisher="pub",
+                    version="1.0",
+                    store_url="https://example.com",
+                    risk_score=10,
+                    watchlist=True,
+                )
+            )
+        await s.commit()
+
+    with patch("app.fetchers.VSCodeFetcher") as MockFetcher:
+        MockFetcher.return_value.fetch = AsyncMock(side_effect=httpx.ConnectError("connection refused"))
+        async with httpx.AsyncClient() as http:
+            await scheduler.refresh_watchlist(http)
+
+    async with AsyncSession(test_db) as s:
+        logs = (await s.exec(select(FetchLog))).all()
+
+    real_failures = [lg for lg in logs if not lg.success and not lg.store_outage]
+    outages = [lg for lg in logs if lg.store_outage]
+    # First 2 consecutive transport failures trip the breaker; the remaining 2 are outages.
+    assert len(real_failures) == 2
+    assert len(outages) == 2
+
+
 async def test_unexpected_errors_do_not_open_circuit(test_db, admin_user, monkeypatch):
     # A non-FetchError bug is a neutral ERROR outcome, so the circuit never opens and every
     # extension is still attempted (no bogus store_outage rows).

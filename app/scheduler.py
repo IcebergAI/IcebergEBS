@@ -20,7 +20,8 @@ class _Outcome(enum.Enum):
     """Result of refreshing one extension, used to drive the circuit breaker."""
 
     SUCCESS = "success"
-    FAILED = "failed"  # a store/network failure (FetchError) — counts toward the breaker
+    FAILED = "failed"  # a store/network failure (FetchError or httpx.TransportError) — counts
+    # toward the breaker. TransportError covers a fetch whose retries were all exhausted.
     GONE = "gone"  # extension removed / no longer watchlisted — not a store signal
     ERROR = "error"  # an unexpected *internal* error (inspector/scoring/DB/bug) — NOT a
     # store signal, so it must not open the circuit; it stays loudly logged instead.
@@ -67,11 +68,16 @@ async def _refresh_one(ext_id: int, client: httpx.AsyncClient) -> _Outcome:
         try:
             ext, events = await fetch_and_store(ext, session, client)
             await session.commit()
-        except FetchError as exc:
+        except (FetchError, httpx.TransportError) as exc:
+            # A store/network failure: either the fetcher raised FetchError, or a raw
+            # httpx.TransportError propagated after RetryTransport exhausted its retries
+            # (connect refused, timeout, read/write error). Both are evidence the *store*
+            # is unreachable, so they count toward the circuit breaker.
             logger.warning("Fetch failed for %s/%s: %s", ext.store, ext.extension_id, exc)
+            await session.rollback()
             session.add(
                 FetchLog(
-                    extension_id=ext.id,
+                    extension_id=ext_id,
                     success=False,
                     error_message=str(exc),
                     risk_score_before=score_before,
