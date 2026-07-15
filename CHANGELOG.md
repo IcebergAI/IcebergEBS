@@ -141,6 +141,13 @@ release to diff against.
   healthchecks (app → `/readyz`, nginx → a plain-HTTP `/nginx-health`); `postgres` gets
   `no-new-privileges` (keeping the caps its entrypoint needs). nginx now waits for the app to be
   `service_healthy` before starting.
+- **Completed the Helm pod-security baseline (#104)** — the deployment adds
+  `seccompProfile: RuntimeDefault` and `automountServiceAccountToken: false` (the app never calls the
+  Kubernetes API), a `strategy: Recreate` rollout so a deploy never briefly runs two scheduler pods
+  (a rolling update with `replicas=1` would surge to two), and a `PodDisruptionBudget`
+  (`maxUnavailable: 0`, toggleable) so a voluntary eviction can't take the singleton to zero.
+  `runAsNonRoot`/`readOnlyRootFilesystem`/`cap_drop: [ALL]`/`allowPrivilegeEscalation:
+  false` were already in place — the chart now meets Pod Security Standards *restricted*.
 - **Kubernetes NetworkPolicies (#103)** — the Helm chart adds default-deny ingress plus named hops
   (ingress-controller → app:8000, app → postgres:5432), turning the previously flat namespace into
   a segmented one so a single compromised pod can't reach Postgres directly. Egress is left open
