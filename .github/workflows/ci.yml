@@ -1,7 +1,7 @@
 name: CI
 
 # Correctness + static-analysis gates. Runs on every PR and on pushes to main.
-# All four jobs are required to pass (configure as required checks in branch
+# All five jobs are required to pass (configure as required checks in branch
 # protection). Tooling config and the dependency manifest both live in
 # pyproject.toml; dev/test tooling is the `dev` dependency-group. `uv sync
 # --locked` fails if uv.lock has drifted from pyproject.toml, so a dependency

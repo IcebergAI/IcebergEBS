@@ -1,0 +1,51 @@
+name: CodeQL
+
+# SAST via CodeQL, deliberately in its own workflow (not ci.yml) so the elevated
+# security-events: write scope lives in exactly one place and the CI gates stay
+# least-privilege (contents: read). Source / no-build extraction over both
+# languages; the weekly schedule re-scans already-merged code as new advisories
+# and query versions land, not just new PRs.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: "0 6 * * 1" # Mondays 06:00 UTC
+
+permissions:
+  contents: read
+
+jobs:
+  analyze:
+    name: Analyze
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write # upload SARIF results
+      actions: read
+    strategy:
+      fail-fast: false
+      matrix:
+        # Python is the substantial surface (untrusted-package inspection,
+        # webhooks, store scraping). javascript-typescript is small but real:
+        # static/js/*.js plus the inline <script> blocks CodeQL extracts from
+        # app/templates/*.html (all third-party JS is CDN-loaded, never
+        # committed, so there is nothing vendored to exclude).
+        language: [python, javascript-typescript]
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@99df26d4f13ea111d4ec1a7dddef6063f76b97e9 # v4.37.0
+        with:
+          languages: ${{ matrix.language }}
+          # No build step exists (uv-only Python, hand-written CDN-loaded JS, no
+          # node toolchain), so source extraction is correct for both legs.
+          build-mode: none
+      - name: Perform CodeQL analysis
+        uses: github/codeql-action/analyze@99df26d4f13ea111d4ec1a7dddef6063f76b97e9 # v4.37.0
+        with:
+          category: "/language:${{ matrix.language }}"

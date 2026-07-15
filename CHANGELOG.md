@@ -103,6 +103,10 @@ release to diff against.
   security: unpinned actions, credential persistence, template injection, over-broad permissions)
   and **actionlint** (syntax + shellcheck), so the pinning/least-privilege posture above cannot
   silently regress (#97).
+- **CodeQL SAST** (`codeql.yml`) now runs dataflow/taint analysis over both **Python** and
+  **JavaScript/TypeScript** on every PR, on push to `main`, and on a weekly schedule (to catch new
+  advisories against already-merged code). It is a dedicated workflow so its `security-events: write`
+  scope stays out of the least-privilege CI gates (#98).
 - **Signed, attested release pipeline** (`release.yml`) — pushing a `v*` SemVer tag verifies the tag
   matches `pyproject.toml` **and that the tagged commit is on `main`** (so a release can only come
   from reviewed, merged history), then builds a release image with an **SBOM** and **SLSA build provenance**,
