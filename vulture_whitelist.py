@@ -20,3 +20,8 @@ errors  # unused variable (app/routes/api.py:327)
 popularity  # unused variable (app/scoring.py:25)
 staleness  # unused variable (app/scoring.py:27)
 code_behaviour  # unused variable (app/scoring.py:28)
+# PackageAnalysis scalar fields read only via getattr in to_json_dict() and in the
+# detail-page Jinja template (extension_detail.html) — vulture can't trace either (#164).
+file_count  # unused attribute (app/inspector.py:38)
+total_size_bytes  # unused attribute (app/inspector.py:39)
+has_minified_code  # unused attribute (app/inspector.py:40)

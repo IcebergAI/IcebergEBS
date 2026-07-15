@@ -21,6 +21,7 @@ from app.extension_queries import (
     build_extension_query,
     count_rows,
 )
+from app.inspector import PackageAnalysis
 from app.models import AlertDestination, AlertRule, ApiKey, Extension, FetchLog, InstallObservation, User
 from app.ratelimit import login_limiter
 from app.routes.alerts import get_alert_log
@@ -540,18 +541,12 @@ async def extension_detail(
 
     host_permissions = []
     if package_analysis:
-        package_analysis.setdefault("external_domains", [])
-        package_analysis.setdefault("external_urls", [])
-        package_analysis.setdefault("network_callout_urls", [])
-        package_analysis.setdefault("package_sha256", "")
-        package_analysis.setdefault("archive_sha256", "")
-        package_analysis.setdefault("uses_eval", False)
-        package_analysis.setdefault("uses_remote_code", False)
-        package_analysis.setdefault("obfuscation_score", 0)
-        package_analysis.setdefault("file_count", 0)
-        package_analysis.setdefault("total_size_bytes", 0)
-        package_analysis.setdefault("has_minified_code", False)
-        package_analysis.setdefault("manifest_version", 2)
+        # Backfill any keys a partial write / older schema left missing, so the
+        # detail page renders without KeyErrors. Defaults are derived from the
+        # PackageAnalysis field defaults, so they can't drift from what
+        # to_json_dict stores (#164, #61).
+        for key, default in PackageAnalysis.stored_defaults().items():
+            package_analysis.setdefault(key, default)
         if not isinstance(package_analysis.get("findings"), list):
             package_analysis["findings"] = []
         package_analysis["grouped_findings"] = _group_detection_findings(package_analysis["findings"])

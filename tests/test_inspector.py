@@ -5,7 +5,7 @@ from hashlib import sha256
 
 import pytest
 
-from app.inspector import InspectorError, inspect_package
+from app.inspector import InspectorError, PackageAnalysis, inspect_package
 
 
 def make_zip(files: dict[str, str | bytes]) -> bytes:
@@ -451,3 +451,81 @@ def test_network_callout_urls_are_split_from_literal_references():
     assert "wss://socket.example/ws" in result.network_callout_urls
     assert "https://beacon.example/ping" in result.network_callout_urls
     assert "http://www.w3.org/1998/Math/MathML" not in result.network_callout_urls
+
+
+# ---------------------------------------------------------------------------
+# PackageAnalysis serialization / render-default contract (#164)
+# ---------------------------------------------------------------------------
+
+
+def test_to_json_dict_round_trips_a_real_analysis():
+    """to_json_dict is what gets persisted; it must survive json + carry the
+    stored fields, with findings flattened to plain dicts."""
+    data = make_zip(
+        {
+            "manifest.json": json.dumps(
+                {
+                    "manifest_version": 3,
+                    "name": "Test",
+                    "version": "2.1",
+                    "permissions": ["storage", "tabs"],
+                    "host_permissions": ["<all_urls>"],
+                }
+            ),
+            "background.js": "eval('x');",
+        }
+    )
+    analysis = inspect_package(data)
+
+    stored = json.loads(json.dumps(analysis.to_json_dict()))
+    assert stored["permissions"] == analysis.permissions
+    assert stored["host_permissions"] == analysis.host_permissions
+    assert stored["uses_eval"] is True
+    # findings are dicts, not PackageFinding objects
+    assert stored["findings"] and all(isinstance(f, dict) for f in stored["findings"])
+    assert stored["findings"][0]["code"] == analysis.findings[0].code
+
+
+def test_to_json_dict_excludes_internal_and_transient_fields():
+    """_finding_keys is bookkeeping; version/author are manifest fallbacks
+    consumed in services.py and deliberately never persisted."""
+    analysis = PackageAnalysis(version="9.9", author="Somebody")
+    stored = analysis.to_json_dict()
+    assert "_finding_keys" not in stored
+    assert "version" not in stored
+    assert "author" not in stored
+
+
+def test_stored_defaults_and_to_json_dict_share_the_same_keys():
+    """The drift gate the issue calls out: serialization (to_json_dict) and the
+    render-time default backfill (stored_defaults) must enumerate exactly the
+    same field set, so adding a stored field to the dataclass can never land in
+    one without the other (#164)."""
+    persisted_keys = set(PackageAnalysis().to_json_dict())
+    default_keys = set(PackageAnalysis.stored_defaults())
+    assert persisted_keys == default_keys
+
+
+def test_stored_defaults_returns_fresh_mutable_defaults():
+    """Callers mutate the returned dict (setdefault into a stored blob), so the
+    list/dict defaults must not be shared across calls."""
+    first = PackageAnalysis.stored_defaults()
+    first["findings"].append({"code": "x"})
+    first["external_domains"].append("evil.example")
+    second = PackageAnalysis.stored_defaults()
+    assert second["findings"] == []
+    assert second["external_domains"] == []
+
+
+def test_stored_defaults_backfills_a_sparse_stored_blob():
+    """Mirrors routes/ui.py: an old/partial blob missing keys is completed
+    without clobbering the keys it does carry."""
+    sparse = {"host_permissions": ["<all_urls>"], "findings": [{"code": "y"}]}
+    for key, default in PackageAnalysis.stored_defaults().items():
+        sparse.setdefault(key, default)
+
+    assert sparse["host_permissions"] == ["<all_urls>"]  # preserved
+    assert sparse["findings"] == [{"code": "y"}]  # preserved
+    assert sparse["uses_eval"] is False  # backfilled
+    assert sparse["manifest_version"] == 2  # backfilled
+    assert sparse["package_sha256"] == ""  # backfilled

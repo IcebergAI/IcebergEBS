@@ -2,7 +2,7 @@ import io
 import json
 import re
 import zipfile
-from dataclasses import dataclass, field
+from dataclasses import MISSING, asdict, dataclass, field, fields
 from hashlib import sha256
 
 from app.permissions import BROAD_HOST_PATTERNS as _BROAD_HOST_PATTERNS
@@ -43,9 +43,54 @@ class PackageAnalysis:
     version: str = ""
     author: str = ""  # present in some Chrome/Edge manifests as "author" field
     # Running set of finding identity tuples for O(1) dedupe in _add_finding.
-    # Internal bookkeeping only — not serialized (services.py picks named fields)
-    # and excluded from equality/repr so it doesn't affect comparisons or tests.
+    # Internal bookkeeping only — not serialized and excluded from equality/repr
+    # so it doesn't affect comparisons or tests.
     _finding_keys: set = field(default_factory=set, compare=False, repr=False)
+
+    # Fields present on the dataclass but NOT persisted to the stored
+    # package_analysis JSON: internal bookkeeping (_finding_keys) and the
+    # manifest-extracted fallbacks (version/author), which services.py consumes
+    # transiently and never renders from the stored blob. `findings` is stored
+    # but serialized specially (flattened to dicts), so it's handled separately.
+    _UNSTORED_FIELDS = frozenset({"_finding_keys", "version", "author"})
+
+    def to_json_dict(self) -> dict[str, object]:
+        """The exact dict persisted to ``Extension.package_analysis``.
+
+        Serialization lives here, next to the field definitions, so adding a new
+        analysis field is a one-line change to the dataclass rather than a
+        synchronized edit across services.py (store) and routes/ui.py (render
+        defaults) that nothing gates (#164). Findings are flattened to plain
+        dicts; internal/transient fields are excluded.
+        """
+        data: dict[str, object] = {
+            f.name: getattr(self, f.name)
+            for f in fields(self)
+            if f.name not in self._UNSTORED_FIELDS and f.name != "findings"
+        }
+        data["findings"] = [asdict(finding) for finding in self.findings]
+        return data
+
+    @classmethod
+    def stored_defaults(cls) -> dict[str, object]:
+        """Default value for every persisted field, keyed as in ``to_json_dict``.
+
+        Used to backfill a stored package_analysis dict that a partial write or
+        an older schema left missing keys, so the detail page renders without
+        KeyErrors (#61). Derived from the dataclass field defaults so it tracks
+        the field list automatically instead of a hand-maintained copy (#164).
+        Returns fresh mutable defaults on each call.
+        """
+        defaults: dict[str, object] = {}
+        for f in fields(cls):
+            if f.name in cls._UNSTORED_FIELDS or f.name == "findings":
+                continue
+            if f.default is not MISSING:
+                defaults[f.name] = f.default
+            elif f.default_factory is not MISSING:
+                defaults[f.name] = f.default_factory()
+        defaults["findings"] = []
+        return defaults
 
 
 class InspectorError(Exception):
