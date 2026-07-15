@@ -93,6 +93,10 @@ release to diff against.
   cycle and records the skip as a *store outage* (new `FetchLog.store_outage`) so the Fetch-health
   tile no longer blames every extension when a store is simply down; unexpected internal errors
   (not store failures) stay loudly logged and never open the circuit (#108).
+- Each refresh now loads only the two most recent install-count readings instead of hydrating an
+  extension's entire history — the sudden-drop scoring check only needs the previous reading, so the
+  old full-table scan grew unboundedly (retention is disabled by default) on every refresh of every
+  watchlist extension (#146).
 
 ### Fixed
 
