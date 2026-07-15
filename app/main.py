@@ -75,12 +75,30 @@ async def readyz() -> JSONResponse:
     return JSONResponse({"status": "ok", "database": "up"})
 
 
+# Conservative app-layer CSP baseline (#66, defense-in-depth). The reverse proxy
+# (nginx/security_headers.conf) remains the source of truth for the full policy —
+# including the script/style/font sources and the inline-script hash. This baseline
+# only adds directives the proxy policy does NOT set (frame/base/object/form), and
+# deliberately omits default-src and script-src: emitting those here would combine
+# with the proxy's CSP as a second policy the browser enforces on top, and the
+# most-restrictive intersection would break the proxy's CDN asset loading. What's
+# left is purely additive — a floor if the proxy config regresses or a non-proxied
+# path is ever introduced.
+_BASELINE_CSP = "frame-ancestors 'none'; base-uri 'self'; object-src 'none'; form-action 'self'"
+
+
 @app.middleware("http")
 async def security_headers(request: Request, call_next) -> Response:
     response = await call_next(request)
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["X-Frame-Options"] = "DENY"
     response.headers["Referrer-Policy"] = "same-origin"
+    response.headers.setdefault("Content-Security-Policy", _BASELINE_CSP)
+    # HSTS only when the deployment is HTTPS (secure_cookies is the prod signal).
+    # Sending it over plain-HTTP dev is meaningless and could poison a later
+    # localhost HTTPS listener.
+    if settings.secure_cookies:
+        response.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
     return response
 
 
