@@ -124,5 +124,10 @@ release to diff against.
   Release images are immutable and digest-pinnable, so a consumer can verify what is in the image and
   that this repo's CI built it. `build.yml` no longer publishes a mutable `:latest` — main pushes are
   dev-only `:<sha>` + `:edge`; deployables come only from a tagged release (#99).
+- **CSRF origin-check middleware (#107)** — a `CSRFOriginMiddleware` now rejects
+  cookie-authenticated, state-changing requests (POST/PUT/PATCH/DELETE) whose `Origin`/`Referer`
+  doesn't match the request host (or `ICEBERG_EBS_TRUSTED_ORIGINS`), as defence-in-depth over the
+  existing `SameSite=Lax` posture (#16). Bearer-token (M2M) requests carry no session cookie and are
+  never checked, so the API's primary credential is unaffected.
 
 [0.1.0-beta.1]: https://github.com/IcebergAI/IcebergEBS/commits/main
