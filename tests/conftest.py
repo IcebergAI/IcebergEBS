@@ -153,6 +153,9 @@ async def client(test_db, admin_user):
         transport=transport,
         base_url="http://test",
         cookies={settings.session_cookie_name: cookie},
+        # Real browsers send Origin on state-changing requests; the CSRF origin
+        # check (#107) requires it on cookie-authenticated POST/PUT/PATCH/DELETE.
+        headers={"Origin": "http://test"},
     ) as c:
         yield c
 
@@ -235,7 +238,9 @@ async def anon_client(test_db):
     app.dependency_overrides[get_session] = override_session
 
     transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as c:
+    # Same-origin Origin, as a real browser sends on state-changing requests; the CSRF
+    # origin check (#107) now covers unauthenticated posts (e.g. /login) too.
+    async with AsyncClient(transport=transport, base_url="http://test", headers={"Origin": "http://test"}) as c:
         yield c
 
     app.dependency_overrides.clear()

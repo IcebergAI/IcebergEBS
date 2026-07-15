@@ -10,6 +10,7 @@ from fastapi.staticfiles import StaticFiles
 from app.config import settings
 from app.database import init_db
 from app.deps import WebUser
+from app.middleware import CSRFOriginMiddleware
 from app.routes import alerts as alerts_routes
 from app.routes import api as api_routes
 from app.routes import keys as keys_routes
@@ -48,6 +49,14 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="IcebergEBS", version=get_version(), lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None
+)
+
+# CSRF defence-in-depth (#107): reject cookie-authenticated, state-changing requests
+# whose Origin/Referer doesn't match the request host (or a trusted origin). Bearer
+# M2M requests carry no session cookie and are unaffected.
+app.add_middleware(
+    CSRFOriginMiddleware,
+    trusted_origins=[o.strip() for o in settings.trusted_origins.split(",") if o.strip()],
 )
 
 
