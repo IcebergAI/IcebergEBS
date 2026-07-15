@@ -80,6 +80,11 @@ release to diff against.
   `FETCH_INTERVAL_MINUTES` (plus `SESSION_MAX_AGE` and `HTTPX_TIMEOUT`, which README advertised but the
   stacks ignored) are now forwarded by Compose and the Helm ConfigMap, and DEPLOYMENT.md documents
   which env vars the stacks forward vs. which fall back to `app/config.py` defaults (#87).
+- The Helm chart **defaulted `image.tag` to the mutable `latest`** with `pullPolicy: IfNotPresent`,
+  so `helm upgrade` re-rendered an identical pod spec (no rollout) and nodes reused their cached
+  image — deploys silently shipped stale code, and `helm rollback` couldn't restore a known-good
+  build. `image.tag` now has **no default** and is `required` at render time, forcing an explicit
+  immutable release tag (`--set image.tag=v0.1.0-beta.1`) (#88).
 
 ### Security
 

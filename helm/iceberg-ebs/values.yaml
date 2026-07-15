@@ -1,6 +1,13 @@
 image:
   repository: ghcr.io/yourorg/icebergebs
-  tag: latest
+  # No default (#88): pin an immutable release tag at install/upgrade, e.g.
+  # --set image.tag=v0.1.0-beta.1. An empty tag fails the render (see deployment.yaml's
+  # `required`) rather than silently deploying a mutable `:latest` — which, with the
+  # IfNotPresent pull policy below, re-renders an identical pod spec on `helm upgrade`
+  # (no rollout) and reuses the node's cached image, shipping stale code. Immutable tags
+  # also make `helm rollback` restore a known-good build. Verify the image before rollout
+  # (docs/RELEASING.md). IfNotPresent is correct *because* the tag is immutable.
+  tag: ""
   pullPolicy: IfNotPresent
 
 # Must stay at 1 — APScheduler runs per-process; multiple replicas would each
