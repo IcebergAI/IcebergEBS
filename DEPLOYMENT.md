@@ -1019,17 +1019,15 @@ check succeed — a failed or interrupted `pg_dump` leaves the `.tmp` behind and
 if docker compose exec -T postgres sh -c 'pg_dump -Fc -U "$POSTGRES_USER" "$POSTGRES_DB"' > ./backups/pre-pg18.pgc.tmp \
    && docker compose exec -T postgres sh -c 'pg_restore --list' < ./backups/pre-pg18.pgc.tmp > /dev/null
 then
-  mv ./backups/pre-pg18.pgc.tmp ./backups/pre-pg18.pgc   # verified dump takes its real name
-
-  # Destructive: drop the old 16 volume, then start 18 fresh on the new /var/lib/postgresql mount.
-  docker compose down
-  docker volume rm iceberg-ebs_postgres_data
-  docker compose up -d postgres
-
-  # Restore the verified dump into the fresh 18 database, then bring the rest of the stack up.
-  docker compose exec -T postgres \
-    sh -c 'pg_restore -U "$POSTGRES_USER" -d "$POSTGRES_DB" --clean --if-exists' < ./backups/pre-pg18.pgc
-  docker compose up -d
+  # The whole sequence is &&-chained, so each step must succeed before the next runs: a
+  # failed `mv` never reaches the volume drop, and a failed `pg_restore` never reaches the
+  # `up -d` that would start the app against a partial database.
+  mv ./backups/pre-pg18.pgc.tmp ./backups/pre-pg18.pgc \
+    && docker compose down \
+    && docker volume rm iceberg-ebs_postgres_data \
+    && docker compose up -d postgres \
+    && docker compose exec -T postgres sh -c 'pg_restore -U "$POSTGRES_USER" -d "$POSTGRES_DB" --clean --if-exists' < ./backups/pre-pg18.pgc \
+    && docker compose up -d
 else
   rm -f ./backups/pre-pg18.pgc.tmp
   echo "Dump/verify failed — data volume untouched; fix the error and re-run." >&2
