@@ -146,6 +146,26 @@ Resolved by `app/version.py:get_version()` (cached once per process) in priority
 - Keep the format string in sync between `app/version.py:_format()` and the version-compute step in **both** `build.yml` and `release.yml` — all read the SemVer from `pyproject.toml`. A drift is invisible until a container deploy reports a different version from the droplet.
 - **Releasing (#99):** pushing a `v*` SemVer tag triggers `release.yml`, which **verifies the tag matches `pyproject.toml`** (normalizing PEP 440 ⇄ SemVer, failing on mismatch), then builds a signed + attested release image (SBOM, SLSA provenance, cosign keyless) and cuts the GitHub Release. Release images — not `build.yml`'s `:edge`/`:<sha>` dev images — are the only deployable, verifiable artefacts; pin them by immutable tag/digest. Full procedure + `cosign verify` / `gh attestation verify` flow in `docs/RELEASING.md`.
 
+## Contributing & the review bot
+Merges to `main` go through the **`icebergai-review-bot`** (an automated reviewer) and `main` is protected — you cannot push to it directly. Hard-won notes on working with it:
+
+**How the bot behaves**
+- Reviews the full `main...HEAD` diff, posts an **"IcebergAI Review Bot"** check-run plus a PR review with a verdict (`approve` / `request_changes`), and **merges the PR itself on approval**.
+- It **auto-closes the linked issue only from a `Closes #N` keyword in the PR _body_.** A `(#N)` in the PR _title_ is a cross-reference, **not** a closing keyword — the issue stays open. Always put `Closes #N` in the body, then after merge **reconcile**: confirm the issue actually closed, and if a title-only reference left it open, close it manually with a comment linking the merged PR.
+- It re-reviews **every new head SHA** and compares files by **blob SHA across heads** — a rebase that leaves a file's blob unchanged makes it re-raise the identical finding. Fix the code; a rebase alone won't clear a real finding.
+- Its findings are usually real. On a `request_changes` P1, fix the root cause **and add the regression test it asks for** rather than pushing back — it keeps blocking until the concern is genuinely addressed (e.g. #109 escalated through three distinct P1s: pending-alert overwrite → fake shutdown drain → non-atomic merge/clear race).
+- **Runtime is flaky:** it can throw a RuntimeError ("…will be retried") and auto-retry, and a verdict can briefly oscillate or stall. Wait it out — do **not** push to "un-stick" it.
+- **"Dismiss stale reviews on push" is ON.** Any push — including an empty "nudge" commit — dismisses a fresh approval, and a nudge can race an incoming approval webhook and cancel it. **Never push to an approved (or freshly reviewed) PR unless you have a real change to make.**
+
+**Branch & PR hygiene**
+- One issue per branch, branched from **latest `main`** — **never stack PRs.** GitHub's *documented* default is to **retarget** an open PR to its base's base branch when the base branch is deleted on merge ([docs](https://docs.github.com/en/pull-requests/collaborating-with-pull-requests/incorporating-changes-from-a-pull-request/merging-a-pull-request)), but stacking is fragile in practice: in this repo **#138 was auto-closed** (not cleanly retargeted) when its stacked base — the #108 PR branch — was deleted on merge, silently losing the work. Branch every PR from `main` so a base merge can't strand it.
+- Clear `mergeable_state: behind` by rebasing onto `main`. Recurring conflicts land on the append-only shared files (`CHANGELOG.md`, `CLAUDE.md`, `DEPLOYMENT.md`) — resolve by keeping **both** entries in order, not by dropping one side.
+- `mergeable_state` cheatsheet: `clean` = ready to merge · `blocked` = missing the required bot review · `behind` = base moved, rebase · `unstable` = a non-required check (often the bot review itself) still running.
+
+**Running many PRs efficiently**
+- CI reruns on every push and must be **green before the bot reviews**. Validate locally first when feasible (per the Testing section — a real Postgres 16 + a venv installed from `pyproject.toml`) rather than spending review rounds on avoidable CI failures.
+- Monitor with the PR-activity subscription / webhooks; pace status checks, don't tight-poll for events that arrive as notifications.
+
 ## Maintenance
 - Keep this file up to date with decisions around structure, architecture, and function.
 - Ensure the application's help page (`app/templates/help.html`) is up to date and accurate.
