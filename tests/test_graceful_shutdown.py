@@ -71,6 +71,7 @@ async def test_recover_clears_marker_when_no_matching_rules(test_db, admin_user)
         )
         session.add(ext)
         await session.commit()
+        await session.refresh(ext)  # reload expired PK before reading it outside the session
         ext_id = ext.id
 
     async with httpx.AsyncClient() as http:
@@ -105,6 +106,7 @@ async def test_recover_refires_and_records_alertlog(test_db, admin_user):
         )
         session.add(ext)
         await session.commit()
+        await session.refresh(ext)  # reload expired PK before reading it outside the session
         ext_id = ext.id
         session.add(
             AlertRule(user_id=admin_user.id, destination_id=dest.id, event_type="risk_level_change", enabled=True)
