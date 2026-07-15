@@ -103,9 +103,14 @@ sha256-<hash-of-exact-script-bytes>
 ## 4. `Dockerfile`
 
 ```dockerfile
+# uv is pulled through a named stage (not a bare `COPY --from=ghcr.io/…`) because
+# Dependabot's Docker parser reads FROM lines only — the version pin below is
+# Dependabot-managed and may be newer than this snapshot.
+FROM ghcr.io/astral-sh/uv:0.11.28 AS uv
+
 FROM python:3.14-slim AS builder
 
-COPY --from=ghcr.io/astral-sh/uv:0.11.23 /uv /bin/uv
+COPY --from=uv /uv /bin/uv
 
 ENV UV_PROJECT_ENVIRONMENT=/opt/venv \
     UV_COMPILE_BYTECODE=1 \
@@ -159,18 +164,31 @@ __pycache__/
 tests/
 *.pyc
 nginx/certs/
+DEPLOYMENT.md
 ```
 
-`.venv/` matters: the builder stage produces `/app/.venv`, and a host `.venv` copied in by `COPY . .` would shadow it with the wrong interpreter.
+`.venv/` matters: the image's venv lives at `/opt/venv` (see the Dockerfile notes), and a host `.venv/` swept in by `COPY . .` would bake a wrong (dev-including, host-platform) interpreter tree into the image.
 
 ---
 
 ## 6. `docker-compose.yml`
 
+The stack is **four** services — `postgres`, `app`, `nginx`, and a `backup` service that takes
+scheduled `pg_dump`s (#86, see the Backups section). Every service is hardened:
+`no-new-privileges`, `cap_drop: [ALL]` where the image tolerates it, `read_only` root filesystem
+with `tmpfs` for the paths that must be writable. The block below is a lightly-abridged snapshot —
+the file in the repo root is authoritative (image pins are Dependabot-managed).
+
 ```yaml
+name: iceberg-ebs   # pin the project name (container/volume names) to the app
+
 services:
   postgres:
     image: postgres:16-alpine
+    # Postgres' entrypoint needs its default caps to chown PGDATA and drop to the
+    # postgres user, so caps are NOT dropped here; just block privilege escalation.
+    security_opt:
+      - no-new-privileges:true
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-iceberg_ebs}
       POSTGRES_USER: ${POSTGRES_USER:-iceberg_ebs}
@@ -186,6 +204,14 @@ services:
 
   app:
     build: .
+    # The app parses untrusted extension archives — tightest sandbox Compose offers.
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp
     environment:
       ICEBERG_EBS_DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-iceberg_ebs}:${POSTGRES_PASSWORD}@postgres/${POSTGRES_DB:-iceberg_ebs}
       ICEBERG_EBS_ADMIN_USERNAME: ${ICEBERG_EBS_ADMIN_USERNAME}
@@ -193,13 +219,50 @@ services:
       ICEBERG_EBS_SECRET_KEY: ${ICEBERG_EBS_SECRET_KEY}
       ICEBERG_EBS_APP_BASE_URL: ${ICEBERG_EBS_APP_BASE_URL:-}
       ICEBERG_EBS_SECURE_COOKIES: "true"
+      ICEBERG_EBS_LOG_JSON: ${ICEBERG_EBS_LOG_JSON:-false}
+      # Forwarded so an operator who sets these in .env actually gets them (#87):
+      ICEBERG_EBS_RETENTION_DAYS: ${ICEBERG_EBS_RETENTION_DAYS:-0}
+      ICEBERG_EBS_FETCH_INTERVAL_MINUTES: ${ICEBERG_EBS_FETCH_INTERVAL_MINUTES:-60}
+      ICEBERG_EBS_SESSION_MAX_AGE: ${ICEBERG_EBS_SESSION_MAX_AGE:-86400}
+      ICEBERG_EBS_HTTPX_TIMEOUT: ${ICEBERG_EBS_HTTPX_TIMEOUT:-15.0}
+      # Don't attempt to write .pyc into the read-only /app tree.
+      PYTHONDONTWRITEBYTECODE: "1"
+    healthcheck:
+      # python:3.14-slim has no curl/wget — probe /readyz via the stdlib.
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/readyz', timeout=5)"]
+      interval: 15s
+      timeout: 5s
+      start_period: 30s
+      retries: 5
     depends_on:
       postgres:
         condition: service_healthy
+    # Time for the scheduler to drain an in-flight refresh before SIGKILL (#109);
+    # keep above ICEBERG_EBS_SHUTDOWN_DRAIN_SECONDS (default 55).
+    stop_grace_period: 60s
     restart: unless-stopped
 
   nginx:
-    image: nginx:alpine
+    # Pinned to a minor: `nginx:alpine` floats, so the TLS-terminating proxy
+    # would silently change version on every `docker compose pull`.
+    image: nginx:1.29-alpine
+    security_opt:
+      - no-new-privileges:true
+    # Drop everything, add back only what stock nginx needs under a read-only rootfs.
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+      - CHOWN
+      - SETUID
+      - SETGID
+      - DAC_OVERRIDE
+    read_only: true
+    # pid + proxy temp files; do NOT tmpfs /var/log/nginx (it would shadow the
+    # stdout/stderr log symlinks and swallow container logs).
+    tmpfs:
+      - /var/cache/nginx
+      - /var/run
     ports:
       - "80:80"
       - "443:443"
@@ -208,8 +271,43 @@ services:
       - ./nginx/security_headers.conf:/etc/nginx/security_headers.conf:ro
       - ./nginx/certs:/etc/nginx/certs:ro
       - ./static:/app/static:ro
+    healthcheck:
+      # Plain-HTTP local liveness (the /nginx-health location in nginx.conf).
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:80/nginx-health"]
+      interval: 15s
+      timeout: 5s
+      start_period: 10s
+      retries: 5
     depends_on:
-      - app
+      app:
+        condition: service_healthy
+    restart: unless-stopped
+
+  backup:
+    # Scheduled pg_dump into ./backups (#86) — same pinned image as the server so
+    # pg_dump's version always matches. Custom-format dumps (-Fc), written atomically
+    # (.tmp then mv), pruned after BACKUP_RETENTION_DAYS. Full shell loop in the
+    # repo file; behaviour documented in "Backups & disaster recovery" below.
+    image: postgres:16-alpine
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-iceberg_ebs}
+      POSTGRES_DB: ${POSTGRES_DB:-iceberg_ebs}
+      PGPASSWORD: ${POSTGRES_PASSWORD}
+      BACKUP_RETENTION_DAYS: ${BACKUP_RETENTION_DAYS:-7}
+      BACKUP_INTERVAL_SECONDS: ${BACKUP_INTERVAL_SECONDS:-86400}
+    command: [sh, -c, "…"]   # pg_dump loop — see docker-compose.yml
+    volumes:
+      - ./backups:/backups
+    depends_on:
+      postgres:
+        condition: service_healthy
     restart: unless-stopped
 
 volumes:
@@ -253,10 +351,14 @@ silently ignored — #87). All settings use the `ICEBERG_EBS_` prefix.
 | `ICEBERG_EBS_RETENTION_DAYS` | `0` | Prune history older than N days; `0` disables |
 | `ICEBERG_EBS_SESSION_MAX_AGE` | `86400` | Session lifetime in seconds |
 | `ICEBERG_EBS_HTTPX_TIMEOUT` | `15.0` | Outbound HTTP timeout in seconds |
+| `ICEBERG_EBS_LOG_JSON` | `false` | Emit single-line JSON logs for a collector (#89) |
 
 Settings **not** in this table (e.g. the login rate-limit tuning `ICEBERG_EBS_LOGIN_MAX_ATTEMPTS` /
 `…_LOGIN_ATTEMPT_WINDOW_SECONDS` / `…_LOGIN_LOCKOUT_SECONDS`, `ICEBERG_EBS_API_KEY_LAST_USED_THROTTLE_SECONDS`,
-and `ICEBERG_EBS_SESSION_COOKIE_NAME`) run at their `app/config.py` defaults; to make one tunable in
+`ICEBERG_EBS_SESSION_COOKIE_NAME`, `ICEBERG_EBS_TRUSTED_ORIGINS`, `ICEBERG_EBS_SHUTDOWN_DRAIN_SECONDS`,
+the outbound-HTTP retry/pool tuning `ICEBERG_EBS_HTTPX_MAX_RETRIES` / `…_HTTPX_BACKOFF_BASE` /
+`…_HTTPX_BACKOFF_CAP` / `…_HTTPX_MAX_CONNECTIONS` / `…_HTTPX_MAX_KEEPALIVE_CONNECTIONS`, and
+`ICEBERG_EBS_STORE_CIRCUIT_FAILURE_THRESHOLD`) run at their `app/config.py` defaults; to make one tunable in
 production, add it to the Compose `app.environment` block and the Helm ConfigMap (and a
 `icebergEbs.*` value) the same way the rows above are wired.
 
@@ -296,6 +398,7 @@ add_header Content-Security-Policy
    connect-src 'self'; \
    frame-ancestors 'none'; \
    base-uri 'self'; \
+   object-src 'none'; \
    form-action 'self'" always;
 add_header Strict-Transport-Security "max-age=63072000; includeSubDomains; preload" always;
 add_header X-Content-Type-Options "nosniff" always;
@@ -327,7 +430,10 @@ http {
 
     server_tokens off;  # Don't expose nginx version in headers or error pages
 
-    log_format main '$remote_addr - [$time_local] "$request" $status $body_bytes_sent';
+    # Referer + User-Agent and timing (request time / upstream response time) are the
+    # first things needed to debug a beta report or spot abuse (#89).
+    log_format main '$remote_addr - [$time_local] "$request" $status $body_bytes_sent '
+                    '"$http_referer" "$http_user_agent" rt=$request_time urt=$upstream_response_time';
     access_log /var/log/nginx/access.log main;
 
     sendfile        on;
@@ -348,7 +454,16 @@ http {
     server {
         listen 80;
         server_name _;
-        return 301 https://$host$request_uri;
+        # Plain-HTTP liveness for the container healthcheck — answered locally, not
+        # redirected to HTTPS or proxied to the app.
+        location = /nginx-health {
+            access_log off;
+            add_header Content-Type text/plain;
+            return 200 "ok\n";
+        }
+        location / {
+            return 301 https://$host$request_uri;
+        }
     }
 
     server {
@@ -500,7 +615,9 @@ helm/iceberg-ebs/
     ├── service.yaml
     ├── ingress.yaml
     ├── configmap.yaml
-    └── secret.yaml
+    ├── secret.yaml
+    ├── networkpolicy.yaml   # default-deny ingress + named hops (#103)
+    └── pdb.yaml             # blocks voluntary eviction of the singleton pod (#104)
 ```
 
 ---
@@ -536,6 +653,15 @@ image:
 # each independently refresh watchlisted extensions and write duplicate AlertLog rows.
 replicaCount: 1
 
+# Grace period for the scheduler to drain an in-flight watchlist refresh on shutdown
+# before SIGKILL (#109); keep above ICEBERG_EBS_SHUTDOWN_DRAIN_SECONDS (default 55).
+terminationGracePeriodSeconds: 60
+
+# With replicaCount 1 the PDB uses maxUnavailable: 0 — blocks voluntary disruption
+# (node drains) so an eviction can't take the singleton to 0 (#104).
+podDisruptionBudget:
+  enabled: true
+
 icebergEbs:
   adminUsername: admin
   adminPassword: ""        # override with --set or existingSecret
@@ -546,17 +672,31 @@ icebergEbs:
   sessionMaxAge: 86400     # session lifetime in seconds
   httpxTimeout: 15.0       # outbound HTTP timeout in seconds
   secureCookies: true
+  logJson: false           # emit single-line JSON logs for a collector (#89)
 
 postgresql:
   auth:
     username: iceberg_ebs
     password: ""           # override with --set or existingSecret
     database: iceberg_ebs
+  # Disable the Bitnami subchart's OWN NetworkPolicy (#103): policy ingress rules
+  # union, so leaving it enabled would re-open Postgres past our app-only rule.
+  networkPolicy:
+    enabled: false
 
 ingress:
   host: icebergebs.example.com
   className: nginx
   certManagerIssuer: letsencrypt-prod  # set "" to disable cert-manager annotation
+
+networkPolicy:
+  # Default-deny ingress + named hops (ingress→app:8000, app→postgres:5432).
+  # Egress stays open (stores/webhooks). Needs an enforcing CNI (#103).
+  enabled: true
+  ingressController:
+    namespaceSelector:
+      matchLabels:
+        kubernetes.io/metadata.name: ingress-nginx
 
 resources:
   requests:
@@ -601,6 +741,7 @@ data:
   ICEBERG_EBS_SESSION_MAX_AGE:       {{ .Values.icebergEbs.sessionMaxAge | quote }}
   ICEBERG_EBS_HTTPX_TIMEOUT:         {{ .Values.icebergEbs.httpxTimeout | quote }}
   ICEBERG_EBS_SECURE_COOKIES:        {{ .Values.icebergEbs.secureCookies | quote }}
+  ICEBERG_EBS_LOG_JSON:              {{ .Values.icebergEbs.logJson | quote }}
 ```
 
 ---
@@ -614,21 +755,36 @@ metadata:
   name: {{ include "iceberg-ebs.fullname" . }}
 spec:
   replicas: {{ .Values.replicaCount }}
+  # Recreate (not RollingUpdate): a rolling update's maxSurge would briefly run a
+  # second pod, and two APScheduler processes duplicate watchlist refreshes +
+  # AlertLog rows. Recreate never opens a two-scheduler window (#104).
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
-      app.kubernetes.io/name: {{ include "iceberg-ebs.name" . }}
+      {{- include "iceberg-ebs.selectorLabels" . | nindent 6 }}
   template:
     metadata:
       labels:
-        app.kubernetes.io/name: {{ include "iceberg-ebs.name" . }}
+        {{- include "iceberg-ebs.selectorLabels" . | nindent 8 }}
     spec:
+      # Time for the scheduler to drain an in-flight refresh before SIGKILL (#109).
+      terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds }}
+      # The app never talks to the Kubernetes API — don't mount a token an attacker
+      # who compromised the untrusted-package parser could pivot with.
+      automountServiceAccountToken: false
       securityContext:
         runAsNonRoot: true
         runAsUser: 1000
         fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      volumes:
+        - name: tmp
+          emptyDir: {}
       containers:
         - name: iceberg-ebs
-          image: "{{ .Values.image.repository }}:{{ required "image.tag is required — pin an immutable release tag (never :latest); see #88" .Values.image.tag }}"
+          image: "{{ .Values.image.repository }}:{{ required "image.tag is required — pin an immutable release tag, e.g. --set image.tag=v0.1.0-beta.1 (never :latest); see DEPLOYMENT.md and docs/RELEASING.md (#88)" .Values.image.tag }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           ports:
             - containerPort: 8000
@@ -636,13 +792,15 @@ spec:
             - configMapRef:
                 name: {{ include "iceberg-ebs.fullname" . }}
           env:
-            - name: ICEBERG_EBS_DATABASE_URL
-              value: "postgresql+asyncpg://{{ .Values.postgresql.auth.username }}:$(POSTGRES_PASSWORD)@{{ include \"iceberg-ebs.fullname\" . }}-postgresql/{{ .Values.postgresql.auth.database }}"
+            # POSTGRES_PASSWORD must be defined BEFORE the $(POSTGRES_PASSWORD)
+            # reference below, or the interpolation doesn't resolve.
             - name: POSTGRES_PASSWORD
               valueFrom:
                 secretKeyRef:
                   name: {{ include "iceberg-ebs.fullname" . }}-postgresql
                   key: password
+            - name: ICEBERG_EBS_DATABASE_URL
+              value: "postgresql+asyncpg://{{ .Values.postgresql.auth.username }}:$(POSTGRES_PASSWORD)@{{ include \"iceberg-ebs.fullname\" . }}-postgresql/{{ .Values.postgresql.auth.database }}"
             - name: ICEBERG_EBS_ADMIN_PASSWORD
               valueFrom:
                 secretKeyRef:
@@ -655,8 +813,13 @@ spec:
                   key: secret-key
           securityContext:
             allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
             capabilities:
               drop: [ALL]
+          # Python/uvicorn still need a writable /tmp under the read-only rootfs.
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
           readinessProbe:
@@ -671,16 +834,6 @@ spec:
               port: 8000
             initialDelaySeconds: 15
             periodSeconds: 30
-```
-
-Note: `readOnlyRootFilesystem: true` is desirable but requires a writable `/tmp` emptyDir mount because Python and uvicorn write bytecode cache and socket files. Add if needed:
-```yaml
-volumeMounts:
-  - name: tmp
-    mountPath: /tmp
-volumes:
-  - name: tmp
-    emptyDir: {}
 ```
 
 ---

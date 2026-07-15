@@ -31,7 +31,7 @@
       <tbody>
         <tr>
           <td><span class="badge badge-store badge-chrome"><span class="dot"></span>chrome</span></td>
-          <td>32-char alphanumeric</td>
+          <td>32 characters a&#8211;p</td>
           <td class="mono text-[12px]" style="color:var(--ink-5)">cjpalhdlnbpafiamejdnhcphjbkeiagm</td>
         </tr>
         <tr>
@@ -41,7 +41,7 @@
         </tr>
         <tr>
           <td><span class="badge badge-store badge-edge"><span class="dot"></span>edge</span></td>
-          <td>GUID-like string</td>
+          <td>32 characters a&#8211;p (same format as Chrome)</td>
           <td class="mono text-[12px]" style="color:var(--ink-5)">jmjflgjpcpepeafmmgdpfkogkghcpiha</td>
         </tr>
       </tbody>
@@ -137,7 +137,24 @@
     <ul class="text-[13.5px] leading-relaxed pl-5 list-disc" style="color:var(--ink-6)">
       <li>Admin creates users via <a href="/admin/users">admin / users</a>. There is no self-registration.</li>
       <li>Change your password or toggle dark mode under the username menu in the top bar.</li>
-      <li>Admins can delete users — all their extensions, alert rules, and webhooks are removed.</li>
+      <li>Admins can delete users — their alert rules, webhook destinations, and API keys are
+        removed, while their extensions are kept (unassigned and taken off the watchlist) so
+        fetch and alert history survives.</li>
+    </ul>
+  </div>
+
+  <div class="surface p-6 mb-4">
+    <h2 class="section-title">API keys</h2>
+    <p class="text-[13.5px] leading-relaxed mb-2" style="color:var(--ink-6)">
+      Programmatic callers (SOAR pushing to <span class="mono">POST /api/inventory</span>, reporting
+      scripts hitting the export endpoint, …) authenticate to the JSON API with a bearer token
+      instead of a session cookie: <span class="mono">Authorization: Bearer &lt;key&gt;</span>.
+      Create and revoke keys under <a href="/account/keys">account / API keys</a>.
+    </p>
+    <ul class="text-[13.5px] leading-relaxed pl-5 list-disc" style="color:var(--ink-6)">
+      <li>The full key is shown <strong>once</strong> at creation — only a prefix/suffix is stored for display.</li>
+      <li>Keys can be <strong>read-only</strong>: they work for GET requests and are rejected (403) for anything state-changing.</li>
+      <li>Changing your password revokes all of your API keys along with other-device sessions.</li>
     </ul>
   </div>
 

@@ -10,7 +10,7 @@ VS Code), a genuinely capable static inspector ([app/inspector.py](app/inspector
 eval/remote-code, CSP, network callouts, obfuscation, MV2, severity-tagged findings with file:line),
 heuristic 0–100 scoring ([app/scoring.py](app/scoring.py)), webhook alerting with SSRF protection +
 change detection ([app/notifications.py](app/notifications.py)), API keys + session auth, a background
-scheduler, and 206 tests.
+scheduler, and a ~390-test suite.
 
 To be **consumed by a mid-size SOC**, it needs to become an *extension attack-surface management*
 product: tied to the org's real install footprint, integrated with SOC tooling, governed by enterprise
@@ -31,44 +31,41 @@ Reusable seams that most epics build on: `fetch_and_store`/`fire_pending_alerts`
 `get_fetcher` ([app/fetchers/__init__.py](app/fetchers/__init__.py)), `compute_risk_score`/`risk_level`
 ([app/scoring.py](app/scoring.py)), `require_api_auth`/`require_admin` ([app/auth.py](app/auth.py)),
 `build_threat_intel_indicators` ([app/threat_intel.py](app/threat_intel.py)), the `AlertDestination`/
-`AlertRule`/`AlertLog` model + `_migrate_*` migration pattern ([app/database.py](app/database.py)).
+`AlertRule`/`AlertLog` models + the Alembic migration setup ([alembic/](alembic/), wired up by
+[app/database.py](app/database.py)).
 
 ---
 
-## Phase 0 — Operability & quick wins (small, unblocks scale)
+## Phase 0 — Operability & quick wins ✅ SHIPPED
 
-Make it survive a real watchlist and a real team. Mostly backend, low risk.
+Make it survive a real watchlist and a real team. Mostly backend, low risk. **All Phase 0 items are
+built:**
 
-- **Data retention / pruning** — `FetchLog`, `InstallCountHistory`, `AlertLog` grow unbounded. Add a
-  scheduled prune job (reuse [app/scheduler.py](app/scheduler.py)) with `ICEBERG_EBS_RETENTION_DAYS`.
-- **Pagination + filter + search** on `GET /api/extensions` and the dashboard (store, risk level,
-  publisher, free-text, sort, limit/offset) — extend [app/routes/api.py](app/routes/api.py#L216) and
-  [dashboard.html](app/templates/dashboard.html). (Author TODO.)
-- **Bulk import** — `POST /api/extensions/bulk` (list / CSV) that reuses the add+score path; UI paste
-  box. (Author TODO.)
-- **Export** — `GET /api/extensions/export?format=csv|json` for reporting/ingest. (Author TODO.)
-- **Fetch health** — surface per-extension last fetch status/error and a fleet "stale/failing" count;
-  add `/healthz` + `/readyz`. Fetchers get timeout/backoff/retry already partially via httpx — make
-  failures visible.
-- **Postgres-by-default for SOC scale** — document/encourage Postgres (the SQLite single-writer lock
-  is a real ceiling under scheduler + API + ingestion concurrency). App-side: keep all writers
-  commit-isolated (already done for alerts).
-- **Known-bug cleanup:** `delete_user` should preserve-history like `delete_rule`/`delete_destination`
-  ([app/routes/users.py](app/routes/users.py)); cap `build_threat_intel_indicators` total output
-  ([app/threat_intel.py](app/threat_intel.py)). (Author TODO.)
+- ~~**Data retention / pruning**~~ — shipped (#22): daily prune job in [app/retention.py](app/retention.py),
+  gated by `ICEBERG_EBS_RETENTION_DAYS`.
+- ~~**Pagination + filter + search**~~ — shipped (#23): `GET /api/extensions` returns a paginated
+  envelope with store/risk/publisher/free-text/sort filters, shared with the dashboard via
+  `build_extension_query`.
+- ~~**Bulk import**~~ — shipped (#24): `POST /api/extensions/bulk` + UI paste box.
+- ~~**Export**~~ — shipped (#25): `GET /api/extensions/export?format=csv|json`.
+- ~~**Fetch health**~~ — shipped (#26): per-extension last fetch status/error, fleet "Fetch health"
+  tile, `/healthz` + `/readyz`; hardened further by the retry transport + per-store circuit breaker (#108).
+- ~~**Postgres-by-default**~~ — shipped, and then some: SQLite support was **removed** entirely;
+  Postgres is the only supported database (dev, test, prod), with schema managed by Alembic.
+- ~~**Known-bug cleanup**~~ — shipped (#28): `delete_user` preserves history; `build_threat_intel_indicators`
+  output is capped (`MAX_THREAT_INTEL_INDICATORS`).
 
 ## Phase 1 — SOC core value: inventory, update-diffing, malicious feeds
 
 The headline differentiators. Backend-heavy; leverages the existing fetch/alert pipeline.
 
-- **SOAR-fed inventory + exposure (blast radius).**
-  - New model `InstallObservation(extension_ref, asset_id, asset_type, department/tag, source,
-    first_seen, last_seen)` + a cached `install_footprint` on `Extension`.
-  - `POST /api/inventory` — bulk upsert from SOAR; **auto-enrolls** unknown extensions (creates the
-    `Extension` + triggers `fetch_and_store`), so pushing inventory expands the watchlist automatically.
-  - New ranking: **exposure = risk_score × footprint**; surface "top exposure" on the dashboard and a
-    per-extension "installed on N assets / which departments" panel. Risk prioritization stops being
-    abstract.
+- ~~**SOAR-fed inventory + exposure (blast radius).**~~ **Shipped (#29):**
+  - `InstallObservation` model (one row per extension × asset) + cached `install_footprint` on
+    `Extension`.
+  - `POST /api/inventory` — bulk upsert from SOAR; **auto-enrolls** unknown extensions (scoring
+    deferred to the scheduler, #78), so pushing inventory expands the watchlist automatically.
+  - **exposure = risk_score × footprint** is sortable everywhere; the dashboard has a "Top exposure"
+    section and the detail page an "Org footprint" card (assets + per-department breakdown).
 - **Update diffing (catch compromised/sold extensions).**
   - New model `PackageSnapshot(extension_ref, version, package_sha256, analysis_json, captured_at)` —
     today only the *latest* `package_analysis` is kept ([services.py](app/services.py#L113)). Store a
@@ -127,10 +124,12 @@ Makes "both UI + API" real.
 ---
 
 ## Cross-cutting concerns (apply every phase)
-- **Migrations:** follow the per-statement `_migrate_postgres` / `_migrate_sqlite` pattern in
-  [app/database.py](app/database.py) for every new table/column; never share one transaction on Postgres.
+- **Migrations:** schema is managed by **Alembic** — add every new table/column via
+  `alembic revision --autogenerate` (see CLAUDE.md's `app/database.py` notes); the old hand-rolled
+  `_migrate_*` startup path is retired.
 - **Alerts after commit:** any new write path that fires alerts must commit first, then
-  `fire_pending_alerts` (SQLite write-lock rule, see CLAUDE.md).
+  `fire_pending_alerts` — `fire_alerts` opens its own second DB session, which must not run inside
+  the caller's still-open write transaction (see CLAUDE.md).
 - **Tests:** each epic ships unit + route tests in the existing style ([tests/](tests/), respx + the
   `client`/`test_db` fixtures); keep the suite green.
 - **Docs:** update [CLAUDE.md](CLAUDE.md) module/architecture notes and [help.html](app/templates/help.html)

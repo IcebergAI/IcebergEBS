@@ -141,6 +141,18 @@ release to diff against.
   cancels rather than awaits async jobs, so it alone doesn't drain. The container grace period
   (`terminationGracePeriodSeconds` / `stop_grace_period`) is raised above that window, and the HTTP
   client is closed on shutdown (#109).
+- **Documentation reconciled with the as-built system.** The in-app help page now documents
+  API keys / bearer-token auth, corrects the Chrome/Edge extension-ID format (32 characters
+  a–p, not "alphanumeric"/"GUID-like"), and no longer claims user deletion removes the user's
+  extensions (they are kept, unassigned and off the watchlist). README/CONTRIBUTING/CLAUDE.md
+  now describe all **six** CI gates (the `lint-workflows` and `ui` jobs were missing) and the
+  four-service Compose stack; DEPLOYMENT.md's embedded Dockerfile/compose/nginx/Helm snapshots
+  match the shipped hardened stack (backup service, read-only rootfs, `nginx:1.29-alpine`,
+  `object-src 'none'`, NetworkPolicy/PDB templates, `readOnlyRootFilesystem` no longer
+  "optional") and its env-var reference includes `ICEBERG_EBS_LOG_JSON` + the retry/circuit
+  tuning knobs; SECURITY.md mentions the #107 Origin/Referer CSRF middleware; TODO.md/PLAN.md
+  no longer list shipped features (filtering, bulk import, export, retention, inventory) as
+  open work.
 
 ### Security
 
