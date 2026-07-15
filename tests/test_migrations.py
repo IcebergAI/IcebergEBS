@@ -93,6 +93,15 @@ def _columns(db_name: str, table: str) -> set[str]:
         engine.dispose()
 
 
+def _indexes(db_name: str, table: str) -> list[dict]:
+    engine = create_engine(_sync_url(db_name))
+    try:
+        with engine.connect() as conn:
+            return inspect(conn).get_indexes(table)
+    finally:
+        engine.dispose()
+
+
 def _version(db_name: str):
     engine = create_engine(_sync_url(db_name))
     try:
@@ -118,6 +127,14 @@ async def test_fresh_db_has_all_current_columns(temp_db):
     assert "install_footprint" in _columns(temp_db, "extension")  # #29
     assert "installobservation" in _tables(temp_db)  # #29
     assert {"extension_id", "asset_id", "first_seen", "last_seen"} <= _columns(temp_db, "installobservation")
+
+
+async def test_fresh_db_indexes_recent_install_history_lookup(temp_db):
+    await _migrate(temp_db)
+    indexes = {index["name"]: index for index in _indexes(temp_db, "installcounthistory")}
+    recent = indexes["ix_installcounthistory_extension_recorded_id"]
+    assert recent["column_names"] == ["extension_id", "recorded_at", "id"]
+    assert recent["column_sorting"] == {"recorded_at": ("desc",), "id": ("desc",)}
 
 
 async def test_migration_is_idempotent(temp_db):

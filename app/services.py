@@ -57,7 +57,7 @@ async def fetch_and_store(
         await session.exec(
             select(InstallCountHistory.install_count)
             .where(InstallCountHistory.extension_id == ext.id)
-            .order_by(InstallCountHistory.recorded_at.desc())
+            .order_by(InstallCountHistory.recorded_at.desc(), InstallCountHistory.id.desc())
             .limit(2)
         )
     ).all()
