@@ -116,8 +116,12 @@ release to diff against.
   left the change persisted but the alert never sent (and never retried, since the next cycle sees no
   diff). Pending change events are now persisted in the **same commit** as the state change
   (`Extension.pending_alert_events`) and **merged** across refreshes (never overwritten), so a restart
-  re-fires anything undelivered; delivery clears the marker with **compare-and-clear** so a concurrent
-  refresh's newer events aren't wiped. Shutdown now **explicitly drains the in-flight refresh** (pause
+  re-fires anything undelivered; delivery clears the marker with **compare-and-clear**. Both are
+  **atomic against a concurrent refresh of the same extension** (a manual API refresh racing the
+  scheduler): the merge re-reads the marker under a `SELECT … FOR UPDATE` row lock before appending,
+  and the clear is a single conditional `UPDATE … WHERE pending_alert_events = <delivered>` — so
+  neither a lost-update nor a TOCTOU clear can drop an alert. Shutdown now **explicitly drains the
+  in-flight refresh** (pause
   + await, bounded by `ICEBERG_EBS_SHUTDOWN_DRAIN_SECONDS`) — APScheduler 3.x's `shutdown(wait=True)`
   cancels rather than awaits async jobs, so it alone doesn't drain. The container grace period
   (`terminationGracePeriodSeconds` / `stop_grace_period`) is raised above that window, and the HTTP

@@ -13,6 +13,7 @@ from unittest.mock import AsyncMock, patch
 
 import httpx
 import respx
+from sqlalchemy import update as sa_update
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
@@ -193,6 +194,105 @@ async def test_clear_pending_alerts_is_compare_and_clear(test_db, admin_user):
     await _clear_pending_alerts(ext_id, test_db, newer)
     async with AsyncSession(test_db) as session:
         assert (await session.get(Extension, ext_id)).pending_alert_events is None
+
+
+async def test_concurrent_fetch_and_store_preserves_both_events(test_db, admin_user):
+    """Two refreshes of the SAME extension overlapping (manual API refresh racing the scheduler)
+    must not lose an event. Both load the marker before either commits (barrier), then the
+    row-locked re-read in fetch_and_store serialises the merge so both events survive — a plain
+    in-memory read-modify-write would last-writer-wins and drop one (#109 review)."""
+    async with AsyncSession(test_db) as session:
+        ext = Extension(
+            user_id=admin_user.id,
+            store="vscode",
+            extension_id="pub.concurrent",
+            name="C",
+            publisher="pub",
+            version="1.0.0",
+            store_url="https://example.com",
+            risk_score=10,
+            last_fetched_at=datetime(2024, 1, 1, tzinfo=timezone.utc),  # not first fetch
+        )
+        session.add(ext)
+        await session.commit()
+        await session.refresh(ext)
+        ext_id = ext.id
+
+    # Release both fetches only once BOTH refreshes have loaded the extension, so each starts
+    # from the same (empty) marker — the exact window a lost-update race needs.
+    both_loaded = asyncio.Barrier(2)
+    meta = ExtensionMetadata(name="C", publisher="pub", version="2.0.0", store_url="https://example.com")
+
+    async def fetch_after_barrier(*_a, **_k):
+        await both_loaded.wait()
+        return (meta, None)
+
+    async def one_refresh():
+        async with AsyncSession(test_db) as s:
+            ext = await s.get(Extension, ext_id)  # both load before either commits
+            _, _ = await fetch_and_store(ext, s, httpx.AsyncClient())
+            await s.commit()
+
+    with patch("app.fetchers.VSCodeFetcher") as MockFetcher:
+        MockFetcher.return_value.fetch = AsyncMock(side_effect=fetch_after_barrier)
+        await asyncio.gather(one_refresh(), one_refresh())
+
+    async with AsyncSession(test_db) as session:
+        staged = json.loads((await session.get(Extension, ext_id)).pending_alert_events)
+    # Each refresh detected a new_version event; the row-locked merge preserved BOTH of them.
+    # A lost-update (in-memory read-modify-write) would keep only one refresh's events.
+    new_version_events = [e for e in staged if e["event_type"] == "new_version"]
+    assert len(new_version_events) == 2
+
+
+async def test_clear_pending_alerts_loses_race_to_concurrent_append(test_db, admin_user):
+    """Genuinely interleaved append vs clear. While the clear's conditional UPDATE is blocked on
+    the appender's row lock, the appender commits new events; the clear must then be a no-op (its
+    WHERE no longer matches) and never erase the appended event (#109 review)."""
+    old = json.dumps([{"event_type": "new_version", "old_value": "1", "new_value": "2"}])
+    appended = json.dumps(
+        [
+            {"event_type": "new_version", "old_value": "1", "new_value": "2"},
+            {"event_type": "risk_level_change", "old_value": "low", "new_value": "high"},
+        ]
+    )
+    async with AsyncSession(test_db) as session:
+        ext = Extension(
+            user_id=admin_user.id,
+            store="vscode",
+            extension_id="pub.race",
+            name="R",
+            publisher="pub",
+            version="2.0.0",
+            store_url="https://example.com",
+            risk_score=10,
+            pending_alert_events=old,
+        )
+        session.add(ext)
+        await session.commit()
+        await session.refresh(ext)
+        ext_id = ext.id
+
+    committed = asyncio.Event()
+
+    async def appender():
+        async with AsyncSession(test_db) as s:
+            # Take the row lock and append, holding it so the clear below blocks on it.
+            await s.execute(sa_update(Extension).where(Extension.id == ext_id).values(pending_alert_events=appended))
+            await asyncio.sleep(0.2)
+            await s.commit()
+            committed.set()
+
+    async def clearer():
+        await asyncio.sleep(0.05)  # let the appender grab the row lock first
+        # Blocks on the appender's lock; runs after commit, when the marker is `appended` (not
+        # `old`), so the conditional WHERE matches nothing and clears nothing.
+        await _clear_pending_alerts(ext_id, test_db, old)
+
+    await asyncio.gather(appender(), clearer())
+    assert committed.is_set()
+    async with AsyncSession(test_db) as session:
+        assert (await session.get(Extension, ext_id)).pending_alert_events == appended
 
 
 async def test_drain_inflight_awaits_blocked_refresh(test_db, admin_user, monkeypatch):
