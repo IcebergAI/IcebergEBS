@@ -65,6 +65,15 @@ async def test_does_not_retry_post_even_on_5xx(no_sleep):
     assert inner.calls == 1
 
 
+async def test_retries_opt_in_post(no_sleep):
+    # A semantically-idempotent POST (e.g. the VS Code gallery query) opts in and retries.
+    inner = _SequenceTransport([httpx.Response(503), httpx.Response(200)])
+    req = httpx.Request("POST", "http://store/x", extensions={"retry_idempotent": True})
+    resp = await _wrap(inner).handle_async_request(req)
+    assert resp.status_code == 200
+    assert inner.calls == 2
+
+
 async def test_gives_up_after_max_retries(no_sleep):
     inner = _SequenceTransport([httpx.Response(503)] * 4)
     resp = await _wrap(inner, max_retries=3).handle_async_request(httpx.Request("GET", "http://store/x"))

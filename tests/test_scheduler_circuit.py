@@ -62,6 +62,15 @@ def test_stores_are_tracked_independently():
     assert not b.is_open("edge")
 
 
+def test_internal_error_outcome_is_neutral():
+    # Unexpected internal errors (inspector/scoring/DB/bug) are not a store signal, so
+    # they must never open the circuit — otherwise a bug would mask itself as a store outage.
+    b = _StoreCircuitBreaker(2)
+    for _ in range(5):
+        b.record("chrome", _Outcome.ERROR)
+    assert not b.is_open("chrome")
+
+
 # ---- integration: refresh_watchlist records store outages ------------------
 
 
@@ -100,6 +109,41 @@ async def test_refresh_watchlist_records_store_outage(test_db, admin_user, monke
     assert len(real_failures) == 2
     assert len(outages) == 2
     assert all(lg.success is False for lg in outages)
+
+
+async def test_unexpected_errors_do_not_open_circuit(test_db, admin_user, monkeypatch):
+    # A non-FetchError bug is a neutral ERROR outcome, so the circuit never opens and every
+    # extension is still attempted (no bogus store_outage rows).
+    monkeypatch.setattr(scheduler, "engine", test_db)
+    monkeypatch.setattr(scheduler.settings, "store_circuit_failure_threshold", 2)
+
+    async with AsyncSession(test_db) as s:
+        for i in range(4):
+            s.add(
+                Extension(
+                    user_id=admin_user.id,
+                    store="vscode",
+                    extension_id=f"pub.bug{i}",
+                    name=f"Bug {i}",
+                    publisher="pub",
+                    version="1.0",
+                    store_url="https://example.com",
+                    risk_score=10,
+                    watchlist=True,
+                )
+            )
+        await s.commit()
+
+    with patch("app.fetchers.VSCodeFetcher") as MockFetcher:
+        MockFetcher.return_value.fetch = AsyncMock(side_effect=RuntimeError("internal bug"))
+        async with httpx.AsyncClient() as http:
+            await scheduler.refresh_watchlist(http)
+        # All four were attempted — the circuit never opened despite repeated errors.
+        assert MockFetcher.return_value.fetch.await_count == 4
+
+    async with AsyncSession(test_db) as s:
+        logs = (await s.exec(select(FetchLog))).all()
+    assert [lg for lg in logs if lg.store_outage] == []
 
 
 # ---- dashboard: a store outage doesn't count against Fetch health ----------

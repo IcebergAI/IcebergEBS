@@ -29,6 +29,11 @@ logger = logging.getLogger(__name__)
 # intentionally absent (delisted extension — permanent, must surface now).
 RETRYABLE_STATUS = frozenset({429, 500, 502, 503, 504})
 _IDEMPOTENT_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
+# Some store APIs are semantically idempotent reads served over POST (e.g. the VS Code
+# gallery `extensionquery`). They opt in to retries per-request via this request
+# extension so they get the same resilience as GETs, WITHOUT retrying webhook POSTs
+# (which never set it — a re-sent webhook could double-fire an alert).
+_RETRY_OPT_IN_EXTENSION = "retry_idempotent"
 # Upper bound on a single backoff sleep, including a server-supplied Retry-After.
 # The scheduler refreshes extensions sequentially, so an unbounded Retry-After (a
 # store replying "retry after 3600") would wedge the whole cycle; a persistently
@@ -94,7 +99,9 @@ class RetryTransport(httpx.AsyncBaseTransport):
         await asyncio.sleep(min(delay, _MAX_SLEEP_SECONDS))
 
     async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
-        retryable_method = request.method in _IDEMPOTENT_METHODS
+        retryable_method = request.method in _IDEMPOTENT_METHODS or bool(
+            request.extensions.get(_RETRY_OPT_IN_EXTENSION)
+        )
         attempt = 0
         while True:
             try:

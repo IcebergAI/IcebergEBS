@@ -20,8 +20,10 @@ class _Outcome(enum.Enum):
     """Result of refreshing one extension, used to drive the circuit breaker."""
 
     SUCCESS = "success"
-    FAILED = "failed"
+    FAILED = "failed"  # a store/network failure (FetchError) — counts toward the breaker
     GONE = "gone"  # extension removed / no longer watchlisted — not a store signal
+    ERROR = "error"  # an unexpected *internal* error (inspector/scoring/DB/bug) — NOT a
+    # store signal, so it must not open the circuit; it stays loudly logged instead.
 
 
 class _StoreCircuitBreaker:
@@ -44,6 +46,8 @@ class _StoreCircuitBreaker:
         return store in self._open
 
     def record(self, store: str, outcome: _Outcome) -> None:
+        # Only a real store/network FAILED counts; SUCCESS resets; GONE and ERROR
+        # (internal errors) are neutral — they neither open nor reset the circuit.
         if outcome is _Outcome.SUCCESS:
             self._consecutive[store] = 0
         elif outcome is _Outcome.FAILED:
@@ -76,9 +80,13 @@ async def _refresh_one(ext_id: int, client: httpx.AsyncClient) -> _Outcome:
             await session.commit()
             return _Outcome.FAILED
         except Exception:
+            # An unexpected internal error (inspector/scoring/DB/programming bug) is NOT
+            # evidence the store is down, so it must not count toward the circuit breaker
+            # (that would skip healthy extensions and mislabel them as a store outage).
+            # Return the neutral ERROR outcome; the exception is loudly logged above.
             logger.exception("Unexpected error refreshing ext_id=%d", ext_id)
             await session.rollback()
-            return _Outcome.FAILED
+            return _Outcome.ERROR
         # Fire alerts only after committing above, so fire_alerts' own session (which
         # writes AlertLog) does not run inside this session's open write transaction.
         await session.refresh(ext)
