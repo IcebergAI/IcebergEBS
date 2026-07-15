@@ -100,3 +100,33 @@ jobs:
           uv export --frozen --no-dev --no-emit-project --no-hashes \
             --format requirements-txt -o "${RUNNER_TEMP}/requirements-prod.txt"
           uv run pip-audit -r "${RUNNER_TEMP}/requirements-prod.txt"
+
+  # Lints the workflow files themselves so the SHA-pinning / least-privilege
+  # posture (#96) cannot silently regress. Both tools are blocking.
+  lint-workflows:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
+        with:
+          enable-cache: true
+      # zizmor: CI/CD security audit (unpinned actions, artipacked, template
+      # injection, excessive permissions). Pinned to an exact version; GH_TOKEN
+      # turns on its online audits (impostor commits, known-vulnerable actions).
+      - name: zizmor
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: uvx zizmor@1.27.0 .github/workflows/
+      # actionlint: syntax + shellcheck over every run: block. Installed from the
+      # Go module proxy at a pinned version and verified by Go's checksum database
+      # (sum.golang.org) rather than trusting a third-party action — one less thing
+      # to trust. ubuntu-latest ships Go and shellcheck; the auto-toolchain fetches
+      # the Go version actionlint requires.
+      - name: actionlint
+        run: |
+          go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
+          "$(go env GOPATH)/bin/actionlint" -color
