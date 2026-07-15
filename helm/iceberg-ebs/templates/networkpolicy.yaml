@@ -1,0 +1,70 @@
+{{- if .Values.networkPolicy.enabled }}
+# Default-deny ingress for the whole namespace, then explicit allows below. This turns
+# the flat namespace (any pod could reach Postgres:5432 or the app:8000 directly) into
+# default-deny + named hops — the right posture for an app whose whole job is downloading
+# and statically analysing untrusted third-party code.
+#
+# Egress is INTENTIONALLY left open: IcebergEBS must reach the Chrome Web Store, the VS
+# Code Marketplace, Edge Add-ons, webhook destinations, and (per #41) VirusTotal/OTX; a
+# restrictive egress policy would break the product's core function. Do not add one.
+#
+# Requires a CNI that enforces NetworkPolicy (Calico, Cilium); it is a harmless no-op on
+# a CNI that doesn't. A backup CronJob (#86) will need its own explicit rule to reach
+# Postgres, or default-deny silently breaks backups.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "iceberg-ebs.fullname" . }}-default-deny-ingress
+  labels:
+    {{- include "iceberg-ebs.labels" . | nindent 4 }}
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "iceberg-ebs.fullname" . }}-allow-app-from-ingress
+  labels:
+    {{- include "iceberg-ebs.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "iceberg-ebs.selectorLabels" . | nindent 6 }}
+  policyTypes:
+    - Ingress
+  ingress:
+    # From the ingress controller only (adjust networkPolicy.ingressController for your
+    # cluster) — nothing else in the cluster may reach the app on 8000, bypassing ingress.
+    - from:
+        - namespaceSelector:
+            {{- toYaml .Values.networkPolicy.ingressController.namespaceSelector | nindent 12 }}
+      ports:
+        - protocol: TCP
+          port: 8000
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "iceberg-ebs.fullname" . }}-allow-postgres-from-app
+  labels:
+    {{- include "iceberg-ebs.labels" . | nindent 4 }}
+spec:
+  # Bitnami postgresql subchart pods.
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: postgresql
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  policyTypes:
+    - Ingress
+  ingress:
+    # Only the app pods may reach Postgres on 5432.
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "iceberg-ebs.selectorLabels" . | nindent 14 }}
+      ports:
+        - protocol: TCP
+          port: 5432
+{{- end }}

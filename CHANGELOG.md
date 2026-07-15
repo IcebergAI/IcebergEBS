@@ -118,5 +118,10 @@ release to diff against.
   Release images are immutable and digest-pinnable, so a consumer can verify what is in the image and
   that this repo's CI built it. `build.yml` no longer publishes a mutable `:latest` — main pushes are
   dev-only `:<sha>` + `:edge`; deployables come only from a tagged release (#99).
+- **Kubernetes NetworkPolicies (#103)** — the Helm chart adds default-deny ingress plus named hops
+  (ingress-controller → app:8000, app → postgres:5432), turning the previously flat namespace into
+  a segmented one so a single compromised pod can't reach Postgres directly. Egress is left open
+  (the app must reach the extension stores, webhooks, and TI feeds). Gated behind
+  `networkPolicy.enabled` (default on); requires a CNI that enforces NetworkPolicy (Calico/Cilium).
 
 [0.1.0-beta.1]: https://github.com/IcebergAI/IcebergEBS/commits/main

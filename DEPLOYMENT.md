@@ -747,6 +747,8 @@ Verify the image (`cosign verify` / `gh attestation verify`) before rolling it o
 
 For GitOps (Flux / ArgoCD): use `SealedSecret` or an ExternalSecrets `ExternalSecret` object to inject passwords from your secrets store rather than `--set`, and pin the same immutable release tag there.
 
+**NetworkPolicies (#103):** the chart ships default-deny ingress plus named hops (ingress-controller → app:8000, app → postgres:5432), gated behind `networkPolicy.enabled` (default `true`). They **require a CNI that enforces NetworkPolicy** (Calico, Cilium) — on a CNI that doesn't, they are a harmless no-op that gives no protection. Set `networkPolicy.ingressController.namespaceSelector` to match your ingress controller's namespace. **Egress is intentionally left open** (the app must reach the extension stores, webhook destinations, and TI feeds) — don't add an egress policy. A future backup CronJob (#86) will need its own rule to reach Postgres.
+
 ---
 
 ## Comparison: Docker Compose vs Kubernetes

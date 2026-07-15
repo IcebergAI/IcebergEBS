@@ -26,6 +26,18 @@ ingress:
   className: nginx
   certManagerIssuer: letsencrypt-prod  # set to "" to disable cert-manager annotation
 
+networkPolicy:
+  # Default-deny ingress + named hops (ingress→app:8000, app→postgres:5432). Egress is
+  # left open (the app must reach the extension stores / webhooks / TI feeds). Requires a
+  # CNI that enforces NetworkPolicy (Calico/Cilium); a harmless no-op otherwise (#103).
+  enabled: true
+  ingressController:
+    # The ingress controller's namespace — its pods may reach the app on 8000. Adjust to
+    # your cluster (the ingress-nginx namespace is auto-labelled kubernetes.io/metadata.name).
+    namespaceSelector:
+      matchLabels:
+        kubernetes.io/metadata.name: ingress-nginx
+
 resources:
   requests:
     cpu: 100m
