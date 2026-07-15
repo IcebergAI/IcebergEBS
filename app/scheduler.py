@@ -1,3 +1,4 @@
+import enum
 import logging
 
 import httpx
@@ -15,12 +16,49 @@ from app.services import fetch_and_store, fire_pending_alerts
 logger = logging.getLogger(__name__)
 
 
-async def _refresh_one(ext_id: int, client: httpx.AsyncClient) -> None:
+class _Outcome(enum.Enum):
+    """Result of refreshing one extension, used to drive the circuit breaker."""
+
+    SUCCESS = "success"
+    FAILED = "failed"
+    GONE = "gone"  # extension removed / no longer watchlisted — not a store signal
+
+
+class _StoreCircuitBreaker:
+    """Per-cycle, per-store consecutive-failure tracker (#108).
+
+    Counts consecutive failures per store; any success resets that store's counter.
+    Once a store reaches ``threshold`` consecutive failures its circuit opens and the
+    remaining extensions of that store are skipped for the rest of the cycle. Because a
+    single success resets the count, an isolated broken extension (e.g. a 404 delisting)
+    never trips the breaker — its store-neighbours succeed in between — so an open
+    circuit genuinely means *the store* is failing, not N unrelated extensions.
+    """
+
+    def __init__(self, threshold: int) -> None:
+        self._threshold = threshold
+        self._consecutive: dict[str, int] = {}
+        self._open: set[str] = set()
+
+    def is_open(self, store: str) -> bool:
+        return store in self._open
+
+    def record(self, store: str, outcome: _Outcome) -> None:
+        if outcome is _Outcome.SUCCESS:
+            self._consecutive[store] = 0
+        elif outcome is _Outcome.FAILED:
+            n = self._consecutive.get(store, 0) + 1
+            self._consecutive[store] = n
+            if self._threshold > 0 and n >= self._threshold:
+                self._open.add(store)
+
+
+async def _refresh_one(ext_id: int, client: httpx.AsyncClient) -> _Outcome:
     """Refresh a single extension in its own session+commit so failures are isolated."""
     async with AsyncSession(engine) as session:
         ext = await session.get(Extension, ext_id)
         if not ext or not ext.watchlist:
-            return
+            return _Outcome.GONE
         score_before = ext.risk_score
         try:
             ext, events = await fetch_and_store(ext, session, client)
@@ -36,30 +74,67 @@ async def _refresh_one(ext_id: int, client: httpx.AsyncClient) -> None:
                 )
             )
             await session.commit()
-            return
+            return _Outcome.FAILED
         except Exception:
             logger.exception("Unexpected error refreshing ext_id=%d", ext_id)
             await session.rollback()
-            return
+            return _Outcome.FAILED
         # Fire alerts only after committing above, so fire_alerts' own session (which
         # writes AlertLog) does not run inside this session's open write transaction.
         await session.refresh(ext)
         await fire_pending_alerts(events, ext, engine, client)
+        return _Outcome.SUCCESS
+
+
+async def _record_store_outage(ext_id: int, store: str) -> None:
+    """Log a store-outage FetchLog for an extension skipped by an open circuit (#108).
+
+    Written as ``success=False, store_outage=True`` so the Fetch-health tile can tell a
+    store outage apart from a broken extension and not blame the extension for it.
+    """
+    async with AsyncSession(engine) as session:
+        ext = await session.get(Extension, ext_id)
+        if not ext or not ext.watchlist:
+            return
+        session.add(
+            FetchLog(
+                extension_id=ext_id,
+                success=False,
+                store_outage=True,
+                error_message=f"Skipped: {store} appears unavailable (store circuit open this cycle)",
+                risk_score_before=ext.risk_score,
+            )
+        )
+        await session.commit()
 
 
 async def refresh_watchlist(client: httpx.AsyncClient) -> None:
     logger.info("Starting watchlist refresh")
     async with AsyncSession(engine) as session:
-        ext_ids = (
+        rows = (
             await session.exec(
-                select(Extension.id).where(Extension.watchlist == True)  # noqa: E712
+                select(Extension.id, Extension.store).where(Extension.watchlist == True)  # noqa: E712
             )
         ).all()
 
-    for ext_id in ext_ids:
-        await _refresh_one(ext_id, client)
+    breaker = _StoreCircuitBreaker(settings.store_circuit_failure_threshold)
+    skipped = 0
+    for ext_id, store in rows:
+        if breaker.is_open(store):
+            await _record_store_outage(ext_id, store)
+            skipped += 1
+            continue
+        outcome = await _refresh_one(ext_id, client)
+        breaker.record(store, outcome)
 
-    logger.info("Watchlist refresh complete (%d extensions)", len(ext_ids))
+    if skipped:
+        logger.warning(
+            "Watchlist refresh complete (%d extensions, %d skipped due to store outage)",
+            len(rows),
+            skipped,
+        )
+    else:
+        logger.info("Watchlist refresh complete (%d extensions)", len(rows))
 
 
 def create_scheduler(client: httpx.AsyncClient) -> AsyncIOScheduler:

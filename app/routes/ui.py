@@ -365,7 +365,10 @@ async def dashboard(
     unhealthy = 0
     for r in snapshot:
         log = latest_logs.get(r.id)
-        failing = log is not None and not log.success
+        # A store-outage skip (circuit breaker, #108) is not the extension's fault, so
+        # it doesn't count as "failing" — a brief store blip must not spike the tile.
+        # A prolonged outage still surfaces via the staleness check below.
+        failing = log is not None and not log.success and not log.store_outage
         if r.watchlist and (failing or _stale(r.watchlist, r.last_fetched_at)):
             unhealthy += 1
 
@@ -420,6 +423,7 @@ async def dashboard(
         d = _ext_to_dict(e)
         d["last_fetch_ok"] = log.success if log is not None else None
         d["last_fetch_error"] = log.error_message if (log is not None and not log.success) else None
+        d["store_outage"] = bool(log.store_outage) if log is not None else False
         d["stale"] = _stale(e.watchlist, e.last_fetched_at)
         ext_dicts.append(d)
 

@@ -10,6 +10,7 @@ from fastapi.staticfiles import StaticFiles
 from app.config import settings
 from app.database import init_db
 from app.deps import WebUser
+from app.fetchers.transport import RetryTransport
 from app.middleware import CSRFOriginMiddleware
 from app.routes import alerts as alerts_routes
 from app.routes import api as api_routes
@@ -30,10 +31,26 @@ async def lifespan(app: FastAPI):
 
     await seed_admin()
 
+    # Bound the outbound connection pool and wrap the transport so transient store
+    # failures are retried with backoff instead of permanently failing a refresh (#108).
+    # Limits live on the inner transport: httpx ignores AsyncClient(limits=...) when a
+    # custom transport is supplied. follow_redirects stays True for store scraping;
+    # webhook delivery overrides it to False per-request in app/webhooks.py.
+    limits = httpx.Limits(
+        max_connections=settings.httpx_max_connections,
+        max_keepalive_connections=settings.httpx_max_keepalive_connections,
+    )
+    transport = RetryTransport(
+        httpx.AsyncHTTPTransport(limits=limits),
+        max_retries=settings.httpx_max_retries,
+        backoff_base=settings.httpx_backoff_base,
+        backoff_cap=settings.httpx_backoff_cap,
+    )
     client = httpx.AsyncClient(
         timeout=settings.httpx_timeout,
         headers={"User-Agent": "Mozilla/5.0 (compatible; IcebergEBS/1.0)"},
         follow_redirects=True,
+        transport=transport,
     )
     app.state.http_client = client
 
