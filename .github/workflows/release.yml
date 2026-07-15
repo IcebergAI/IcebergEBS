@@ -1,0 +1,149 @@
+name: release
+
+# Cut a signed, attested release from a SemVer git tag. Unlike build.yml (which
+# publishes a mutable :edge + immutable :sha on every push to main for dev use),
+# this is the ONLY source of deployable release images: immutable SemVer tags,
+# digest-pinnable, with an SBOM, SLSA build provenance, and a keyless cosign
+# signature so a consumer can verify what is in the image and that this CI built it.
+#
+# Trigger: push a tag like `v0.1.0-beta.1` (SemVer spelling — see docs/RELEASING.md).
+# workflow_dispatch runs a build-only dry run (no push / sign / attest / release).
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # gh release create
+      packages: write # push image to GHCR
+      id-token: write # cosign keyless signing + provenance OIDC
+      attestations: write # actions/attest-build-provenance
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          # Full history so `git rev-list --count` is correct (matches build.yml).
+          fetch-depth: 0
+          persist-credentials: false
+
+      # Fail the release if the tag disagrees with the pyproject version, so a tag
+      # can never ship an image labelled a different version. PEP 440 (pyproject)
+      # and SemVer (tag) spell pre-releases differently — see docs/RELEASING.md — so
+      # normalize before comparing. Reads only $GITHUB_* env + git, no ${{ }} into
+      # the shell, so zizmor template-injection cannot apply.
+      - name: Verify tag matches pyproject version and compute build version
+        env:
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          VERSION=$(python3 -c "import tomllib;print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
+          # PEP 440 -> SemVer: 0.1.0b1 -> 0.1.0-beta.1, 0.1.0rc1 -> 0.1.0-rc.1,
+          # 0.1.0a1 -> 0.1.0-alpha.1, a final release is unchanged.
+          SEMVER=$(printf '%s' "$VERSION" | sed -E 's/a([0-9]+)$/-alpha.\1/; s/b([0-9]+)$/-beta.\1/; s/rc([0-9]+)$/-rc.\1/')
+          EXPECTED="v${SEMVER}"
+          if [ "$REF_TYPE" = "tag" ] && [ "$REF_NAME" != "$EXPECTED" ]; then
+            echo "::error::Tag ${REF_NAME} does not match pyproject version ${VERSION} (expected ${EXPECTED})"
+            exit 1
+          fi
+          COUNT=$(git rev-list --count --first-parent HEAD)
+          SHA=$(git rev-parse --short HEAD)
+          # This string MUST match app/version.py:_format() byte for byte.
+          echo "ICEBERG_EBS_VERSION=v${VERSION} · build ${COUNT} · ${SHA}" >> "$GITHUB_ENV"
+          echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_ENV"
+          echo "Version v${VERSION} (expected tag ${EXPECTED}); ref ${REF_TYPE}/${REF_NAME}"
+
+      # Refuse to release a commit that isn't on main: a v* tag pushed on an
+      # unmerged/unreviewed branch (same pyproject version) would otherwise publish
+      # the sole deployable image, bypassing main's review + CI. Ask the API whether
+      # main contains this commit (identical = tip, behind = main is ahead of it, i.e.
+      # merged); ahead/diverged means it isn't on main. Uses GH_TOKEN, so no repo
+      # credentials need to persist in the checkout.
+      - name: Verify tagged commit is on main
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SHA: ${{ github.sha }}
+        run: |
+          status=$(gh api "repos/${GITHUB_REPOSITORY}/compare/main...${SHA}" --jq '.status')
+          case "$status" in
+            identical | behind)
+              echo "Tagged commit ${SHA} is on main (compare status: ${status})." ;;
+            *)
+              echo "::error::Tagged commit ${SHA} is not on main (compare status: ${status}); refusing to release an unmerged commit."
+              exit 1 ;;
+          esac
+
+      - name: Log in to GHCR
+        if: github.event_name == 'push'
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # SemVer tags from the git tag. {{major}}.{{minor}} and latest are only emitted
+      # for a stable (non-pre-release) tag, so a beta never claims :0.1 or :latest.
+      - name: Compute image tags
+        id: meta
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5.10.0
+        with:
+          images: ${{ env.IMAGE }}
+          flavor: latest=auto
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha
+
+      - name: Build and push image
+        id: build
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
+        with:
+          context: .
+          push: ${{ github.event_name == 'push' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            ICEBERG_EBS_VERSION=${{ env.ICEBERG_EBS_VERSION }}
+          # Full supply-chain metadata only when actually publishing; a dry run does
+          # a plain build (the docker exporter can't attach provenance without a push).
+          sbom: ${{ github.event_name == 'push' }}
+          provenance: ${{ github.event_name == 'push' && 'mode=max' || 'false' }}
+
+      - name: Attest build provenance
+        if: github.event_name == 'push'
+        uses: actions/attest-build-provenance@96278af6caaf10aea03fd8d33a09a777ca52d62f # v3.2.0
+        with:
+          subject-name: ${{ env.IMAGE }}
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: true
+
+      - name: Install cosign
+        if: github.event_name == 'push'
+        uses: sigstore/cosign-installer@7e8b541eb2e61bf99390e1afd4be13a184e9ebc5 # v3.10.1
+
+      - name: Sign image (keyless)
+        if: github.event_name == 'push'
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: cosign sign --yes "${IMAGE}@${DIGEST}"
+
+      # gh (preinstalled on the runner) rather than a release action — one less
+      # third-party action to trust (zizmor superfluous-actions). Pre-release tags
+      # (those with a SemVer `-suffix`) are marked --prerelease.
+      - name: Create GitHub Release
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          flags=(--generate-notes --title "$TAG")
+          case "$TAG" in
+            *-*) flags+=(--prerelease) ;;
+          esac
+          gh release create "$TAG" "${flags[@]}"
