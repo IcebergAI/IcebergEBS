@@ -799,3 +799,69 @@ For GitOps (Flux / ArgoCD): use `SealedSecret` or an ExternalSecrets `ExternalSe
 | PostgreSQL | Docker volume | Bitnami subchart (StatefulSet) |
 | Upgrades | rebuild / repin image, `up` | `helm upgrade --set image.tag=<new release>` |
 | Best for | Single-server / homelab | Cloud / team deployments |
+
+---
+
+## Backups & disaster recovery
+
+All state lives in Postgres — the watchlist, users/API keys, alert **history**, and SOAR inventory.
+The history tables (`FetchLog`, `InstallCountHistory`, `AlertLog`, `InstallObservation`) are exactly
+the data that **cannot be regenerated**, so a lost volume or a botched Postgres major upgrade is the
+single biggest data-loss risk for a real deployment (#86).
+
+### Docker Compose — automatic dumps
+
+The stack ships a `backup` service that runs `pg_dump -Fc` (custom format: compressed + selective
+restore) into `./backups` on the host on a fixed cadence, keeping `BACKUP_RETENTION_DAYS` of dumps:
+
+- **Cadence / retention** — `BACKUP_INTERVAL_SECONDS` (default `86400`, nightly) and
+  `BACKUP_RETENTION_DAYS` (default `7`), both settable in `.env`.
+- **RPO** — up to one interval of loss (nightly dumps ⇒ **≤ 24 h**). Shorten `BACKUP_INTERVAL_SECONDS`
+  for a tighter RPO, or point at off-host storage (below) for durability.
+- Dumps are written atomically (`.tmp` then `mv`) so a half-written file is never restored, and named
+  `iceberg_ebs-<timestamp>.pgc`. `./backups` is git-ignored.
+- **Off-host copies matter**: dumps on the same host don't survive a disk failure. Sync `./backups` to
+  object storage / another host (e.g. a `cron` `rclone`/`aws s3 sync`), or bind-mount a remote volume.
+
+**Restore (Compose):**
+
+```bash
+# 1. Stop the app so nothing writes mid-restore (leave postgres up).
+docker compose stop app
+
+# 2. Restore a chosen dump into the existing database (--clean --if-exists drops objects first;
+#    add --create to restore into a fresh DB instead). pg_restore reads the -Fc archive.
+docker compose exec -T postgres \
+  pg_restore -U "$POSTGRES_USER" -d "$POSTGRES_DB" --clean --if-exists \
+  < ./backups/iceberg_ebs-<timestamp>.pgc
+
+# 3. Bring the app back. Alembic runs at startup and no-ops if the schema already matches.
+docker compose start app
+```
+
+### Kubernetes (Helm)
+
+The chart does not template a backup CronJob; choose one of:
+
+- **Bitnami `postgresql` backup values** — the subchart supports a scheduled `pg_dump` CronJob
+  (`postgresql.backup.enabled=true`, `postgresql.backup.cronjob.schedule`, storage size/retention).
+  Enable it in your values and point it at a PVC or object-storage sidecar.
+- **VolumeSnapshots** — if your CSI driver supports them, snapshot the Postgres PVC on a schedule
+  (e.g. via an external-snapshotter policy). Fast, but crash-consistent, not a logical dump.
+- **External managed Postgres** — run Postgres outside the cluster (RDS/Cloud SQL/etc.) and use the
+  provider's automated backups + PITR; set `postgresql.enabled=false` and point `ICEBERG_EBS_DATABASE_URL`
+  at it. Recommended for anything beyond a homelab.
+
+Restore mirrors the Compose flow: scale the app to 0 (`kubectl scale deploy/icebergebs --replicas=0`),
+`pg_restore` the dump into the database, then scale back to 1. Note the NetworkPolicy (#103) default-denies
+ingress to Postgres, so a backup/restore CronJob needs its own explicit rule (or run it as the app's
+service account) to reach `postgres:5432`.
+
+### Before every upgrade
+
+Take a fresh dump **before** a Postgres major-version bump or an app upgrade that carries an Alembic
+migration — both rewrite data and are not trivially reversible:
+
+```bash
+docker compose exec -T postgres pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Fc > ./backups/pre-upgrade-$(date +%Y%m%d-%H%M%S).pgc
+```

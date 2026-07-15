@@ -115,5 +115,52 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+  backup:
+    # Scheduled pg_dump of the Postgres data into ./backups (#86). Uses the *same*
+    # pinned image as the server so pg_dump's version always matches the server's.
+    # Dumps are custom-format (-Fc, compressed + selective restore) written atomically
+    # (.tmp then mv) so a half-written file is never a restore candidate, with retention
+    # of BACKUP_RETENTION_DAYS. RPO ≈ BACKUP_INTERVAL_SECONDS (default nightly → ≤24h loss).
+    image: postgres:16-alpine
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-iceberg_ebs}
+      POSTGRES_DB: ${POSTGRES_DB:-iceberg_ebs}
+      PGPASSWORD: ${POSTGRES_PASSWORD}
+      BACKUP_RETENTION_DAYS: ${BACKUP_RETENTION_DAYS:-7}
+      BACKUP_INTERVAL_SECONDS: ${BACKUP_INTERVAL_SECONDS:-86400}
+    # $$ escapes Compose interpolation so the shell (not Compose) expands these vars.
+    command:
+      - sh
+      - -c
+      - |
+        mkdir -p /backups
+        echo "[backup] retention=$${BACKUP_RETENTION_DAYS}d interval=$${BACKUP_INTERVAL_SECONDS}s"
+        while true; do
+          ts=$$(date +%Y%m%d-%H%M%S)
+          out="/backups/iceberg_ebs-$${ts}.pgc"
+          echo "[backup] dumping to $${out}"
+          if pg_dump -h postgres -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}" -Fc -f "$${out}.tmp"; then
+            mv "$${out}.tmp" "$${out}"
+            find /backups -name 'iceberg_ebs-*.pgc' -type f -mtime +$${BACKUP_RETENTION_DAYS} -delete
+          else
+            echo "[backup] pg_dump FAILED for $${ts}" >&2
+            rm -f "$${out}.tmp"
+          fi
+          sleep "$${BACKUP_INTERVAL_SECONDS}"
+        done
+    volumes:
+      - ./backups:/backups
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
 volumes:
   postgres_data:
