@@ -63,6 +63,10 @@ jobs:
       - run: uv sync --locked
       - run: uv run ruff check app tests
       - run: uv run ruff format --check app tests alembic
+      # Dead-code gate (#101). Run via uvx (version-pinned) rather than the dev group:
+      # adding vulture to the group would need a uv.lock refresh, and — like zizmor —
+      # it's a standalone linter. Config + whitelist live in pyproject.toml.
+      - run: uvx vulture@2.16
 
   types:
     runs-on: ubuntu-latest
