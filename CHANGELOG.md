@@ -104,7 +104,8 @@ release to diff against.
   and **actionlint** (syntax + shellcheck), so the pinning/least-privilege posture above cannot
   silently regress (#97).
 - **Signed, attested release pipeline** (`release.yml`) — pushing a `v*` SemVer tag verifies the tag
-  matches `pyproject.toml`, then builds a release image with an **SBOM** and **SLSA build provenance**,
+  matches `pyproject.toml` **and that the tagged commit is on `main`** (so a release can only come
+  from reviewed, merged history), then builds a release image with an **SBOM** and **SLSA build provenance**,
   **attests** the provenance to GHCR, **signs it keylessly with cosign**, and cuts the GitHub Release.
   Release images are immutable and digest-pinnable, so a consumer can verify what is in the image and
   that this repo's CI built it. `build.yml` no longer publishes a mutable `:latest` — main pushes are

@@ -64,8 +64,9 @@ so the same version has two forms and you must use the right one in the right pl
 ## Verifying a release
 
 Release images are the only deployable artefacts (the `build.yml` `:edge` / `:<sha>` images are
-dev-only). Verify before deploying, and **deploy by immutable tag or digest — never `:latest`
-or `:edge`.**
+dev-only). Verify before deploying, and **deploy by immutable SemVer tag — never `:latest` or
+`:edge`.** (Pinning by digest is stronger where your deployer supports it; the Helm chart renders
+`repository:tag` only today, so digest support there is tracked in #88.)
 
 ```bash
 IMAGE=ghcr.io/icebergai/icebergebs
@@ -79,8 +80,9 @@ cosign verify "${IMAGE}:v0.1.0-beta.1" \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
 ```
 
-Pin the verified **digest** (`ghcr.io/icebergai/icebergebs@sha256:…`) in whatever drives the
-deploy — see [DEPLOYMENT.md](../DEPLOYMENT.md) for the Helm `--set image.tag=` / digest flow.
+Deploy the verified image by its immutable **SemVer tag** (`:v0.1.0-beta.1`) — see
+[DEPLOYMENT.md](../DEPLOYMENT.md) for the Helm `--set image.tag=` flow. Digest pinning
+(`…@sha256:…`) is stronger, but needs chart support the Helm chart does not have yet (#88).
 
 ## Checks that keep the versions honest
 
@@ -93,8 +95,6 @@ deploy — see [DEPLOYMENT.md](../DEPLOYMENT.md) for the Helm `--set image.tag=`
 - The bare-uvicorn deployment resolves the version from git at runtime, so a `git pull` of
   `main` is all it needs. The Docker/Helm images have no `.git`, so `build.yml` bakes
   `ICEBERG_EBS_VERSION` in at build time.
-
-**Not yet automated:** a tag-triggered release workflow that *verifies the git tag matches
-the `pyproject.toml` version* and cuts the GitHub Release automatically. That is tracked in
-the Parity 2 (CI/CD & release engineering) milestone. Until it lands, steps 5 and 6 are
-manual, and it is on you to check the tag matches.
+- `release.yml` refuses to publish unless the **tagged commit is an ancestor of `main`**, so a
+  release can only ever come from reviewed, merged history — a `v*` tag on an unmerged branch is
+  rejected before anything is built or signed.

@@ -58,6 +58,27 @@ jobs:
           echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_ENV"
           echo "Version v${VERSION} (expected tag ${EXPECTED}); ref ${REF_TYPE}/${REF_NAME}"
 
+      # Refuse to release a commit that isn't on main: a v* tag pushed on an
+      # unmerged/unreviewed branch (same pyproject version) would otherwise publish
+      # the sole deployable image, bypassing main's review + CI. Ask the API whether
+      # main contains this commit (identical = tip, behind = main is ahead of it, i.e.
+      # merged); ahead/diverged means it isn't on main. Uses GH_TOKEN, so no repo
+      # credentials need to persist in the checkout.
+      - name: Verify tagged commit is on main
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SHA: ${{ github.sha }}
+        run: |
+          status=$(gh api "repos/${GITHUB_REPOSITORY}/compare/main...${SHA}" --jq '.status')
+          case "$status" in
+            identical | behind)
+              echo "Tagged commit ${SHA} is on main (compare status: ${status})." ;;
+            *)
+              echo "::error::Tagged commit ${SHA} is not on main (compare status: ${status}); refusing to release an unmerged commit."
+              exit 1 ;;
+          esac
+
       - name: Log in to GHCR
         if: github.event_name == 'push'
         uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
