@@ -2,17 +2,6 @@
 
 ## Features
 
-### Quick wins (data already exists)
-
-- **Risk score history chart** — `FetchLog` records `risk_score_before` / `risk_score_after` on every fetch. Render a sparkline or simple chart on the extension detail page to show risk trend over time.
-- **Manual refresh button** — no way to trigger a fetch outside the scheduler. Wire the existing `POST /api/extensions/{id}/refresh` endpoint to a button on the extension detail page.
-
-### UX improvements
-
-- **Bulk import** — add a way to paste a list of extension IDs or upload a CSV rather than adding one at a time. Reduces friction for new users with an existing set of extensions to monitor.
-- **Dashboard filtering / search** — filter by store, risk level, or publisher as the watchlist grows.
-- **Export** — download the watchlist + current risk scores as CSV or JSON for reporting or external tooling.
-
 ### Alerting
 
 - **Email alerts** — webhooks require a Slack/Discord endpoint or custom receiver. Email is the natural fallback for users without existing webhook infrastructure.
@@ -23,7 +12,12 @@
 - **Package diff across versions** — `package_analysis` is only stored for the latest fetch. Keeping a previous snapshot and diffing findings across a version bump would answer "what actually changed in this update."
 - **Firefox AMO support** — Chrome, Edge, and VS Code are covered. AMO has a public REST API (`https://addons.mozilla.org/api/v5/`).
 
-## Known bugs / tech debt
+## Done (kept for reference)
 
-- **`delete_user` inconsistency** — `app/routes/users.py` cascade-deletes `AlertLog` rows when a user is deleted, whereas `delete_rule` and `delete_destination` now nullify `rule_id`/`destination_id` instead. User deletion should follow the same preserve-history pattern.
-- **No cap on threat intel indicator count** — `build_threat_intel_indicators` can emit ~1500 indicator dicts in the worst case (500 external URLs + 500 network callout URLs + domains). The individual lists are capped but the indicator builder iterates all of them uncapped.
+- ~~Risk score history chart~~ — rendered on the extension detail page's History tab from `FetchLog` data.
+- ~~Manual refresh button~~ — "Refresh now" on the extension detail page, wired to `POST /api/extensions/{id}/refresh`.
+- ~~Bulk import~~ — `POST /api/extensions/bulk` + paste-box UI (#24).
+- ~~Dashboard filtering / search~~ — server-side filter/search/sort/pagination on the dashboard and `GET /api/extensions` (#23).
+- ~~Export~~ — `GET /api/extensions/export?format=csv|json` (#25).
+- ~~`delete_user` inconsistency~~ — user deletion now preserves history like `delete_rule`/`delete_destination` (#28).
+- ~~No cap on threat intel indicator count~~ — `build_threat_intel_indicators` output is capped at `MAX_THREAT_INTEL_INDICATORS` (#28).

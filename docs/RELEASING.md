@@ -56,7 +56,7 @@ so the same version has two forms and you must use the right one in the right pl
    above), builds and pushes the image to GHCR under its SemVer tag(s), emits an **SBOM** and
    **SLSA build provenance**, **attests** the provenance to the registry, **signs the image
    keylessly with cosign**, and **creates the GitHub Release** with generated notes
-   (`--prerelease` when the tag has a `-beta`/`-rc` suffix). A `workflow_dispatch` run of the
+   (`--prerelease` when the tag carries any pre-release suffix — `-alpha`/`-beta`/`-rc`). A `workflow_dispatch` run of the
    same workflow is a **build-only dry run** — no push, sign, attest, or release.
 6. **Check the release.** Confirm the workflow run is green, the GitHub Release exists, and the
    image verifies (below). Only a stable tag (no `-suffix`) also moves `:latest` / `:MAJOR.MINOR`.

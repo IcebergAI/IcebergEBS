@@ -55,7 +55,7 @@ $EDITOR .env                      # fill in passwords and secret key
 docker compose up --build
 ```
 
-This starts three containers: PostgreSQL, the IcebergEBS app, and nginx as a TLS-terminating reverse proxy. For production, replace `nginx/certs/` with a real certificate (Let's Encrypt via Certbot or similar) and set `ICEBERG_EBS_APP_BASE_URL` to your public domain.
+This starts four containers: PostgreSQL, the IcebergEBS app, nginx as a TLS-terminating reverse proxy, and a backup service that takes scheduled `pg_dump`s into `./backups`. For production, replace `nginx/certs/` with a real certificate (Let's Encrypt via Certbot or similar) and set `ICEBERG_EBS_APP_BASE_URL` to your public domain.
 
 > **Database:** IcebergEBS runs on **PostgreSQL only** — in development, test, and production. The Compose and Helm stacks provision it for you. See [DEPLOYMENT.md → Database choice](DEPLOYMENT.md#database-choice--use-postgresql-for-any-soc-scale-deployment).
 
@@ -118,16 +118,16 @@ Example payload:
 uv run pytest tests/ -v
 ```
 
-CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs four blocking gates on every PR and push to `main`: **pytest**, **Ruff** (`ruff check` + `ruff format --check`), **mypy** (type-checks the pure logic/contract modules; ORM-query modules are excluded — see `pyproject.toml`), and **security** (**Bandit** + **pip-audit**). Every job installs with `uv sync --locked`, which fails if `uv.lock` has drifted from `pyproject.toml` — so a dependency change without a lock refresh cannot merge. Run the same checks locally with:
+CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs six blocking gates on every PR and push to `main`: **pytest**, **lint** (`uv lock --check`, `ruff check` + `ruff format --check`, and a **vulture** dead-code gate), **mypy** (type-checks the pure logic/contract modules; ORM-query modules are excluded — see `pyproject.toml`), **security** (**Bandit** + **pip-audit**), **lint-workflows** (zizmor + actionlint over the workflow files), and **ui** (a Playwright/Chromium browser smoke against the full Compose stack). The uv-based jobs install with `uv sync --locked`, which fails if `uv.lock` has drifted from `pyproject.toml` — so a dependency change without a lock refresh cannot merge. Run the core checks locally with:
 
 ```bash
 uv sync
-uv run ruff check app tests && uv run ruff format --check app tests alembic
+uv run ruff check app tests e2e && uv run ruff format --check app tests alembic e2e
 uv run mypy app
 uv run bandit -c pyproject.toml -r app
 # pip-audit runs against the exact runtime set the production image installs:
 # the lockfile exported without the dev group.
-uv export --frozen --no-dev --no-hashes --format requirements-txt -o /tmp/requirements-prod.txt
+uv export --frozen --no-dev --no-emit-project --no-hashes --format requirements-txt -o /tmp/requirements-prod.txt
 uv run pip-audit -r /tmp/requirements-prod.txt
 ```
 

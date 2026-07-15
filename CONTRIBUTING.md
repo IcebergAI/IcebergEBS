@@ -41,19 +41,24 @@ make test
 
 ## Before you open a pull request
 
-Run the same four gates CI does, and make sure they pass:
+Run the same core gates CI does, and make sure they pass:
 
 ```bash
-uv run ruff check app tests
-uv run ruff format --check app tests alembic
+uv run ruff check app tests e2e
+uv run ruff format --check app tests alembic e2e
+uvx vulture@2.16                                 # dead-code gate (part of CI's lint job)
 uv run mypy app
 uv run bandit -c pyproject.toml -r app
 uv run pytest                                    # needs Postgres (see above)
 
 # pip-audit runs against the locked runtime set — what the production image installs
-uv export --frozen --no-dev --no-hashes --format requirements-txt -o /tmp/requirements-prod.txt
+uv export --frozen --no-dev --no-emit-project --no-hashes --format requirements-txt -o /tmp/requirements-prod.txt
 uv run pip-audit -r /tmp/requirements-prod.txt
 ```
+
+(CI additionally runs `uv lock --check`, a workflow linter (`lint-workflows`), and a
+Playwright browser smoke (`ui`) that boots the full Compose stack — the commands above
+cover everything you can quickly run locally.)
 
 Then, depending on what you changed:
 
@@ -83,7 +88,7 @@ Then, depending on what you changed:
 - Write a clear description of **what** changed and **why**, with test evidence.
 - Reference the issue you're addressing with a closing keyword — one **`Closes #123`**
   per issue (prose like "closes #1–#3" does not auto-close anything).
-- CI (test, lint, types, security) must be green before review.
+- CI (test, lint, types, security, lint-workflows, ui) must be green before review.
 
 By contributing, you agree that your contributions are licensed under the project's
 [Apache License 2.0](LICENSE).

@@ -66,9 +66,11 @@ The following are **intentional, by-design** and are not vulnerabilities on thei
   session.
 - **There are no CSRF tokens.** Protection is `SameSite=Lax` (plus `Secure` in
   production) on the session cookie, a JSON API that requires an `application/json`
-  body, and Bearer tokens as the primary machine-to-machine credential. This is a
-  documented trade-off, not an oversight — see the note in
-  [app/auth.py](app/auth.py) and [CLAUDE.md](CLAUDE.md).
+  body, and Bearer tokens as the primary machine-to-machine credential — plus an
+  `Origin`/`Referer` check (`CSRFOriginMiddleware` in
+  [app/middleware.py](app/middleware.py)) that rejects cross-origin state-changing
+  browser requests, including the login POST. This is a documented trade-off, not an
+  oversight — see the note in [app/auth.py](app/auth.py) and [CLAUDE.md](CLAUDE.md).
 - **The session cookie is signed, not encrypted.** Its integrity is protected; the
   username inside it is readable by design.
 - **Admin accounts are seeded out-of-band** (`ICEBERG_EBS_ADMIN_USERNAME` /
