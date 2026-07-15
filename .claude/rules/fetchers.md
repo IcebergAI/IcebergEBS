@@ -34,5 +34,5 @@ paths:
 ## Package inspection (`app/inspector.py`)
 - Handles both CRX (header already stripped by fetcher) and VSIX (plain zip)
 - Extracts: permissions, host_permissions, eval usage, remote fetch calls, obfuscation score, external domains, minification
-- Extracts `author` and `version` from the manifest; only `author` is used as a publisher fallback in `services.py` when the store page returns nothing; `version` from the manifest is intentionally not used — updating `ext.version` only from store metadata avoids spurious `new_version` alerts when Chrome HTML scraping is unreliable
+- Extracts `author` and `version` from the manifest; only `author` is used as a publisher fallback in `services.py`, and only when neither the store page nor a previously stored value provides one — it must never override a stored publisher, or an author/publisher mismatch would flap `publisher_change` alerts on every partial parse (#142); `version` from the manifest is intentionally not used — updating `ext.version` only from store metadata avoids spurious `new_version` alerts when Chrome HTML scraping is unreliable
 - `_SAFE_DOMAINS` filters out well-known CDNs from the external domain list

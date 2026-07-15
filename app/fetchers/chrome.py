@@ -50,20 +50,30 @@ def _parse_page(html: str, extension_id: str, url: str) -> ExtensionMetadata:
     if desc_tag:
         description = desc_tag.get("content")
 
+    last_updated = _parse_date(_find_detail_value(soup, "updated"))
+
+    # The version and user-count regexes take the FIRST match, so they must
+    # only see *visible* page text: the raw document's <head> meta description
+    # (an attribute, invisible to get_text) and body <script> JSON blobs both
+    # re-embed the description, where e.g. "Join 1,000,000 users" would hijack
+    # the real count (#142). Decompose scripts/styles last — the soup-based
+    # extractions above are done with it.
+    for tag in soup.find_all(["script", "style"]):
+        tag.decompose()
+    visible = soup.get_text(" ")
+
     version = ""
-    version_m = re.search(r"Version[:\s]+([0-9][0-9.]*)", html)
+    version_m = re.search(r"Version[:\s]+([0-9][0-9.]*)", visible)
     if version_m:
         version = version_m.group(1)
 
     install_count = None
-    count_m = re.search(r"([\d,]+)\s+users?", html, re.IGNORECASE)
+    count_m = re.search(r"([\d,]+)\s+users?", visible, re.IGNORECASE)
     if count_m:
         try:
             install_count = int(count_m.group(1).replace(",", ""))
         except ValueError:
             pass
-
-    last_updated = _parse_date(_find_detail_value(soup, "updated"))
 
     return ExtensionMetadata(
         name=name,

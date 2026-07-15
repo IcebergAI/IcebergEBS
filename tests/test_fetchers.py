@@ -237,6 +237,77 @@ async def test_chrome_fetch_404():
             await fetcher.fetch_metadata("doesnotexist")
 
 
+CHROME_HTML_HIJACK = """
+<html><head>
+<meta name="description" content="Join 1,000,000 users today! New in Version 9.9.9">
+<title>Ext</title>
+</head>
+<body>
+<h1>Ext</h1>
+<script>var data = {"description": "Join 1,000,000 users today! New in Version 9.9.9"};</script>
+<div>Version: 1.2.3</div>
+<div>10,000 users</div>
+</body></html>
+"""
+
+CHROME_HTML_HIJACK_ONLY = """
+<html><head>
+<meta name="description" content="Join 1,000,000 users today! New in Version 9.9.9">
+</head>
+<body>
+<h1>Ext</h1>
+<script>var data = {"description": "Join 1,000,000 users today! New in Version 9.9.9"};</script>
+</body></html>
+"""
+
+CHROME_HTML_NO_HEAD = """
+<body>
+<h1>Ext</h1>
+<div>Version: 1.2.3</div>
+<div>10,000 users</div>
+</body>
+"""
+
+
+@respx.mock
+async def test_chrome_count_and_version_ignore_head_and_script_text():
+    """The description meta (head) and script JSON blobs repeat the description;
+    the first-match regexes must only see visible page text (#142)."""
+    respx.get("https://chromewebstore.google.com/detail/cjpalhdlnbpafiamejdnhcphjbkeiagm").mock(
+        return_value=httpx.Response(200, text=CHROME_HTML_HIJACK)
+    )
+    async with httpx.AsyncClient() as client:
+        meta = await ChromeFetcher(client).fetch_metadata("cjpalhdlnbpafiamejdnhcphjbkeiagm")
+    assert meta.install_count == 10_000
+    assert meta.version == "1.2.3"
+    assert meta.description == "Join 1,000,000 users today! New in Version 9.9.9"
+
+
+@respx.mock
+async def test_chrome_count_and_version_absent_when_only_in_metadata():
+    """Strings appearing only in the meta description / script blobs must not
+    be mistaken for the real values (#142)."""
+    respx.get("https://chromewebstore.google.com/detail/cjpalhdlnbpafiamejdnhcphjbkeiagm").mock(
+        return_value=httpx.Response(200, text=CHROME_HTML_HIJACK_ONLY)
+    )
+    async with httpx.AsyncClient() as client:
+        meta = await ChromeFetcher(client).fetch_metadata("cjpalhdlnbpafiamejdnhcphjbkeiagm")
+    assert meta.install_count is None
+    assert meta.version == ""
+
+
+@respx.mock
+async def test_chrome_parse_degrades_without_head():
+    """A document with no <head>/<script> still yields the body values."""
+    respx.get("https://chromewebstore.google.com/detail/cjpalhdlnbpafiamejdnhcphjbkeiagm").mock(
+        return_value=httpx.Response(200, text=CHROME_HTML_NO_HEAD)
+    )
+    async with httpx.AsyncClient() as client:
+        meta = await ChromeFetcher(client).fetch_metadata("cjpalhdlnbpafiamejdnhcphjbkeiagm")
+    assert meta.install_count == 10_000
+    assert meta.version == "1.2.3"
+
+
 @respx.mock
 async def test_chrome_download_package_preserves_raw_crx_bytes():
     zip_bytes = _make_zip()
