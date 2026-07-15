@@ -21,7 +21,12 @@ class VSCodeFetcher(BaseFetcher):
             "filters": [{"criteria": [{"filterType": 7, "value": extension_id}]}],
             "flags": _FLAGS,
         }
-        resp = await self.client.post(_GALLERY_URL, json=payload, headers=_HEADERS)
+        # The gallery query is a read served over POST — opt it into RetryTransport's
+        # retries so a transient 429/5xx is retried like a GET (#108). Webhook POSTs
+        # don't set this, so they're still never retried.
+        resp = await self.client.post(
+            _GALLERY_URL, json=payload, headers=_HEADERS, extensions={"retry_idempotent": True}
+        )
         if resp.status_code != 200:
             raise FetchError(f"Marketplace API returned {resp.status_code}")
         data = resp.json()

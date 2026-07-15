@@ -71,6 +71,14 @@ release to diff against.
 - The extension list endpoint no longer builds threat-intel indicators it never renders (#12).
 - Inventory scoring of unknown extensions is deferred to the scheduler, so a large SOAR batch
   cannot exceed the request timeout (#78).
+- **Outbound-fetch resilience** — the shared HTTP client now retries transient store failures
+  (connect/timeout/429/5xx) on idempotent requests (GETs, plus the VS Code gallery query, a read
+  served over POST that opts in) with exponential backoff + jitter, honouring `Retry-After`, and
+  bounds its connection pool; 404 (a delisted extension) is never retried, and webhook POSTs are
+  never retried. A per-store **circuit breaker** stops hammering a store that fails repeatedly in a
+  cycle and records the skip as a *store outage* (new `FetchLog.store_outage`) so the Fetch-health
+  tile no longer blames every extension when a store is simply down; unexpected internal errors
+  (not store failures) stay loudly logged and never open the circuit (#108).
 
 ### Fixed
 

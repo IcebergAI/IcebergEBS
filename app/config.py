@@ -16,6 +16,19 @@ class Settings(BaseSettings):
     secure_cookies: bool = True
     fetch_interval_minutes: int = 60
     httpx_timeout: float = 15.0
+    # Outbound-fetch resilience (#108). The shared client retries transient failures
+    # (connect/timeout/429/5xx) on idempotent GETs with exponential backoff + jitter,
+    # honouring Retry-After; 404 (delisted) is never retried. Limits cap how many
+    # connections a large watchlist refresh may open against the stores.
+    httpx_max_retries: int = 3
+    httpx_backoff_base: float = 0.5
+    httpx_backoff_cap: float = 10.0
+    httpx_max_connections: int = 20
+    httpx_max_keepalive_connections: int = 10
+    # Per-store circuit breaker: after this many consecutive failures for one store
+    # within a refresh cycle, skip that store's remaining extensions for the rest of
+    # the cycle and mark them as a store outage (not an extension fault). 0 disables.
+    store_circuit_failure_threshold: int = 5
     # Data retention: prune FetchLog / InstallCountHistory / AlertLog rows older
     # than this many days. 0 (default) disables pruning entirely. The scheduler
     # runs the prune job daily when enabled (see app/retention.py).

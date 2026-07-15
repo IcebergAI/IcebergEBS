@@ -66,6 +66,11 @@ class FetchLog(SQLModel, table=True):
     extension_id: int = Field(foreign_key="extension.id", ondelete="CASCADE", index=True)
     fetched_at: datetime = Field(default_factory=_utcnow, sa_column=_tz_column(nullable=False))
     success: bool
+    # True when this failure is a *store outage* (the per-store circuit breaker skipped
+    # the extension because its store had N consecutive failures this cycle), not the
+    # extension itself being broken — so the dashboard's Fetch-health tile doesn't blame
+    # the extension for a store being down (#108).
+    store_outage: bool = Field(default=False)
     error_message: Optional[str] = None
     risk_score_before: Optional[int] = None
     risk_score_after: Optional[int] = None

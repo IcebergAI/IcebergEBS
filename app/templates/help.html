@@ -189,7 +189,10 @@
     <p class="text-[13.5px] leading-relaxed mt-3" style="color:var(--ink-6)">
       The dashboard <strong>Fetch health</strong> tile counts watchlist extensions that are
       <em>failing</em> (last fetch errored) or <em>stale</em> (no successful refresh recently),
-      and the extension row flags each one. Set
+      and the extension row flags each one. Transient store failures are retried with backoff
+      before counting, and a store that fails repeatedly in a cycle is skipped as a <em>store
+      outage</em> — which doesn't count against an extension, so a store being down doesn't spike
+      the tile. Set
       <code class="mono">ICEBERG_EBS_RETENTION_DAYS</code> to prune fetch/install/alert history older
       than the window. Ops probes: <code class="mono">/healthz</code> (liveness) and
       <code class="mono">/readyz</code> (readiness — checks the database).
