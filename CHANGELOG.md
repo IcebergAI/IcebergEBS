@@ -74,6 +74,12 @@ release to diff against.
   silently scoring extensions from a midpoint fallback (#10).
 - Publisher-name matching produced scoring false positives (#18).
 - Deleting a user destroyed alert history that should have been preserved (#28).
+- `ICEBERG_EBS_RETENTION_DAYS` and `ICEBERG_EBS_FETCH_INTERVAL_MINUTES` were **silently ignored by
+  the production deploy stacks** — the Compose `app` service didn't forward them and the Helm chart
+  had no `retentionDays`, so an operator following the docs got no pruning. `RETENTION_DAYS` and
+  `FETCH_INTERVAL_MINUTES` (plus `SESSION_MAX_AGE` and `HTTPX_TIMEOUT`, which README advertised but the
+  stacks ignored) are now forwarded by Compose and the Helm ConfigMap, and DEPLOYMENT.md documents
+  which env vars the stacks forward vs. which fall back to `app/config.py` defaults (#87).
 
 ### Security
 
