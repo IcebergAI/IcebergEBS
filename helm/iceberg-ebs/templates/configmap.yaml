@@ -8,4 +8,7 @@ data:
   ICEBERG_EBS_ADMIN_USERNAME:         {{ .Values.icebergEbs.adminUsername | quote }}
   ICEBERG_EBS_APP_BASE_URL:           {{ .Values.icebergEbs.appBaseUrl | quote }}
   ICEBERG_EBS_FETCH_INTERVAL_MINUTES: {{ .Values.icebergEbs.fetchIntervalMinutes | quote }}
+  ICEBERG_EBS_RETENTION_DAYS:         {{ .Values.icebergEbs.retentionDays | quote }}
+  ICEBERG_EBS_SESSION_MAX_AGE:        {{ .Values.icebergEbs.sessionMaxAge | quote }}
+  ICEBERG_EBS_HTTPX_TIMEOUT:          {{ .Values.icebergEbs.httpxTimeout | quote }}
   ICEBERG_EBS_SECURE_COOKIES:         {{ .Values.icebergEbs.secureCookies | quote }}
