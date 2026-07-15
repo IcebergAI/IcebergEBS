@@ -18,8 +18,10 @@ Verified from `GET /repos/IcebergAI/IcebergEBS/branches/main/protection`:
   - `build` is deliberately **not** required: it runs only on pushes to `main`, never on
     pull requests, so requiring it would leave every PR waiting for a check that never
     reports.
-  - The `lint-workflows` and CodeQL jobs from the Parity 2 milestone are to be **added to
-    this required set** when they land.
+  - The Parity 2 `lint-workflows` job and the CodeQL `Analyze (python)` /
+    `Analyze (javascript-typescript)` jobs now exist as workflows but are **not yet in this
+    required set** — add them here (and re-verify from the API) once CodeQL has reported at
+    least once on a PR.
 - **One approving review** is required, and **stale approvals are dismissed** when new
   commits are pushed.
 - **Review conversations must be resolved** before merge.
