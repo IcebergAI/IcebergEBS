@@ -75,15 +75,13 @@ async def readyz() -> JSONResponse:
     return JSONResponse({"status": "ok", "database": "up"})
 
 
-# Conservative app-layer CSP baseline (#66, defense-in-depth). The reverse proxy
-# (nginx/security_headers.conf) remains the source of truth for the full policy —
-# including the script/style/font sources and the inline-script hash. This baseline
-# only adds directives the proxy policy does NOT set (frame/base/object/form), and
-# deliberately omits default-src and script-src: emitting those here would combine
-# with the proxy's CSP as a second policy the browser enforces on top, and the
-# most-restrictive intersection would break the proxy's CDN asset loading. What's
-# left is purely additive — a floor if the proxy config regresses or a non-proxied
-# path is ever introduced.
+# Conservative app-layer security-header floor (#66, defence-in-depth). In production
+# the reverse proxy (nginx/security_headers.conf) is the source of truth: it strips
+# these upstream copies and re-adds its own canonical CSP + HSTS, so exactly one value
+# reaches the client. This floor only matters on a non-proxied path (or if the proxy
+# header config regresses). script-src/default-src are deliberately omitted so that on
+# any path where both the app and proxy CSPs are enforced, the app policy can never
+# intersect with — and break — the proxy's CDN asset loading.
 _BASELINE_CSP = "frame-ancestors 'none'; base-uri 'self'; object-src 'none'; form-action 'self'"
 
 

@@ -28,9 +28,13 @@ def test_baseline_csp_omits_script_and_default_src():
     assert "default-src" not in _BASELINE_CSP
 
 
-async def test_hsts_present_only_when_secure_cookies(client):
+async def test_hsts_present_when_secure_cookies_enabled(client, monkeypatch):
+    monkeypatch.setattr(settings, "secure_cookies", True)
     resp = await client.get("/healthz")
-    if settings.secure_cookies:
-        assert resp.headers["Strict-Transport-Security"] == "max-age=31536000; includeSubDomains"
-    else:
-        assert "Strict-Transport-Security" not in resp.headers
+    assert resp.headers["Strict-Transport-Security"] == "max-age=31536000; includeSubDomains"
+
+
+async def test_hsts_absent_when_secure_cookies_disabled(client, monkeypatch):
+    monkeypatch.setattr(settings, "secure_cookies", False)
+    resp = await client.get("/healthz")
+    assert "Strict-Transport-Security" not in resp.headers

@@ -107,11 +107,12 @@ release to diff against.
   **JavaScript/TypeScript** on every PR, on push to `main`, and on a weekly schedule (to catch new
   advisories against already-merged code). It is a dedicated workflow so its `security-events: write`
   scope stays out of the least-privilege CI gates (#98).
-- **App-layer security-header baseline (#66)** — the app now emits a conservative HSTS (over HTTPS
+- **App-layer security-header floor (#66)** — the app now emits a conservative HSTS (over HTTPS
   deployments) and a minimal CSP (`frame-ancestors`/`base-uri`/`object-src`/`form-action`) as
-  defence-in-depth, so a floor is present even if the reverse-proxy header config regresses. The
-  baseline deliberately omits `script-src`/`default-src` so it cannot intersect with and break the
-  proxy's full CSP (which stays the source of truth).
+  defence-in-depth, so a floor is present even if the reverse-proxy header config regresses. nginx
+  now strips the upstream copies and re-adds its **canonical** CSP + HSTS, so exactly one value
+  reaches the client in production (no duplicate/first-wins `Strict-Transport-Security`); the app
+  CSP omits `script-src`/`default-src` so it can never intersect with and break the proxy's policy.
 - **Signed, attested release pipeline** (`release.yml`) — pushing a `v*` SemVer tag verifies the tag
   matches `pyproject.toml` **and that the tagged commit is on `main`** (so a release can only come
   from reviewed, merged history), then builds a release image with an **SBOM** and **SLSA build provenance**,
