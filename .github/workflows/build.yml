@@ -18,11 +18,15 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           # Full history is required — Actions does a shallow clone by default,
           # which makes `git rev-list --count` wrong.
           fetch-depth: 0
+          # zizmor artipacked: the GHCR push authenticates with secrets.GITHUB_TOKEN
+          # (docker/login-action), not the persisted git credential, so don't leave
+          # the repo token behind in .git/config.
+          persist-credentials: false
 
       # This string MUST match app/version.py:_format() byte for byte — a drift here
       # is invisible until a container deploy reports a different version from the
@@ -36,14 +40,14 @@ jobs:
           echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_ENV"
 
       - name: Log in to GHCR
-        uses: docker/login-action@v3
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build and push image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
         with:
           context: .
           push: true
