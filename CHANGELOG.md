@@ -180,6 +180,12 @@ release to diff against.
 
 ### Security
 
+- **CSV export is hardened against spreadsheet formula injection** — a tracked extension's
+  attacker-controlled `name`/`publisher` (e.g. `=HYPERLINK(...)`, `+SUM(...)`, `@cmd|…`) is no
+  longer written verbatim into the CSV. Cells starting with a formula-trigger character
+  (`= + - @` tab/CR) are prefixed with a single quote so Excel/LibreOffice treat them as text,
+  not live formulas, when an analyst opens the export (OWASP mitigation). The JSON export is
+  left as raw values (not opened as a spreadsheet) (#147).
 - **Session and API-key revocation on password change** — changing a password invalidates
   other-device sessions and deletes the user's API keys (#6).
 - **Application-level login rate limiting and lockout**, independent of nginx (#8).
