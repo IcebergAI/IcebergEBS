@@ -15,7 +15,7 @@ Multi-user. Each user maintains an independent list of monitored extensions. A b
 ## Quick start (local dev, containers)
 
 IcebergEBS runs on PostgreSQL — dev included. The dev stack runs the app with live
-reload against a containerized Postgres (no nginx):
+reload against a containerized Postgres (no edge proxy):
 
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build postgres app
@@ -44,18 +44,18 @@ make test
 # or: ICEBERG_EBS_TEST_DATABASE_URL=postgresql+asyncpg://iceberg_ebs:iceberg_ebs@localhost:5432/iceberg_ebs uv run pytest tests/ -v
 ```
 
-## Production deployment (Docker + PostgreSQL + nginx)
+## Production deployment (Docker + PostgreSQL + Caddy)
 
 See **[DEPLOYMENT.md](DEPLOYMENT.md)** for full instructions. The short version:
 
 ```bash
-bash nginx/generate-dev-cert.sh   # self-signed cert for local testing
+bash caddy/generate-dev-cert.sh   # self-signed cert for local testing
 cp .env.example .env
 $EDITOR .env                      # fill in passwords and secret key
 docker compose up --build
 ```
 
-This starts four containers: PostgreSQL, the IcebergEBS app, nginx as a TLS-terminating reverse proxy, and a backup service that takes scheduled `pg_dump`s into `./backups`. For production, replace `nginx/certs/` with a real certificate (Let's Encrypt via Certbot or similar) and set `ICEBERG_EBS_APP_BASE_URL` to your public domain.
+This starts four containers: PostgreSQL, the IcebergEBS app, [Caddy](https://caddyserver.com) as a TLS-terminating reverse proxy, and a backup service that takes scheduled `pg_dump`s into `./backups`. For production, replace `caddy/certs/` with a real certificate (Let's Encrypt via Certbot or similar) and set `ICEBERG_EBS_APP_BASE_URL` to your public domain.
 
 > **Database:** IcebergEBS runs on **PostgreSQL only** — in development, test, and production. The Compose and Helm stacks provision it for you. See [DEPLOYMENT.md → Database choice](DEPLOYMENT.md#database-choice--use-postgresql-for-any-soc-scale-deployment).
 

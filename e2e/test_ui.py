@@ -1,7 +1,7 @@
 """Browser-level UI smoke (#100).
 
 The rest of the suite is API/unit level (httpx + respx) and can't see: a real login,
-Alpine components initialising, or — the live risk — the nginx CSP (with its
+Alpine components initialising, or — the live risk — the Caddy CSP (with its
 hand-maintained inline-script hash) blocking the app's own scripts. This drives a real
 browser against the running stack and fails on a CSP violation or an uncaught JS error,
 which is exactly what a hash drift or a broken component produces.

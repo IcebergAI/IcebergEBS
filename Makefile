@@ -15,7 +15,7 @@ sync:
 db:
 	$(COMPOSE) up -d postgres
 
-# Full dev stack with live reload (Postgres + app, no nginx) on http://localhost:8000.
+# Full dev stack with live reload (Postgres + app, no edge proxy) on http://localhost:8000.
 dev:
 	$(COMPOSE) up --build postgres app
 

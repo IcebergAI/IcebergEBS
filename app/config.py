@@ -45,6 +45,17 @@ class Settings(BaseSettings):
     login_max_attempts: int = 5
     login_attempt_window_seconds: int = 300
     login_lockout_seconds: int = 300
+    # App-level API request-rate limiting (#188). This is the edge equivalent of the old
+    # nginx `api` limit_req zone (60 req/min, burst 20), moved app-side when the reverse
+    # proxy became Caddy — stock Caddy has no rate_limit directive. It's a token bucket
+    # keyed on the client IP (the Caddy-set canonical X-Forwarded-For, via uvicorn's
+    # --forwarded-allow-ips; the #77 anti-spoof makes that trustworthy). Disabled by
+    # default so the test suite — which fires many /api calls per test — isn't throttled;
+    # the Compose/Helm production env sets api_rate_limit_enabled=true. In production the
+    # cluster ingress also rate-limits at the true edge (belt and suspenders).
+    api_rate_limit_enabled: bool = False
+    api_rate_limit_per_minute: int = 60
+    api_rate_limit_burst: int = 20
     app_base_url: str = ""  # e.g. "https://icebergebs.example.com" — used in webhook payloads
     # Emit logs as single-line JSON (for a log collector) instead of timestamped text (#89).
     log_json: bool = False

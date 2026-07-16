@@ -9,5 +9,5 @@ __pycache__/
 .git/
 tests/
 *.pyc
-nginx/certs/
+caddy/certs/
 DEPLOYMENT.md

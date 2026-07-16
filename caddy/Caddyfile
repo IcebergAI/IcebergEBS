@@ -1,0 +1,66 @@
+# Edge reverse proxy for the Docker Compose stack (#188 — replaces nginx).
+# Caddy terminates TLS, serves the static assets directly, sets the canonical
+# security headers (imported from headers.caddy — the single CSP home), and proxies
+# everything else to the app. Rate limiting is NOT done here: stock Caddy has no
+# rate_limit directive, so edge throttling moved app-side (app/ratelimit.py) with the
+# cluster ingress covering it in production (#188).
+{
+	admin off
+	# We terminate TLS with an explicit cert below and drive the HTTP→HTTPS redirect
+	# from the :80 site ourselves, so disable Caddy's automatic redirect site (no ACME:
+	# the cert is provided, not issued).
+	auto_https disable_redirects
+}
+
+# Plain-HTTP :80 — a local liveness endpoint for the container healthcheck (answered
+# without redirecting), everything else bounced to HTTPS.
+:80 {
+	handle /caddy-health {
+		respond "ok" 200
+	}
+	handle {
+		redir https://{host}{uri}
+	}
+}
+
+:443 {
+	tls /etc/caddy/certs/cert.pem /etc/caddy/certs/key.pem
+
+	# Structured (JSON) access log to stderr — Caddy's default schema already carries the
+	# fields the old nginx log_format was customised for (#89): request User-Agent and
+	# Referer under request>headers, and request `duration` (timing). Cookie/Authorization
+	# are redacted by default.
+	log
+
+	encode gzip
+	# Match nginx `client_max_body_size 2m`.
+	request_body {
+		max_size 2MB
+	}
+
+	# Canonical security headers (single source of truth) — applies to every response,
+	# including the static handler below, exactly as nginx included security_headers.conf
+	# in both the /static and proxied locations.
+	import headers.caddy
+
+	# Static assets served directly by Caddy (mounted read-only), long-lived immutable cache.
+	handle_path /static/* {
+		root * /srv/static
+		file_server
+		header Cache-Control "public, immutable, max-age=31536000"
+	}
+
+	# Everything else → the app. header_up X-Forwarded-For {client_ip} forces a single
+	# canonical client IP: Caddy is the edge here (no trusted_proxies), so {client_ip} is
+	# the real peer and any client-supplied X-Forwarded-For is discarded — the anti-spoof
+	# the app-side login/API rate limiters depend on (#77).
+	handle {
+		reverse_proxy app:8000 {
+			header_up X-Forwarded-For {client_ip}
+			transport http {
+				dial_timeout 10s
+				read_timeout 120s
+			}
+		}
+	}
+}

@@ -5,7 +5,7 @@ from pathlib import Path
 
 from app.config import settings
 
-_NGINX_HEADERS = Path(__file__).resolve().parent.parent / "nginx" / "security_headers.conf"
+_CADDY_HEADERS = Path(__file__).resolve().parent.parent / "caddy" / "headers.caddy"
 
 
 async def test_baseline_security_headers_present(client):
@@ -34,20 +34,20 @@ def test_baseline_csp_omits_script_and_default_src():
 
 
 def test_proxy_canonical_csp_covers_baseline_directives():
-    # The proxy hides the app's upstream CSP (proxy_hide_header) and emits its own
-    # canonical one. Hiding the upstream copy must not silently drop a baseline
-    # directive — nginx's canonical CSP has to carry every directive _BASELINE_CSP
-    # sets (notably object-src 'none', which default-src 'self' does NOT cover).
+    # Caddy SETs (replaces) the CSP with its own canonical one, overriding the app's
+    # upstream baseline copy so exactly one value reaches the client (verified at runtime;
+    # Caddy's `header` set replaces rather than appends). That canonical CSP must carry
+    # every directive _BASELINE_CSP sets — notably object-src 'none', which default-src
+    # 'self' does NOT cover — or the replace would silently drop a baseline protection.
     from app.main import _BASELINE_CSP
 
-    conf = _NGINX_HEADERS.read_text()
-    assert "proxy_hide_header Content-Security-Policy;" in conf
-    # Extract nginx's canonical CSP value (the add_header Content-Security-Policy line).
-    m = re.search(r'add_header Content-Security-Policy "([^"]*)"', conf)
-    assert m, "nginx canonical CSP add_header not found"
-    nginx_csp = m.group(1)
+    conf = _CADDY_HEADERS.read_text()
+    # Extract Caddy's canonical CSP value (the Content-Security-Policy line in the header block).
+    m = re.search(r'Content-Security-Policy "([^"]*)"', conf)
+    assert m, "Caddy canonical CSP not found in caddy/headers.caddy"
+    caddy_csp = m.group(1)
     for directive in (d.strip() for d in _BASELINE_CSP.split(";") if d.strip()):
-        assert directive in nginx_csp, f"nginx CSP missing baseline directive: {directive!r}"
+        assert directive in caddy_csp, f"Caddy CSP missing baseline directive: {directive!r}"
 
 
 async def test_hsts_present_when_secure_cookies_enabled(client, monkeypatch):

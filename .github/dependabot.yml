@@ -44,7 +44,7 @@ updates:
         patterns:
           - "*"
 
-  # The `docker` ecosystem reads the Dockerfile only; the postgres and nginx pins in
+  # The `docker` ecosystem reads the Dockerfile only; the postgres and caddy pins in
   # docker-compose.yml need this separate ecosystem or they stay frozen.
   - package-ecosystem: "docker-compose"
     directory: "/"

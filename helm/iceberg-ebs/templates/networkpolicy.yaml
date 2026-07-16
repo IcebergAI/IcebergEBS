@@ -36,13 +36,15 @@ spec:
     - Ingress
   ingress:
     # From the ingress controller only (adjust networkPolicy.ingressController for your
-    # cluster) — nothing else in the cluster may reach the app on 8000, bypassing ingress.
+    # cluster) — nothing else in the cluster may reach the pod's Caddy sidecar on 8080,
+    # bypassing ingress. The sidecar reaches the app on 8000 over localhost (intra-pod,
+    # not gated by NetworkPolicy), so 8000 is never exposed cluster-wide (#188).
     - from:
         - namespaceSelector:
             {{- toYaml .Values.networkPolicy.ingressController.namespaceSelector | nindent 12 }}
       ports:
         - protocol: TCP
-          port: 8000
+          port: 8080
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy

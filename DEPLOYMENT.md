@@ -1,8 +1,8 @@
-# IcebergEBS — Containerised Deployment (PostgreSQL + Nginx)
+# IcebergEBS — Containerised Deployment (PostgreSQL + Caddy)
 
 ## Context
 
-IcebergEBS runs on PostgreSQL (dev, test, and production — SQLite is not supported) behind nginx as a TLS-terminating reverse proxy following security hardening best practices. Everything is wired together with Docker Compose for a one-command production deployment.
+IcebergEBS runs on PostgreSQL (dev, test, and production — SQLite is not supported) behind [Caddy](https://caddyserver.com) as a TLS-terminating reverse proxy following security hardening best practices. Everything is wired together with Docker Compose for a one-command production deployment. (Caddy replaced nginx as the edge proxy in #188; the Kubernetes chart runs Caddy as an in-pod sidecar behind the cluster ingress.)
 
 ---
 
@@ -26,12 +26,13 @@ IcebergEBS runs on PostgreSQL (dev, test, and production — SQLite is not suppo
 | Path | Purpose |
 |------|---------|
 | `Dockerfile` | App image |
-| `docker-compose.yml` | Three-service stack (postgres, app, nginx) |
+| `docker-compose.yml` | Three-service stack (postgres, app, caddy) |
 | `.dockerignore` | Exclude secrets, venvs, DB files |
 | `.env.example` | Template for required env vars |
-| `nginx/nginx.conf` | Full nginx config |
-| `nginx/security_headers.conf` | Shared header include (avoids duplication across location blocks) |
-| `nginx/generate-dev-cert.sh` | One-shot self-signed cert for local dev |
+| `caddy/Caddyfile` | Compose edge config (TLS termination, static, headers, proxy) |
+| `caddy/Caddyfile.k8s` | In-pod sidecar config for Kubernetes (plain HTTP behind the ingress) |
+| `caddy/headers.caddy` | Canonical security headers — the single CSP home, imported by both Caddyfiles |
+| `caddy/generate-dev-cert.sh` | One-shot self-signed cert for local dev |
 | `static/js/tailwind-config.js` | Move inline Tailwind config out of HTML (required for CSP) |
 
 ## Files to modify
@@ -146,8 +147,8 @@ Notes:
 - **Two stages on purpose.** The builder resolves the venv from `pyproject.toml` + `uv.lock` alone (IcebergEBS is a virtual project, so no source is needed), and the runtime stage copies only that venv — so `uv`, the pip cache, and the whole `dev` group are absent from the deployed image. `--frozen` consumes the lockfile as-is and never re-resolves, so a rebuild cannot silently pick up a newer FastAPI.
 - **The venv lives at `/opt/venv`, not `/app/.venv`** (`UV_PROJECT_ENVIRONMENT`). `docker-compose.dev.yml` bind-mounts the source tree over `/app`, which would shadow an in-tree venv — and on a host with no `.venv/`, leave the container with no interpreter at all.
 - Copying only the manifests before the source keeps the dependency layer cached across source-only changes.
-- `--proxy-headers` makes uvicorn trust `X-Forwarded-For` / `X-Forwarded-Proto` from nginx
-- **nginx must _overwrite_ `X-Forwarded-For` with `$remote_addr`, not append** (`$proxy_add_x_forwarded_for`). With `--forwarded-allow-ips=*` uvicorn trusts the last hop, so an appended chain lets a client spoof its IP via an inbound XFF header and evade the app-level login rate limiter (#77). See the `proxy_set_header` block below.
+- `--proxy-headers` makes uvicorn trust `X-Forwarded-For` / `X-Forwarded-Proto` from Caddy
+- **Caddy must set `X-Forwarded-For` to a single canonical client IP, not append a client-supplied chain.** The Caddyfiles use `header_up X-Forwarded-For {client_ip}`: at the Compose edge (no `trusted_proxies`) `{client_ip}` is the real peer and any inbound XFF is discarded; in K8s (`trusted_proxies static private_ranges`) it is the real external client the cluster ingress recorded. With `--forwarded-allow-ips=*` uvicorn trusts that value, so a forged inbound XFF cannot spoof a client IP and evade the app-level login/API rate limiters (#77). See the Caddyfile section below.
 - Single worker only — APScheduler runs per-process; multiple workers would each schedule independent watchlist refreshes, causing duplicate fetches and duplicate `AlertLog` entries
 
 ---
@@ -163,7 +164,7 @@ __pycache__/
 .git/
 tests/
 *.pyc
-nginx/certs/
+caddy/certs/
 DEPLOYMENT.md
 ```
 
@@ -173,7 +174,7 @@ DEPLOYMENT.md
 
 ## 6. `docker-compose.yml`
 
-The stack is **four** services — `postgres`, `app`, `nginx`, and a `backup` service that takes
+The stack is **four** services — `postgres`, `app`, `caddy`, and a `backup` service that takes
 scheduled `pg_dump`s (#86, see the Backups section). Every service is hardened:
 `no-new-privileges`, `cap_drop: [ALL]` where the image tolerates it, `read_only` root filesystem
 with `tmpfs` for the paths that must be writable. The block below is a lightly-abridged snapshot —
@@ -244,38 +245,36 @@ services:
     stop_grace_period: 60s
     restart: unless-stopped
 
-  nginx:
-    # Pinned to a minor: `nginx:alpine` floats, so the TLS-terminating proxy
+  caddy:
+    # Pinned to a minor: `caddy:alpine` floats, so the TLS-terminating edge proxy
     # would silently change version on every `docker compose pull`.
-    image: nginx:1.31-alpine
+    image: caddy:2.8-alpine
     security_opt:
       - no-new-privileges:true
-    # Drop everything, add back only what stock nginx needs under a read-only rootfs.
+    # Caddy is a single process (no nginx-style worker user-drop), so it only needs
+    # NET_BIND_SERVICE to bind :80/:443 — none of nginx's CHOWN/SETUID/SETGID/DAC_OVERRIDE.
     cap_drop:
       - ALL
     cap_add:
       - NET_BIND_SERVICE
-      - CHOWN
-      - SETUID
-      - SETGID
-      - DAC_OVERRIDE
     read_only: true
-    # pid + proxy temp files; do NOT tmpfs /var/log/nginx (it would shadow the
-    # stdout/stderr log symlinks and swallow container logs).
+    # Caddy's XDG data/config dirs (local CA/state) must be writable under a read-only
+    # rootfs; no persistence is needed (TLS uses the mounted cert, not ACME).
     tmpfs:
-      - /var/cache/nginx
-      - /var/run
+      - /data
+      - /config
+      - /tmp
     ports:
       - "80:80"
       - "443:443"
     volumes:
-      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
-      - ./nginx/security_headers.conf:/etc/nginx/security_headers.conf:ro
-      - ./nginx/certs:/etc/nginx/certs:ro
-      - ./static:/app/static:ro
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./caddy/headers.caddy:/etc/caddy/headers.caddy:ro
+      - ./caddy/certs:/etc/caddy/certs:ro
+      - ./static:/srv/static:ro
     healthcheck:
-      # Plain-HTTP local liveness (the /nginx-health location in nginx.conf).
-      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:80/nginx-health"]
+      # Plain-HTTP local liveness (the /caddy-health handler in the Caddyfile).
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:80/caddy-health"]
       interval: 15s
       timeout: 5s
       start_period: 10s
@@ -366,7 +365,7 @@ production, add it to the Compose `app.environment` block and the Helm ConfigMap
 
 ---
 
-## 8. `nginx/generate-dev-cert.sh`
+## 8. `caddy/generate-dev-cert.sh`
 
 ```bash
 #!/usr/bin/env bash
@@ -377,158 +376,85 @@ openssl req -x509 -newkey rsa:4096 -sha256 -days 3650 -nodes \
   -out    "$(dirname "$0")/certs/cert.pem" \
   -subj "/CN=localhost" \
   -addext "subjectAltName=DNS:localhost,IP:127.0.0.1"
-echo "Self-signed cert written to nginx/certs/. For production, replace with a real cert."
+echo "Self-signed cert written to caddy/certs/."
 ```
 
-For production: mount a Let's Encrypt cert (e.g. via Certbot) or any CA-issued cert+key at `nginx/certs/cert.pem` and `nginx/certs/key.pem`.
+For production: mount a Let's Encrypt cert (e.g. via Certbot) or any CA-issued cert+key at `caddy/certs/cert.pem` and `caddy/certs/key.pem`. (Caddy can also obtain and renew certs automatically via ACME; the Compose stack uses an explicit mounted cert so the same config works with a self-signed dev cert and behind a corporate CA.)
 
 ---
 
-## 9. `nginx/security_headers.conf`
+## 9. `caddy/headers.caddy`
 
-Extracted so that every `location` block can `include` it without repetition. (Nginx drops parent-block `add_header` directives the moment a child location block defines any `add_header` of its own — the include pattern is the standard workaround.)
+The **single** home for the canonical security headers, imported by both `caddy/Caddyfile` (Compose) and `caddy/Caddyfile.k8s` (the Kubernetes sidecar) via `import headers.caddy`. Consolidating the CSP here — one definition, not the pre-#188 pair in `nginx/security_headers.conf` **and** the Helm ingress snippet — is the point of the Caddy migration. (The Helm ConfigMap embeds a test-guarded mirror because Helm can't read files above the chart; `tests/test_csp_hash.py` and `tests/test_helm_caddy.py` fail if the copies drift.)
 
-```nginx
-# Compute the SHA-256 of the anti-flash inline script during implementation
-# and substitute <HASH> below.
-add_header Content-Security-Policy
-  "default-src 'self'; \
-   script-src 'self' 'sha256-<HASH>' https://cdn.tailwindcss.com https://cdn.jsdelivr.net; \
-   style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; \
-   font-src 'self' https://fonts.gstatic.com; \
-   img-src 'self' data:; \
-   connect-src 'self'; \
-   frame-ancestors 'none'; \
-   base-uri 'self'; \
-   object-src 'none'; \
-   form-action 'self'" always;
-add_header Strict-Transport-Security "max-age=63072000; includeSubDomains; preload" always;
-add_header X-Content-Type-Options "nosniff" always;
-add_header X-Frame-Options "DENY" always;
-add_header Referrer-Policy "same-origin" always;
-add_header Permissions-Policy
-  "accelerometer=(), camera=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), payment=(), usb=()" always;
+```caddy
+# Compute the SHA-256 of the anti-flash inline script and substitute <HASH> below
+# (see the "Inline script hash" section). Caddy's `header` SETs (replaces) each value,
+# so exactly one canonical copy reaches the client even though the app emits a baseline.
+header {
+	Content-Security-Policy "default-src 'self'; script-src 'self' 'sha256-<HASH>' https://cdn.tailwindcss.com https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; object-src 'none'; form-action 'self'"
+	Strict-Transport-Security "max-age=63072000; includeSubDomains; preload"
+	X-Content-Type-Options "nosniff"
+	X-Frame-Options "DENY"
+	Referrer-Policy "same-origin"
+	Permissions-Policy "accelerometer=(), camera=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), payment=(), usb=()"
+	-Server
+}
 ```
 
 Note on `style-src 'unsafe-inline'`: Tailwind CDN injects styles at runtime via a `<style>` tag; this directive is unavoidable with the CDN build. To eliminate it entirely, switch to the Tailwind CLI build process (a future hardening step, not in scope here).
 
 ---
 
-## 10. `nginx/nginx.conf`
+## 10. `caddy/Caddyfile` (Compose) and `caddy/Caddyfile.k8s` (Kubernetes)
 
-```nginx
-user nginx;
-worker_processes auto;
-error_log /var/log/nginx/error.log warn;
-pid /var/run/nginx.pid;
+The Compose Caddyfile terminates TLS on :443, serves the static assets directly, sets the canonical headers, and proxies everything else to the app. A plain-HTTP :80 site answers the container healthcheck and redirects everything else to HTTPS. The repo files are authoritative — abbreviated here:
 
-events {
-    worker_connections 1024;
+```caddy
+{
+	admin off
+	auto_https disable_redirects  # explicit mounted cert below; no ACME
 }
 
-http {
-    include       /etc/nginx/mime.types;
-    default_type  application/octet-stream;
+:80 {
+	handle /caddy-health {
+		respond "ok" 200
+	}
+	handle {
+		redir https://{host}{uri}
+	}
+}
 
-    server_tokens off;  # Don't expose nginx version in headers or error pages
+:443 {
+	tls /etc/caddy/certs/cert.pem /etc/caddy/certs/key.pem
+	log                       # structured JSON access log (UA/Referer/duration) — #89
+	encode gzip
+	request_body {
+		max_size 2MB           # == nginx client_max_body_size 2m
+	}
+	import headers.caddy      # the single canonical-headers source (section 9)
 
-    # Referer + User-Agent and timing (request time / upstream response time) are the
-    # first things needed to debug a beta report or spot abuse (#89).
-    log_format main '$remote_addr - [$time_local] "$request" $status $body_bytes_sent '
-                    '"$http_referer" "$http_user_agent" rt=$request_time urt=$upstream_response_time';
-    access_log /var/log/nginx/access.log main;
-
-    sendfile        on;
-    tcp_nopush      on;
-    keepalive_timeout 65;
-
-    gzip            on;
-    gzip_vary       on;
-    gzip_types      text/plain text/css application/json application/javascript text/javascript;
-
-    client_max_body_size 2m;
-
-    # Rate-limit zones
-    limit_req_zone $binary_remote_addr zone=login:10m rate=5r/m;
-    limit_req_zone $binary_remote_addr zone=api:10m   rate=60r/m;
-
-    # HTTP -> HTTPS redirect
-    server {
-        listen 80;
-        server_name _;
-        # Plain-HTTP liveness for the container healthcheck — answered locally, not
-        # redirected to HTTPS or proxied to the app.
-        location = /nginx-health {
-            access_log off;
-            add_header Content-Type text/plain;
-            return 200 "ok\n";
-        }
-        location / {
-            return 301 https://$host$request_uri;
-        }
-    }
-
-    server {
-        listen 443 ssl;
-        http2 on;
-        server_name _;
-
-        ssl_certificate     /etc/nginx/certs/cert.pem;
-        ssl_certificate_key /etc/nginx/certs/key.pem;
-
-        # Modern TLS: 1.2 minimum, 1.3 preferred
-        ssl_protocols TLSv1.2 TLSv1.3;
-        ssl_ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305:DHE-RSA-AES128-GCM-SHA256;
-        ssl_prefer_server_ciphers off;
-
-        ssl_session_cache   shared:SSL:10m;
-        ssl_session_timeout 1d;
-        ssl_session_tickets off;
-
-        # Uncomment for production CA-issued certs only (not self-signed):
-        # ssl_stapling on;
-        # ssl_stapling_verify on;
-
-        proxy_http_version 1.1;
-        proxy_set_header Host              $host;
-        proxy_set_header X-Real-IP         $remote_addr;
-        # Overwrite, don't append ($proxy_add_x_forwarded_for): a client-supplied
-        # XFF header must not be trusted by the app (#77).
-        proxy_set_header X-Forwarded-For   $remote_addr;
-        proxy_set_header X-Forwarded-Proto $scheme;
-        proxy_connect_timeout 10s;
-        proxy_send_timeout    10s;
-        proxy_read_timeout    120s;
-
-        # Static assets served directly by nginx
-        location /static/ {
-            alias /app/static/;
-            expires 1y;
-            include /etc/nginx/security_headers.conf;
-            add_header Cache-Control "public, immutable" always;
-        }
-
-        # Login — tight rate limit
-        location = /login {
-            limit_req zone=login burst=5 nodelay;
-            include /etc/nginx/security_headers.conf;
-            proxy_pass http://app:8000;
-        }
-
-        # API — moderate rate limit
-        location /api/ {
-            limit_req zone=api burst=20 nodelay;
-            include /etc/nginx/security_headers.conf;
-            proxy_pass http://app:8000;
-        }
-
-        location / {
-            include /etc/nginx/security_headers.conf;
-            proxy_pass http://app:8000;
-        }
-    }
+	handle_path /static/* {
+		root * /srv/static
+		file_server
+		header Cache-Control "public, immutable, max-age=31536000"
+	}
+	handle {
+		reverse_proxy app:8000 {
+			# Single canonical client IP; a client-supplied XFF is discarded at the edge (#77).
+			header_up X-Forwarded-For {client_ip}
+			transport http {
+				dial_timeout 10s
+				read_timeout 120s
+			}
+		}
+	}
 }
 ```
+
+**Rate limiting is not done in Caddy.** Stock Caddy has no `rate_limit` directive, so the nginx `login`/`api` `limit_req` zones moved **app-side** (`app/ratelimit.py`; the API limiter is enabled by `ICEBERG_EBS_API_RATE_LIMIT_ENABLED`, default on in the Compose/Helm env). In Kubernetes the cluster ingress also rate-limits at the true edge (`limit-rps`/`limit-connections`).
+
+`caddy/Caddyfile.k8s` is the in-pod sidecar variant: it listens on plain HTTP :8080 (the ingress terminates TLS), sets `trusted_proxies static private_ranges` so `{client_ip}` resolves to the real external client the ingress recorded, imports the same `headers.caddy`, and proxies to `localhost:8000`. It is embedded as a mirror in the Helm `caddy` ConfigMap.
 
 ---
 
@@ -557,10 +483,10 @@ Substitute the result as `'sha256-<base64>'` in `security_headers.conf`. This is
 4. `app/templates/base.html` — replace inline script block with `<script src>` tag
 5. `Dockerfile`, `.dockerignore`, `.env.example`
 6. `docker-compose.yml`
-7. `nginx/generate-dev-cert.sh`
+7. `caddy/generate-dev-cert.sh`
 8. Compute inline script SHA-256 hash
-9. `nginx/security_headers.conf` — with computed hash
-10. `nginx/nginx.conf`
+9. `caddy/headers.caddy` — with computed hash
+10. `caddy/Caddyfile` and `caddy/Caddyfile.k8s`
 
 ---
 
@@ -568,7 +494,7 @@ Substitute the result as `'sha256-<base64>'` in `security_headers.conf`. This is
 
 ```bash
 # Generate dev cert
-bash nginx/generate-dev-cert.sh
+bash caddy/generate-dev-cert.sh
 
 # Copy and fill in env vars
 cp .env.example .env && $EDITOR .env
@@ -582,7 +508,7 @@ curl -sko /dev/null -D - https://localhost/ | grep -E "HTTP|Content-Security|Str
 # HTTP -> HTTPS redirect
 curl -sI http://localhost/ | head -3
 
-# Static asset served by nginx (not proxied through Python)
+# Static asset served by Caddy (not proxied through Python)
 curl -sI https://localhost/static/css/app.css | grep -E "Cache-Control|Server"
 
 # Tests pass against a containerized Postgres (start one with `make db` first)
@@ -593,7 +519,7 @@ ICEBERG_EBS_TEST_DATABASE_URL=postgresql+asyncpg://iceberg_ebs:iceberg_ebs@local
 docker compose run --rm --no-deps app python -c "import pytest"
 ```
 
-For production: replace `nginx/certs/` with a real certificate, uncomment OCSP stapling, and set `ICEBERG_EBS_APP_BASE_URL` to your public domain.
+For production: replace `caddy/certs/` with a real certificate (or let Caddy obtain one via ACME) and set `ICEBERG_EBS_APP_BASE_URL` to your public domain.
 
 ---
 
@@ -675,6 +601,18 @@ icebergEbs:
   httpxTimeout: 15.0       # outbound HTTP timeout in seconds
   secureCookies: true
   logJson: false           # emit single-line JSON logs for a collector (#89)
+  apiRateLimitEnabled: true # app-side API rate limit (#188; Caddy has no rate_limit)
+
+# Caddy edge sidecar (#188): the cluster ingress forwards to it on :8080; it sets the
+# canonical security headers and proxies to the app on localhost:8000.
+caddy:
+  image:
+    repository: caddy
+    tag: "2.8-alpine"
+    pullPolicy: IfNotPresent
+  resources:
+    requests: { cpu: 50m, memory: 64Mi }
+    limits:   { cpu: 200m, memory: 128Mi }
 
 postgresql:
   auth:
@@ -692,8 +630,9 @@ ingress:
   certManagerIssuer: letsencrypt-prod  # set "" to disable cert-manager annotation
 
 networkPolicy:
-  # Default-deny ingress + named hops (ingress→app:8000, app→postgres:5432).
-  # Egress stays open (stores/webhooks). Needs an enforcing CNI (#103).
+  # Default-deny ingress + named hops (ingress→caddy:8080, app→postgres:5432; the
+  # Caddy sidecar reaches the app on localhost, intra-pod). Egress stays open
+  # (stores/webhooks). Needs an enforcing CNI (#103).
   enabled: true
   ingressController:
     namespaceSelector:
@@ -860,7 +799,7 @@ spec:
 
 ## `helm/iceberg-ebs/templates/ingress.yaml`
 
-Security headers are applied via the `configuration-snippet` annotation. This is the nginx-ingress equivalent of the `security_headers.conf` include in the Docker Compose setup.
+The topology is **cluster ingress → in-pod Caddy sidecar (:8080) → app (localhost:8000)** (#188). The ingress still terminates TLS (cert-manager), redirects HTTP→HTTPS, sets body-size/read-timeout, and **rate-limits at the true cluster edge** (`limit-rps`/`limit-connections`). What it no longer does is set security headers: the Caddy sidecar owns the canonical CSP/HSTS/etc. via `caddy/headers.caddy`, so the old `configuration-snippet` CSP (a second copy that had drifted from the Compose one) is gone. `nginx.ingress.kubernetes.io/hsts: "false"` stops the ingress adding its own HSTS so Caddy's is the single copy.
 
 ```yaml
 apiVersion: networking.k8s.io/v1
@@ -874,9 +813,9 @@ metadata:
     nginx.ingress.kubernetes.io/proxy-read-timeout: "120"
     nginx.ingress.kubernetes.io/limit-rps: "2"
     nginx.ingress.kubernetes.io/limit-connections: "20"
-    nginx.ingress.kubernetes.io/configuration-snippet: |
-      add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'sha256-<HASH>' https://cdn.tailwindcss.com https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'" always;
-      add_header Permissions-Policy "accelerometer=(), camera=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), payment=(), usb=()" always;
+    # Security headers are set by the Caddy sidecar (caddy/headers.caddy), not here —
+    # no configuration-snippet CSP. Disable the ingress's own HSTS so Caddy's is the one copy.
+    nginx.ingress.kubernetes.io/hsts: "false"
     {{- if .Values.ingress.certManagerIssuer }}
     cert-manager.io/cluster-issuer: {{ .Values.ingress.certManagerIssuer | quote }}
     {{- end }}
@@ -896,10 +835,10 @@ spec:
               service:
                 name: {{ include "iceberg-ebs.fullname" . }}
                 port:
-                  number: 8000
+                  number: 8080   # the pod's Caddy sidecar (it proxies to the app on 8000)
 ```
 
-`HSTS`, `X-Content-Type-Options`, `X-Frame-Options`, and `Referrer-Policy` are set automatically by nginx-ingress when `ssl-redirect` is enabled; the snippet adds the headers that ingress-nginx does not set by default (CSP and Permissions-Policy). Verify with `curl -sI https://your-host/ | grep -i -E "content-security|permissions"`.
+`ingressClassName` and the `nginx.ingress.kubernetes.io/*` annotations refer to the **cluster nginx-ingress controller** (unchanged — it sits in front of Caddy). All response security headers now come from the Caddy sidecar; verify with `curl -sI https://your-host/ | grep -i -E "content-security|permissions|strict-transport"`.
 
 ---
 
@@ -939,7 +878,7 @@ verify the image (`cosign verify` / `gh attestation verify`) before rolling it o
 
 For GitOps (Flux / ArgoCD): use `SealedSecret` or an ExternalSecrets `ExternalSecret` object to inject passwords from your secrets store rather than `--set`, and pin the same immutable release tag there.
 
-**NetworkPolicies (#103):** the chart ships default-deny ingress plus named hops (ingress-controller → app:8000, app → postgres:5432), gated behind `networkPolicy.enabled` (default `true`). They **require a CNI that enforces NetworkPolicy** (Calico, Cilium) — on a CNI that doesn't, they are a harmless no-op that gives no protection. Set `networkPolicy.ingressController.namespaceSelector` to match your ingress controller's namespace. **Egress is intentionally left open** (the app must reach the extension stores, webhook destinations, and TI feeds) — don't add an egress policy. A future backup CronJob (#86) will need its own rule to reach Postgres.
+**NetworkPolicies (#103):** the chart ships default-deny ingress plus named hops (ingress-controller → caddy sidecar:8080, app → postgres:5432; the sidecar reaches the app on localhost intra-pod), gated behind `networkPolicy.enabled` (default `true`). They **require a CNI that enforces NetworkPolicy** (Calico, Cilium) — on a CNI that doesn't, they are a harmless no-op that gives no protection. Set `networkPolicy.ingressController.namespaceSelector` to match your ingress controller's namespace. **Egress is intentionally left open** (the app must reach the extension stores, webhook destinations, and TI feeds) — don't add an egress policy. A future backup CronJob (#86) will need its own rule to reach Postgres.
 
 ---
 
@@ -1075,7 +1014,8 @@ docker compose exec -T postgres \
 ## Monitoring & observability (#89)
 
 - **Logs** — the app logs are timestamped; set `ICEBERG_EBS_LOG_JSON=true` to emit single-line JSON
-  for a log collector. nginx's access log includes referer, user-agent, and request/upstream timing.
+  for a log collector. Caddy's structured (JSON) access log — enabled by the `log` directive — carries
+  the request User-Agent/Referer and `duration` (Cookie/Authorization are redacted).
 - **Liveness / readiness** — point orchestrator probes at `/healthz` (process up) and `/readyz`
   (DB reachable → 503 if not). Both are unauthenticated and cheap.
 - **Scheduler freshness** — `/readyz`'s JSON body carries `last_scheduler_run` (ISO timestamp or

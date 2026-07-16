@@ -2,15 +2,14 @@
 
 The anti-flash theme script is inlined in `base.html` and `login.html` (it must run
 before first paint, so it cannot be an external file). A strict CSP therefore pins its
-SHA-256 — and that pin is duplicated in **two** deployment paths:
+SHA-256. That pin now lives in **one** place — `caddy/headers.caddy`, imported by both
+the Compose and Kubernetes Caddyfiles (#188). It used to be duplicated across
+`nginx/security_headers.conf` and the Helm ingress snippet, and the two copies had in
+fact drifted apart before these tests existed; consolidating onto Caddy removed the
+duplication, and this test still fails loudly if the single pin drifts from the script.
 
-* `nginx/security_headers.conf` (Docker Compose)
-* `helm/iceberg-ebs/templates/ingress.yaml` (Kubernetes)
-
-Nothing at runtime notices when a pin drifts from the script: the browser silently
-refuses to execute it and the persisted light/dark choice stops being applied. Both
-copies had in fact drifted apart before these tests existed — the Helm ingress pinned a
-hash that matched neither template. These tests fail loudly instead.
+Nothing at runtime notices when a pin drifts: the browser silently refuses to execute
+the script and the persisted light/dark choice stops being applied.
 """
 
 import base64
@@ -23,8 +22,10 @@ import pytest
 _ROOT = Path(__file__).resolve().parent.parent
 _TEMPLATES = [_ROOT / "app/templates/base.html", _ROOT / "app/templates/login.html"]
 _CSP_FILES = [
-    _ROOT / "nginx/security_headers.conf",
-    _ROOT / "helm/iceberg-ebs/templates/ingress.yaml",
+    _ROOT / "caddy/headers.caddy",
+    # The Helm K8s ConfigMap embeds a mirror of caddy/headers.caddy (Helm can't read files
+    # above the chart); check the pin here too so the two copies can't silently drift.
+    _ROOT / "helm/iceberg-ebs/templates/caddy-configmap.yaml",
 ]
 
 _INLINE_SCRIPT = re.compile(r"<script>(.*?)</script>", re.S)
