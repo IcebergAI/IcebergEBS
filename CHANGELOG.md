@@ -116,6 +116,17 @@ release to diff against.
 
 ### Fixed
 
+- **Closed two holes in the "exactly one canonical security header" guarantee** (#201). (1) The
+  Kubernetes ingress carried `nginx.ingress.kubernetes.io/hsts: "false"`, which isn't a real
+  ingress-nginx annotation (HSTS is a controller-wide ConfigMap setting), so it was silently
+  ignored — on a default controller its own weaker, non-preload HSTS overrode the Caddy sidecar's
+  canonical one. The non-annotation is removed and DEPLOYMENT.md now documents disabling HSTS at
+  the controller ConfigMap. (2) `caddy/headers.caddy` relied on an *implicit* `defer` (triggered
+  only because the block contains the `-Server` delete op) to apply its header SETs after
+  `reverse_proxy` copies the upstream baseline headers; a future edit dropping `-Server` would
+  have silently shipped two CSP/HSTS values. An explicit `defer` now makes that robust. Neither
+  was a security regression (all values enforce HTTPS), but both defeated the single-copy intent
+  of #188. Guarded by new `tests/test_helm_caddy.py` assertions.
 - **The Helm Caddy sidecar pin no longer silently drifts from the Compose one** (#200). The Helm
   `values.yaml` Caddy image was pinned at `2.8-alpine` while Dependabot had already moved the
   Compose image to `2.11-alpine`, and a comment falsely claimed "Dependabot's docker ecosystem

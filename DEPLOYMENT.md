@@ -804,7 +804,9 @@ spec:
 
 ## `helm/iceberg-ebs/templates/ingress.yaml`
 
-The topology is **cluster ingress → in-pod Caddy sidecar (:8080) → app (localhost:8000)** (#188). The ingress still terminates TLS (cert-manager), redirects HTTP→HTTPS, sets body-size/read-timeout, and **rate-limits at the true cluster edge** (`limit-rps`/`limit-connections`). What it no longer does is set security headers: the Caddy sidecar owns the canonical CSP/HSTS/etc. via `caddy/headers.caddy`, so the old `configuration-snippet` CSP (a second copy that had drifted from the Compose one) is gone. `nginx.ingress.kubernetes.io/hsts: "false"` stops the ingress adding its own HSTS so Caddy's is the single copy.
+The topology is **cluster ingress → in-pod Caddy sidecar (:8080) → app (localhost:8000)** (#188). The ingress still terminates TLS (cert-manager), redirects HTTP→HTTPS, sets body-size/read-timeout, and **rate-limits at the true cluster edge** (`limit-rps`/`limit-connections`). What it no longer does is set security headers: the Caddy sidecar owns the canonical CSP/HSTS/etc. via `caddy/headers.caddy`, so the old `configuration-snippet` CSP (a second copy that had drifted from the Compose one) is gone.
+
+> **HSTS (operator action, #201):** ingress-nginx's HSTS is a **controller-wide ConfigMap** setting (`hsts`, `hsts-max-age`, `hsts-preload`), **not** a per-Ingress annotation — there is no `nginx.ingress.kubernetes.io/hsts` annotation (an earlier version of this chart set one; it was silently ignored). On a **default** controller (`hsts: true`) the controller emits its own `Strict-Transport-Security` (`max-age=15724800; includeSubDomains`, no preload) which **overrides** the Caddy sidecar's canonical one (`max-age=63072000; includeSubDomains; preload`). To make Caddy's the single copy, set `hsts: "false"` in the **ingress-nginx-controller ConfigMap** (cluster-wide, e.g. via the controller's own Helm values `controller.config.hsts: "false"`). Not a security regression either way — both values enforce HTTPS — but Caddy's stronger, preload-enabled policy only reaches clients once the controller stops setting its own.
 
 ```yaml
 apiVersion: networking.k8s.io/v1
@@ -818,9 +820,10 @@ metadata:
     nginx.ingress.kubernetes.io/proxy-read-timeout: "120"
     nginx.ingress.kubernetes.io/limit-rps: "2"
     nginx.ingress.kubernetes.io/limit-connections: "20"
-    # Security headers are set by the Caddy sidecar (caddy/headers.caddy), not here —
-    # no configuration-snippet CSP. Disable the ingress's own HSTS so Caddy's is the one copy.
-    nginx.ingress.kubernetes.io/hsts: "false"
+    # Security headers are set by the Caddy sidecar (caddy/headers.caddy), not here — no
+    # configuration-snippet CSP, and NO per-ingress HSTS annotation (it doesn't exist; #201).
+    # Disable the controller's own HSTS at its ConfigMap (`hsts: "false"`) so Caddy's is the
+    # single copy — see the HSTS note above.
     {{- if .Values.ingress.certManagerIssuer }}
     cert-manager.io/cluster-issuer: {{ .Values.ingress.certManagerIssuer | quote }}
     {{- end }}

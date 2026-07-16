@@ -59,6 +59,27 @@ def test_k8s_caddyfile_uses_strict_trusted_proxies():
     assert "trusted_proxies_strict" in _configmap_data()["Caddyfile"]
 
 
+def test_headers_caddy_defers_header_ops():
+    """The header block must carry an explicit `defer` so its SETs apply AFTER reverse_proxy
+    copies the upstream (app baseline) response headers — otherwise both the SET value and the
+    upstream copy ship (two CSP/HSTS). The block also defers implicitly via the `-Server` delete
+    op, but that's fragile; the explicit `defer` guards a future edit dropping it (#201). Checked
+    in the canonical file and enforced identically in the byte-mirrored ConfigMap."""
+    canonical = (_ROOT / "caddy/headers.caddy").read_text()
+    assert re.search(r"header\s*\{\s*defer\b", canonical), "explicit `defer` missing from headers.caddy header block"
+    # The mirror test above already pins byte-equality; this asserts the mirror carries it too.
+    assert "defer" in _configmap_data()["headers.caddy"]
+
+
+def test_ingress_has_no_nonfunctional_hsts_annotation():
+    """`nginx.ingress.kubernetes.io/hsts` is NOT a real ingress-nginx annotation — HSTS is a
+    controller-wide ConfigMap setting, so the annotation was silently ignored (#201). Guard
+    against it being re-added as a misleading no-op. (Only matches a real annotation key line,
+    not the explanatory comment that names it.)"""
+    ingress = (_ROOT / "helm/iceberg-ebs/templates/ingress.yaml").read_text()
+    assert not re.search(r"^\s*nginx\.ingress\.kubernetes\.io/hsts\s*:", ingress, re.MULTILINE)
+
+
 def test_helm_caddy_tag_matches_compose():
     """The Helm Caddy sidecar image must stay pinned to the same version as the Compose Caddy
     image (#200). Dependabot's `docker-compose` ecosystem bumps the Compose image but cannot

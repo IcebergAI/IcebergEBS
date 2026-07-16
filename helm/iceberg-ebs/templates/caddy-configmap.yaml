@@ -80,9 +80,18 @@ data:
     # this fuller CDN-aware policy. Caddy SETs (replaces) each header here, so exactly one
     # canonical value reaches the client even though the upstream sent its baseline.
     #
+    # `defer` is REQUIRED for that "exactly one" guarantee: it runs these header ops AFTER
+    # reverse_proxy has copied the upstream (app baseline) response headers, so each SET
+    # overrides the upstream's copy instead of being applied first and then coexisting with
+    # it — which would ship two CSP / HSTS values. The block also happens to defer implicitly
+    # because it contains a delete op (`-Server`), but relying on that is fragile: removing
+    # `-Server` would silently reintroduce the duplicate headers. The explicit `defer` makes
+    # the guarantee robust to future edits (#201).
+    #
     # The script-src sha256 hash pins the one inline bootstrap script in base.html; if that
     # script changes, regenerate the hash (see .claude/rules/frontend.md) and update it here.
     header {
+    	defer
     	Content-Security-Policy "default-src 'self'; script-src 'self' 'sha256-+Eb7yRWu45ifRb64zPIDP0hvsT4OloSS8kNklIXpCO4=' https://cdn.tailwindcss.com https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; object-src 'none'; form-action 'self'"
     	Strict-Transport-Security "max-age=63072000; includeSubDomains; preload"
     	X-Content-Type-Options "nosniff"

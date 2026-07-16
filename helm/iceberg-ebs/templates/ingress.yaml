@@ -16,9 +16,16 @@ metadata:
     nginx.ingress.kubernetes.io/limit-connections: "20"
     # The Caddy sidecar now owns the canonical security headers (CSP, HSTS,
     # Permissions-Policy, …) via caddy/headers.caddy, so the ingress no longer duplicates
-    # a configuration-snippet CSP — that two-places duplication is exactly what #188
-    # removed. Disable the ingress-controller's own HSTS so Caddy's is the single copy.
-    nginx.ingress.kubernetes.io/hsts: "false"
+    # a configuration-snippet CSP — that two-places duplication is exactly what #188 removed.
+    #
+    # NOTE: there is deliberately NO per-ingress HSTS annotation here. ingress-nginx's HSTS is
+    # a controller-wide ConfigMap setting (`hsts`, `hsts-max-age`, `hsts-preload`), not a
+    # per-Ingress annotation — `nginx.ingress.kubernetes.io/hsts` does not exist and was
+    # silently ignored (#201). On a default controller (`hsts: true`) the controller's own
+    # `Strict-Transport-Security` (max-age 15724800, no preload) OVERRIDES the Caddy sidecar's
+    # canonical one (max-age 63072000, preload), so Caddy's never reaches the client. To make
+    # Caddy's the single copy, disable HSTS at the controller ConfigMap (`hsts: "false"`) —
+    # see DEPLOYMENT.md → Kubernetes. Not insecure either way (both enforce HTTPS).
     {{- if .Values.ingress.certManagerIssuer }}
     cert-manager.io/cluster-issuer: {{ .Values.ingress.certManagerIssuer | quote }}
     {{- end }}
