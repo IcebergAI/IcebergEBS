@@ -251,12 +251,14 @@ services:
     image: caddy:2.8-alpine
     security_opt:
       - no-new-privileges:true
-    # Caddy is a single process (no nginx-style worker user-drop), so it only needs
-    # NET_BIND_SERVICE to bind :80/:443 — none of nginx's CHOWN/SETUID/SETGID/DAC_OVERRIDE.
+    # Fewer caps than nginx: NET_BIND_SERVICE to bind :80/:443, and DAC_OVERRIDE so root
+    # can read the mounted key (OpenSSL 3.x writes key.pem 0600 owned by the host user).
+    # No CHOWN/SETUID/SETGID — Caddy is a single process, no worker user-drop.
     cap_drop:
       - ALL
     cap_add:
       - NET_BIND_SERVICE
+      - DAC_OVERRIDE
     read_only: true
     # Caddy's XDG data/config dirs (local CA/state) must be writable under a read-only
     # rootfs; no persistence is needed (TLS uses the mounted cert, not ACME).
