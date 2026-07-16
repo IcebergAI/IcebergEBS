@@ -1,38 +1,42 @@
 /* ─────────────────────────────────────────────────────────────
    IcebergEBS · Risk-trend chart renderer  (CSP-safe, external file)
-   Drop into  static/js/trend-chart.js  and load with:
-     <script src="/static/js/trend-chart.js"></script>
-   (Inline scripts are blocked by the CSP — see CLAUDE.md — so this
-    must be an external file, not an inline <script>.)
+   Loaded via {% block page_js %} on the extension detail page —
+   inline scripts are blocked by the strict CSP (#106).
 
-   Markup it expects on the extension detail page:
+   Markup it expects:
 
      <div id="risk-trend"></div>
      <div id="risk-trend-mini"></div>   (optional compact version)
      <script type="application/json" id="score-history">
-       [{"d":"May 11","s":41},{"d":"May 29","s":68}]   {# from FetchLog #}
+       {"points": [{"d":"May 11","s":41}, …],
+        "bands":  [{"band":"low","from":0,"to":25}, …]}
      </script>
 
-   Build the JSON island in ui.py / the template from FetchLog rows:
-     history = [
-       {"d": log.fetched_at.strftime("%b %d"), "s": log.risk_score_after}
-       for log in reversed(fetch_logs)
-       if log.success and log.risk_score_after is not None
-     ]
-   …then  {{ history | tojson }}  inside the <script type="application/json">.
+   The payload is built by routes/ui.py:extension_detail. `points` come from
+   FetchLog rows; `bands` is the score→band geometry derived server-side from
+   extension_queries.RISK_BANDS (which mirrors scoring.risk_level — the single
+   home of the 75/50/25 thresholds). This file must NOT re-inline those cut
+   points: line/dot/shading colours and grid lines are all driven by the
+   payload, and the colours resolve through app.css's --risk-* tokens so the
+   chart follows the light/dark theme (#105).
    ───────────────────────────────────────────────────────────── */
 
 (function () {
-  // Band colours come from app.css's --risk-* tokens (#105) so the SVG follows
-  // the light/dark theme — never hard-code an oklch literal here. The 25/50/75
-  // cut points mirror app/scoring.risk_level (the single home of the score
-  // thresholds); the chart re-renders on theme change via the observer below.
+  let bands = []; // [{band, from, to}] from the server payload, sorted by `from`
+
   function riskToken(band) {
     return getComputedStyle(document.documentElement).getPropertyValue('--risk-' + band).trim();
   }
 
-  function bandColor(pct) {
-    return riskToken(pct >= 75 ? 'critical' : pct >= 50 ? 'high' : pct >= 25 ? 'medium' : 'low');
+  function bandFor(score) {
+    for (let i = bands.length - 1; i >= 0; i--) {
+      if (score >= bands[i].from) return bands[i].band;
+    }
+    return bands.length ? bands[0].band : 'unknown';
+  }
+
+  function bandColor(score) {
+    return riskToken(bandFor(score));
   }
 
   function renderTrend(container, data, opts) {
@@ -51,17 +55,14 @@
     const cur = data[data.length - 1].s;
     const stroke = bandColor(cur);
 
-    const bands = [
-      { from: 0, to: 25, c: riskToken('low') },
-      { from: 25, to: 50, c: riskToken('medium') },
-      { from: 50, to: 75, c: riskToken('high') },
-      { from: 75, to: 100, c: riskToken('critical') },
-    ].map(b => {
+    const bandRects = bands.map(b => {
       const y1 = y(b.to), y2 = y(b.from);
-      return '<rect class="band" x="' + padL + '" y="' + y1.toFixed(1) + '" width="' + plotW + '" height="' + (y2 - y1).toFixed(1) + '" fill="' + b.c + '"></rect>';
+      return '<rect class="band" x="' + padL + '" y="' + y1.toFixed(1) + '" width="' + plotW + '" height="' + (y2 - y1).toFixed(1) + '" fill="' + riskToken(b.band) + '"></rect>';
     }).join('');
 
-    const gridLines = axis ? [25, 50, 75].map(v =>
+    // Interior band boundaries (every `from` except the bottom of the scale).
+    const boundaries = bands.map(b => b.from).filter(v => v > 0);
+    const gridLines = axis ? boundaries.map(v =>
       '<line class="grid-line" x1="' + padL + '" y1="' + y(v).toFixed(1) + '" x2="' + (W - padR) + '" y2="' + y(v).toFixed(1) + '"></line>' +
       '<text class="axis-label" x="6" y="' + (y(v) + 3).toFixed(1) + '">' + v + '</text>').join('') : '';
 
@@ -77,7 +78,7 @@
 
     container.innerHTML =
       '<svg class="trend" viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none" width="100%" height="' + H + '">' +
-      bands + gridLines +
+      bandRects + gridLines +
       '<path class="area" d="' + areaPath + '" fill="' + stroke + '" fill-opacity="0.12"></path>' +
       '<polyline class="line" points="' + linePts + '" stroke="' + stroke + '"></polyline>' +
       dots + marker + xLabels +
@@ -87,8 +88,11 @@
   document.addEventListener('DOMContentLoaded', function () {
     const island = document.getElementById('score-history');
     if (!island) return;
-    let data = [];
-    try { data = JSON.parse(island.textContent || '[]'); } catch (e) { return; }
+    let payload = null;
+    try { payload = JSON.parse(island.textContent || 'null'); } catch (e) { return; }
+    if (!payload || !Array.isArray(payload.points) || !Array.isArray(payload.bands) || !payload.bands.length) return;
+    const data = payload.points;
+    bands = payload.bands.slice().sort((a, b) => a.from - b.from);
     const full = document.getElementById('risk-trend');
     const mini = document.getElementById('risk-trend-mini');
     function render() {

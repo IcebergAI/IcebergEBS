@@ -516,11 +516,21 @@ async def extension_detail(
     threat_intel_referenced_indicators = [
         indicator for indicator in threat_intel_indicators if indicator.get("section") == "referenced"
     ]
-    score_history = [
-        {"d": log.fetched_at.strftime("%b %d"), "s": log.risk_score_after}
-        for log in reversed(fetch_logs)
-        if log.success and log.risk_score_after is not None
-    ]
+    score_history = {
+        "points": [
+            {"d": log.fetched_at.strftime("%b %d"), "s": log.risk_score_after}
+            for log in reversed(fetch_logs)
+            if log.success and log.risk_score_after is not None
+        ],
+        # Band geometry for the trend chart, derived from RISK_BANDS (which
+        # mirrors scoring.risk_level — the single home of the thresholds). The
+        # chart colours its line/dots/shading from this payload and must never
+        # re-inline the cut points in JS (#105 review).
+        "bands": [
+            {"band": band, "from": low, "to": 100 if high is None else high}
+            for band, (low, high) in RISK_BANDS.items()
+        ],
+    }
 
     # Org footprint (#29): SOAR-reported installs grouped by department. The
     # headline count reuses the cached install_footprint (distinct assets); the
