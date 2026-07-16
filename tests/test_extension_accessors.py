@@ -80,19 +80,3 @@ def test_risk_detail_dict_absent_is_none():
 
 def test_risk_detail_dict_wrong_shape_is_none():
     assert _ext(risk_detail='"a string"').risk_detail_dict() is None
-
-
-# --- pending_events ---------------------------------------------------------
-
-
-def test_pending_events_parses_and_drops_non_dicts():
-    ext = _ext(pending_alert_events='[{"event_type": "new_version"}, "junk", 5]')
-    assert ext.pending_events() == [{"event_type": "new_version"}]
-
-
-def test_pending_events_absent_is_empty():
-    assert _ext().pending_events() == []
-
-
-def test_pending_events_unparsable_is_empty():
-    assert _ext(pending_alert_events="{bad").pending_events() == []

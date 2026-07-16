@@ -116,6 +116,17 @@ release to diff against.
 
 ### Fixed
 
+- **A corrupt pending-alert marker can no longer loop forever or crash a refresh** (#197). The
+  durable `pending_alert_events` marker (#109) is now decoded in one place
+  (`services._parse_pending_events`), which drops both non-dict entries and malformed event dicts
+  instead of raising. Two failure modes are closed: (1) a marker holding a valid event next to
+  non-dict junk delivered the valid event but then compare-and-cleared against the *filtered*
+  subset — which never matched the raw marker — so the alert re-fired on **every** scheduler cycle
+  forever (recovery now clears against the raw marker); (2) a valid-JSON-but-wrong-shape marker
+  (e.g. `"{}"` or `["junk"]`) raised `TypeError` inside `_merge_pending_events`, 500-ing the
+  refresh and blocking every future refresh of that extension until the marker was hand-fixed.
+  Both require an externally corrupted marker (the app only ever writes lists of dicts), but the
+  new terminal-clear/cleanse behaviour is self-healing.
 - **Restored the per-IP rate limit on `POST /login`** that the nginx→Caddy migration dropped
   (#196). The old nginx `login` `limit_req` zone capped login POSTs at 5/min per IP; the Caddy
   migration replaced only the `api` zone app-side, leaving `POST /login` uncapped in the Compose
