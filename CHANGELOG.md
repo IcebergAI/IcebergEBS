@@ -122,6 +122,10 @@ release to diff against.
   an operator setting them got the defaults silently (the same `.env`-excluded-from-image trap as
   #87). All four are now wired through `docker-compose.yml`, the Helm ConfigMap + `values.yaml`,
   and `.env.example`, added to the DEPLOYMENT.md env table, and guarded by `tests/test_deploy_env.py`.
+  The Helm Deployment also now hashes the app ConfigMap into a pod-template `checksum/config`
+  annotation (it previously hashed only the Caddy ConfigMap), so a `helm upgrade` that changes a
+  forwarded value actually rolls the pod — otherwise the new value, loaded once via `envFrom`,
+  would not take effect on the running pod until a manual restart.
 - **Closed two holes in the "exactly one canonical security header" guarantee** (#201). (1) The
   Kubernetes ingress carried `nginx.ingress.kubernetes.io/hsts: "false"`, which isn't a real
   ingress-nginx annotation (HSTS is a controller-wide ConfigMap setting), so it was silently

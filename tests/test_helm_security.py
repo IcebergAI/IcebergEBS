@@ -16,6 +16,17 @@ def test_deployment_has_pod_security_baseline():
     assert "drop: [ALL]" in d
 
 
+def test_deployment_rolls_on_configmap_changes():
+    """Both ConfigMaps must be hashed into pod-template annotations so a `helm upgrade` that
+    only edits a value rolls the pod. Without the app-config checksum, env loaded via envFrom
+    (e.g. a rate-limit knob, #202) stays on the OLD value until a manual restart — the
+    operator's change silently doesn't take effect. The Caddy-config checksum is the same for
+    the sidecar's mounted config (#188)."""
+    d = (_TEMPLATES / "deployment.yaml").read_text()
+    assert "checksum/config:" in d and '"/configmap.yaml"' in d, "app ConfigMap not hashed into the pod template"
+    assert "checksum/caddy-config:" in d and '"/caddy-configmap.yaml"' in d, "Caddy ConfigMap checksum missing"
+
+
 def test_pod_disruption_budget_present():
     p = (_TEMPLATES / "pdb.yaml").read_text()
     assert "kind: PodDisruptionBudget" in p
