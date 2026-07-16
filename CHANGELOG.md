@@ -100,6 +100,12 @@ release to diff against.
 
 ### Fixed
 
+- **Input validation for identity-like fields** (#154): `POST /api/users` now rejects a blank /
+  whitespace-only or multi-KB `username` (422) and strips surrounding whitespace, and stores a
+  blank `email` as `NULL`; and `POST /api/inventory` rejects a blank `asset_id` **per row**
+  (reported `invalid`, not failing the batch) and strips it — previously an empty `asset_id`
+  upserted a real `InstallObservation` and counted as a distinct asset, inflating
+  `install_footprint` and therefore the exposure / Top-exposure ranking.
 - **Retention pruning now runs at startup**, then daily — previously the job's first fire was
   scheduled at process-start + 24h, so a deployment that restarts more often than daily
   (crash / OOM / redeploy) would **never** prune despite `ICEBERG_EBS_RETENTION_DAYS` being set,

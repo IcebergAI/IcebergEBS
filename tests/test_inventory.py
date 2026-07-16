@@ -155,6 +155,60 @@ async def test_inventory_invalid_id_skipped(client, test_db):
         assert (await s.exec(select(InstallObservation))).all() == []
 
 
+async def test_inventory_empty_asset_id_reported_invalid(client, test_db):
+    """#154: a blank/whitespace asset_id must not become an InstallObservation that inflates
+    install_footprint — it's reported invalid and not counted, without failing the whole batch."""
+    p = _mock_vscode()
+    try:
+        body = (
+            await client.post(
+                "/api/inventory",
+                json={
+                    "observations": [
+                        {"store": "vscode", "extension_id": "pub.ext", "asset_id": ""},
+                        {"store": "vscode", "extension_id": "pub.ext", "asset_id": "   "},
+                        {"store": "vscode", "extension_id": "pub.ext", "asset_id": "REAL-01"},
+                    ]
+                },
+            )
+        ).json()
+    finally:
+        p.stop()
+
+    assert body["invalid"] == 2
+    assert body["observations"] == 1  # only the real asset counted
+    statuses = [r["status"] for r in body["results"]]
+    assert statuses.count("invalid") == 2
+    async with AsyncSession(test_db) as s:
+        obs = (await s.exec(select(InstallObservation))).all()
+        assert len(obs) == 1
+        assert obs[0].asset_id == "REAL-01"
+        ext = (await s.exec(select(Extension).where(Extension.extension_id == "pub.ext"))).first()
+        assert ext.install_footprint == 1  # not inflated by the empty asset_ids
+
+
+async def test_inventory_strips_asset_id(client, test_db):
+    """A surrounding-whitespace asset_id is stored trimmed, so it dedupes against the same
+    trimmed asset instead of counting as a second distinct one (#154)."""
+    p = _mock_vscode()
+    try:
+        await client.post(
+            "/api/inventory",
+            json={
+                "observations": [
+                    {"store": "vscode", "extension_id": "pub.trim", "asset_id": "  HOST-9  "},
+                    {"store": "vscode", "extension_id": "pub.trim", "asset_id": "HOST-9"},
+                ]
+            },
+        )
+    finally:
+        p.stop()
+    async with AsyncSession(test_db) as s:
+        obs = (await s.exec(select(InstallObservation))).all()
+        assert len(obs) == 1  # same asset after trimming
+        assert obs[0].asset_id == "HOST-9"
+
+
 async def test_inventory_too_many_rejected(client):
     obs = [{"store": "vscode", "extension_id": f"pub.ext{i}", "asset_id": "A"} for i in range(1001)]
     r = await client.post("/api/inventory", json={"observations": obs})
