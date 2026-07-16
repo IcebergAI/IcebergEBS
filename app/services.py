@@ -1,6 +1,6 @@
 import json
 import logging
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 
 import anyio.to_thread
@@ -11,12 +11,186 @@ from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.fetchers import get_fetcher
+from app.fetchers.base import ExtensionMetadata
 from app.inspector import InspectorError, PackageAnalysis, inspect_package
 from app.models import Extension, FetchLog, InstallCountHistory
 from app.notifications import ChangeEvent, detect_changes, fire_alerts
-from app.scoring import compute_risk_score
+from app.scoring import RiskDetail, compute_risk_score
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class _EffectiveValues:
+    """The values actually scored and stored for a fetch, after the keep-stale
+    fallback rules have been applied (see ``_effective_values``)."""
+
+    permissions: list[str]
+    host_permissions: list[str]
+    publisher: str
+    publisher_changed: bool
+    install_count: int | None
+    last_updated: datetime | None
+
+
+async def _stage_install_reading(session: AsyncSession, ext: Extension, metadata: ExtensionMetadata) -> list[int]:
+    """Stage this fetch's install-count reading (when present) and return the
+    install-count history ``score_popularity`` needs — oldest→newest, so
+    ``history[-2]`` is the reading immediately before the current one.
+
+    score_popularity's sudden-drop check only compares the current reading against
+    the immediately preceding one (history[-2]), so load just the two most recent
+    stored counts instead of scanning the whole install-count history — which is
+    unbounded when retention is disabled (the default) and was being fully hydrated
+    on every refresh of every watchlist extension, O(watchlist × history) per
+    scheduler cycle (#146). Query column-only and before staging the new row, so the
+    "previous" reading is the last real fetch rather than the row we're about to add.
+    """
+    previous_counts = (
+        await session.exec(
+            select(InstallCountHistory.install_count)
+            .where(InstallCountHistory.extension_id == ext.id)
+            .order_by(InstallCountHistory.recorded_at.desc(), InstallCountHistory.id.desc())
+            .limit(2)
+        )
+    ).all()
+
+    if metadata.install_count is not None:
+        session.add(InstallCountHistory(extension_id=ext.id, install_count=metadata.install_count))
+        # Ascending (oldest→newest) with the new reading last, so history[-2] is
+        # the most recent stored count — the ordering score_popularity expects.
+        return [*reversed(previous_counts), metadata.install_count]
+    # No new reading this cycle: the stored counts alone, oldest→newest.
+    return list(reversed(previous_counts))
+
+
+def _effective_values(
+    ext: Extension, metadata: ExtensionMetadata, analysis: PackageAnalysis | None
+) -> _EffectiveValues:
+    """Resolve the values actually scored + stored, applying the keep-stale
+    fallbacks so a partial or failed fetch can't clobber good data or fire spurious
+    alerts.
+
+    When analysis is unavailable, fall back to stored values so that a transient
+    package download failure doesn't look like permissions being removed and trigger
+    spurious permission_change / risk_level_change alerts.
+
+    A 200-status scrape can still be a partial parse (publisher="",
+    install_count=None, last_updated=None — Chrome HTML never raises on a shifted
+    layout). Like version/permissions, fall back to the stored values so one bad
+    response can't swing the score (~+31 across publisher/popularity/staleness) and
+    fire a spurious risk_level_change alert (#142). The manifest author fills the
+    publisher gap only when no store-sourced publisher has ever been seen — it must
+    never override a stored one, or an author/publisher mismatch would flap
+    publisher_change alerts on every partial parse. publisher_changed likewise
+    requires a non-empty store-sourced publisher: an empty parse is not a change
+    signal.
+    """
+    if analysis:
+        permissions: list[str] = analysis.permissions
+        host_permissions: list[str] = analysis.host_permissions
+    else:
+        permissions = json.loads(ext.permissions or "[]")
+        stored_pkg = json.loads(ext.package_analysis or "null") or {}
+        host_permissions = stored_pkg.get("host_permissions", [])
+
+    publisher_changed = bool(
+        ext.last_fetched_at and ext.publisher and metadata.publisher and ext.publisher != metadata.publisher
+    )
+    publisher = metadata.publisher or ext.publisher or (analysis.author if analysis else "")
+    install_count = metadata.install_count if metadata.install_count is not None else ext.install_count
+    last_updated = metadata.last_updated or ext.last_updated
+
+    return _EffectiveValues(
+        permissions=permissions,
+        host_permissions=host_permissions,
+        publisher=publisher,
+        publisher_changed=publisher_changed,
+        install_count=install_count,
+        last_updated=last_updated,
+    )
+
+
+def _apply_fetch_results(
+    ext: Extension,
+    metadata: ExtensionMetadata,
+    analysis: PackageAnalysis | None,
+    effective: _EffectiveValues,
+    risk: RiskDetail,
+) -> None:
+    """Write the fetched + scored values onto the extension row. Mirrors the
+    keep-stale guards in ``_effective_values``: version / permissions /
+    package_analysis are only overwritten from a fresh successful source, so a
+    partial parse or a failed package download can't erase good data or fire
+    spurious change alerts (#142)."""
+    # name/description are deliberately unguarded (cosmetic, no score or alert
+    # impact) — a partial Chrome parse can transiently persist name=extension_id
+    # until the next good fetch.
+    ext.name = metadata.name
+    ext.publisher = effective.publisher
+    ext.description = metadata.description
+    ext.store_url = metadata.store_url
+    # Only update version when the store returns a non-empty value; keeping
+    # the stored version avoids spurious new_version alerts when Chrome HTML
+    # scraping temporarily fails and returns an empty string.
+    if metadata.version:
+        ext.version = metadata.version
+    # Persist the same effective values that were scored, so risk_detail stays
+    # consistent with the stored row (#142).
+    ext.install_count = effective.install_count
+    ext.last_updated = effective.last_updated
+    if analysis:
+        # Only update stored permissions from a fresh successful inspection;
+        # keeping stale values avoids spurious permission_change alerts when
+        # the package download temporarily fails.
+        ext.permissions = json.dumps(effective.permissions)
+    ext.last_fetched_at = datetime.now(timezone.utc)
+    ext.risk_score = risk.total
+    ext.risk_detail = json.dumps(risk._asdict())
+    if analysis:
+        # Serialization lives on the dataclass so the stored field list can't
+        # drift from the render defaults in routes/ui.py (#164).
+        ext.package_analysis = json.dumps(analysis.to_json_dict())
+
+
+async def _merge_pending_events(session: AsyncSession, ext: Extension, events: list[ChangeEvent]) -> list[ChangeEvent]:
+    """Merge freshly-detected events into the durable pending-alert marker under a
+    row lock, and return the full pending set the caller should fire.
+
+    Persist the pending events in the SAME transaction as the state change so they
+    commit atomically (#109). If the process dies before fire_pending_alerts runs,
+    the marker survives and the next cycle re-fires them; fire_pending_alerts clears
+    it on success.
+
+    MERGE rather than overwrite: a prior delivery may have failed and intentionally
+    left its events in the marker for retry. Overwriting (with the new events, or
+    None when nothing changed) would silently drop them — and the manual-refresh
+    path doesn't run recovery first, so it can't rely on the scheduler having
+    drained them.
+
+    The merge is a read-modify-write, so do it under a row lock, or two refreshes of
+    the SAME extension that overlap (a manual API refresh racing the scheduler cycle)
+    could each read the old marker and last-writer-wins would drop one side's events
+    (#109 review). Flush this row's other changes first (also assigns ext.id on a
+    first-time insert), then SELECT ... FOR UPDATE the marker: the locking read
+    returns the *current committed* value — not the stale one loaded before a
+    concurrent writer committed — and the lock is held until the caller commits, so
+    the other writer's events are appended, never clobbered. We return the full
+    merged set so the caller fires everything pending, not just this refresh's new
+    events.
+    """
+    new_events = [asdict(e) for e in events]
+    await session.flush()
+    locked_marker = (
+        await session.exec(select(Extension.pending_alert_events).where(Extension.id == ext.id).with_for_update())
+    ).one()
+    try:
+        prior = json.loads(locked_marker) if locked_marker else []
+    except (ValueError, TypeError):
+        prior = []  # a corrupt marker can't be delivered anyway; don't fail the fetch over it
+    pending = prior + new_events
+    ext.pending_alert_events = json.dumps(pending) if pending else None
+    return [ChangeEvent(**e) for e in pending]
 
 
 async def fetch_and_store(
@@ -45,36 +219,7 @@ async def fetch_and_store(
 
     metadata, pkg_bytes = await fetcher.fetch(ext.extension_id)
 
-    # score_popularity's sudden-drop check only compares the current reading
-    # against the immediately preceding one (history[-2]), so load just the two
-    # most recent stored counts instead of scanning the whole install-count
-    # history — which is unbounded when retention is disabled (the default) and
-    # was being fully hydrated on every refresh of every watchlist extension,
-    # O(watchlist × history) per scheduler cycle (#146). Query column-only and
-    # before staging the new row, so the "previous" reading is the last real
-    # fetch rather than the row we're about to add.
-    previous_counts = (
-        await session.exec(
-            select(InstallCountHistory.install_count)
-            .where(InstallCountHistory.extension_id == ext.id)
-            .order_by(InstallCountHistory.recorded_at.desc(), InstallCountHistory.id.desc())
-            .limit(2)
-        )
-    ).all()
-
-    if metadata.install_count is not None:
-        session.add(
-            InstallCountHistory(
-                extension_id=ext.id,
-                install_count=metadata.install_count,
-            )
-        )
-        # Ascending (oldest→newest) with the new reading last, so history[-2] is
-        # the most recent stored count — the ordering score_popularity expects.
-        history = [*reversed(previous_counts), metadata.install_count]
-    else:
-        # No new reading this cycle: the stored counts alone, oldest→newest.
-        history = list(reversed(previous_counts))
+    history = await _stage_install_reading(session, ext, metadata)
 
     analysis: PackageAnalysis | None = None
     if pkg_bytes:
@@ -86,75 +231,21 @@ async def fetch_and_store(
         except InspectorError as exc:
             logger.debug("Inspector failed for %s: %s", ext.extension_id, exc)
 
-    # When analysis is unavailable, fall back to stored values so that a
-    # transient package download failure doesn't look like permissions being
-    # removed and trigger spurious permission_change / risk_level_change alerts.
-    if analysis:
-        permissions: list[str] = analysis.permissions
-        host_permissions: list[str] = analysis.host_permissions
-    else:
-        permissions = json.loads(ext.permissions or "[]")
-        stored_pkg = json.loads(ext.package_analysis or "null") or {}
-        host_permissions = stored_pkg.get("host_permissions", [])
-
-    # A 200-status scrape can still be a partial parse (publisher="",
-    # install_count=None, last_updated=None — Chrome HTML never raises on a
-    # shifted layout). Like version/permissions, fall back to the stored values
-    # so one bad response can't swing the score (~+31 across publisher/
-    # popularity/staleness) and fire a spurious risk_level_change alert (#142).
-    # The manifest author fills the publisher gap only when no store-sourced
-    # publisher has ever been seen — it must never override a stored one, or an
-    # author/publisher mismatch would flap publisher_change alerts on every
-    # partial parse. publisher_changed likewise requires a non-empty
-    # store-sourced publisher: an empty parse is not a change signal.
-    publisher_changed = bool(
-        ext.last_fetched_at and ext.publisher and metadata.publisher and ext.publisher != metadata.publisher
-    )
-    publisher = metadata.publisher or ext.publisher or (analysis.author if analysis else "")
-    install_count = metadata.install_count if metadata.install_count is not None else ext.install_count
-    last_updated = metadata.last_updated or ext.last_updated
+    effective = _effective_values(ext, metadata, analysis)
 
     risk = compute_risk_score(
-        permissions=permissions,
-        host_permissions=host_permissions,
-        install_count=install_count,
+        permissions=effective.permissions,
+        host_permissions=effective.host_permissions,
+        install_count=effective.install_count,
         install_history=history,
-        publisher=publisher,
-        publisher_changed=publisher_changed,
+        publisher=effective.publisher,
+        publisher_changed=effective.publisher_changed,
         publisher_verified=metadata.publisher_verified,
-        last_updated=last_updated,
+        last_updated=effective.last_updated,
         analysis=analysis,
     )
 
-    # name/description are deliberately unguarded (cosmetic, no score or alert
-    # impact) — a partial Chrome parse can transiently persist name=extension_id
-    # until the next good fetch.
-    ext.name = metadata.name
-    ext.publisher = publisher
-    ext.description = metadata.description
-    ext.store_url = metadata.store_url
-    # Only update version when the store returns a non-empty value; keeping
-    # the stored version avoids spurious new_version alerts when Chrome HTML
-    # scraping temporarily fails and returns an empty string.
-    if metadata.version:
-        ext.version = metadata.version
-    # Persist the same effective values that were scored, so risk_detail stays
-    # consistent with the stored row (#142).
-    ext.install_count = install_count
-    ext.last_updated = last_updated
-    if analysis:
-        # Only update stored permissions from a fresh successful inspection;
-        # keeping stale values avoids spurious permission_change alerts when
-        # the package download temporarily fails.
-        ext.permissions = json.dumps(permissions)
-    ext.last_fetched_at = datetime.now(timezone.utc)
-    ext.risk_score = risk.total
-    ext.risk_detail = json.dumps(risk._asdict())
-    if analysis:
-        # Serialization lives on the dataclass so the stored field list can't
-        # drift from the render defaults in routes/ui.py (#164).
-        ext.package_analysis = json.dumps(analysis.to_json_dict())
-
+    _apply_fetch_results(ext, metadata, analysis, effective, risk)
     session.add(ext)
     session.add(
         FetchLog(
@@ -173,37 +264,7 @@ async def fetch_and_store(
         logger.exception("Change detection failed for %s", ext.extension_id)
         events = []
 
-    # Persist the pending events in the SAME transaction as the state change so they commit
-    # atomically (#109). If the process dies before fire_pending_alerts runs, the marker
-    # survives and the next cycle re-fires them; fire_pending_alerts clears it on success.
-    #
-    # MERGE rather than overwrite: a prior delivery may have failed and intentionally left
-    # its events in the marker for retry. Overwriting (with the new events, or None when
-    # nothing changed) would silently drop them — and the manual-refresh path doesn't run
-    # recovery first, so it can't rely on the scheduler having drained them.
-    #
-    # The merge is a read-modify-write, so do it under a row lock, or two refreshes of the
-    # SAME extension that overlap (a manual API refresh racing the scheduler cycle) could each
-    # read the old marker and last-writer-wins would drop one side's events (#109 review).
-    # Flush this row's other changes first (also assigns ext.id on a first-time insert), then
-    # SELECT ... FOR UPDATE the marker: the locking read returns the *current committed* value
-    # — not the stale one loaded before a concurrent writer committed — and the lock is held
-    # until the caller commits, so the other writer's events are appended, never clobbered.
-    # We return the full merged set so the caller fires everything pending, not just this
-    # refresh's new events.
-    new_events = [asdict(e) for e in events]
-    await session.flush()
-    locked_marker = (
-        await session.exec(select(Extension.pending_alert_events).where(Extension.id == ext.id).with_for_update())
-    ).one()
-    try:
-        prior = json.loads(locked_marker) if locked_marker else []
-    except (ValueError, TypeError):
-        prior = []  # a corrupt marker can't be delivered anyway; don't fail the fetch over it
-    pending = prior + new_events
-    ext.pending_alert_events = json.dumps(pending) if pending else None
-    events = [ChangeEvent(**e) for e in pending]
-
+    events = await _merge_pending_events(session, ext, events)
     return ext, events
 
 
