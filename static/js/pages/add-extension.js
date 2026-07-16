@@ -9,10 +9,26 @@ document.addEventListener('alpine:init', () => {
     loading: false,
     error: '',
     detectStore() {
+      // Exact hostname comparison, not substring matching (CodeQL
+      // js/incomplete-url-substring-sanitization): a lookalike URL such as
+      // https://chromewebstore.google.com.evil.example must not match. This is
+      // UX pre-selection only — the server re-validates store + id on submit.
       const v = this.extensionId.trim();
-      if (v.includes('chromewebstore.google.com') || v.includes('chrome.google.com/webstore')) this.store = 'chrome';
-      else if (v.includes('marketplace.visualstudio.com')) this.store = 'vscode';
-      else if (v.includes('microsoftedge.microsoft.com')) this.store = 'edge';
+      let url = null;
+      try {
+        url = new URL(v);
+      } catch {
+        try {
+          url = new URL('https://' + v); // pasted without a scheme
+        } catch {
+          return; // plain extension id — leave the store selection alone
+        }
+      }
+      const host = url.hostname;
+      if (host === 'chromewebstore.google.com') this.store = 'chrome';
+      else if (host === 'chrome.google.com' && url.pathname.startsWith('/webstore')) this.store = 'chrome';
+      else if (host === 'marketplace.visualstudio.com') this.store = 'vscode';
+      else if (host === 'microsoftedge.microsoft.com') this.store = 'edge';
     },
     async submit() {
       this.error = '';
