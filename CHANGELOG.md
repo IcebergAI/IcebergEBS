@@ -58,6 +58,17 @@ release to diff against.
 
 ### Changed
 
+- **The frontend is fully self-hosted — no third-party CDN at runtime** (#85). Tailwind is now
+  a real v4 build (standalone CLI via `pytailwindcss`, `static/css/input.css` → a gitignored
+  `static/css/output.css`, built by `make css` / a Dockerfile `tailwind-builder` stage) instead
+  of the browser-compiled Play CDN; Alpine.js is vendored and version-pinned
+  (`static/js/vendor/alpine-3.15.12.min.js`) instead of a floating `3.x.x` from jsDelivr; the
+  IBM Plex fonts are served from `static/fonts/` instead of Google Fonts (also a privacy fix —
+  visitor IPs no longer leak to Google). The Play-CDN config shim `static/js/tailwind-config.js`
+  is retired. Compose's Caddy now proxies `/static` to the app (like the K8s sidecar) since the
+  built CSS exists only inside the app image; the CSP drops `cdn.tailwindcss.com`,
+  `cdn.jsdelivr.net`, `fonts.googleapis.com` and `fonts.gstatic.com` — every source directive is
+  same-origin, enforced by `tests/test_no_third_party_origins.py`.
 - **Replaced nginx with [Caddy](https://caddyserver.com) as the edge reverse proxy** (#188).
   The canonical security headers — CSP (with its inline-script hash), HSTS, and the rest — now
   live in **one** place, `caddy/headers.caddy`, imported by both the Compose Caddyfile and the

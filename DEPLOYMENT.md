@@ -29,11 +29,12 @@ IcebergEBS runs on PostgreSQL (dev, test, and production — SQLite is not suppo
 | `docker-compose.yml` | Three-service stack (postgres, app, caddy) |
 | `.dockerignore` | Exclude secrets, venvs, DB files |
 | `.env.example` | Template for required env vars |
-| `caddy/Caddyfile` | Compose edge config (TLS termination, static, headers, proxy) |
+| `caddy/Caddyfile` | Compose edge config (TLS termination, headers, proxy — /static included) |
 | `caddy/Caddyfile.k8s` | In-pod sidecar config for Kubernetes (plain HTTP behind the ingress) |
 | `caddy/headers.caddy` | Canonical security headers — the single CSP home, imported by both Caddyfiles |
 | `caddy/generate-dev-cert.sh` | One-shot self-signed cert for local dev |
-| `static/js/tailwind-config.js` | Move inline Tailwind config out of HTML (required for CSP) |
+| `static/css/input.css` | Tailwind v4 entry point — built to the gitignored `static/css/output.css` (#85) |
+| `static/js/vendor/` | Vendored, version-pinned Alpine.js (no CDN at runtime, #85) |
 
 ## Files to modify
 
@@ -41,7 +42,6 @@ IcebergEBS runs on PostgreSQL (dev, test, and production — SQLite is not suppo
 |------|--------|
 | `pyproject.toml` / `uv.lock` | `asyncpg` (async Postgres driver) in the locked runtime set |
 | `app/database.py` | Postgres engine + tuned connection pool |
-| `app/templates/base.html` | Replace inline `tailwind.config` script with `<script src="/static/js/tailwind-config.js">` |
 
 ---
 
@@ -73,28 +73,15 @@ engine: AsyncEngine = create_async_engine(
 
 ---
 
-## 3. `app/templates/base.html` + `static/js/tailwind-config.js`
+## 3. Frontend assets — fully self-hosted (#85)
 
-The existing inline `tailwind.config = {...}` block (lines 16–25 of `base.html`) cannot be hash-allowed in a CSP without tracking the hash across every edit. Move it to a static file:
+No third-party origin is contacted at runtime (`tests/test_no_third_party_origins.py` enforces it): the old Tailwind Play CDN, jsDelivr Alpine and Google Fonts dependencies are gone.
 
-**`static/js/tailwind-config.js`**:
-```js
-tailwind.config = {
-  theme: { extend: {
-    fontFamily: {
-      sans: ['"IBM Plex Sans"', 'system-ui', 'sans-serif'],
-      mono: ['"IBM Plex Mono"', 'ui-monospace', 'monospace'],
-    },
-  } },
-};
-```
+- **Tailwind v4** is compiled by the standalone CLI (via `pytailwindcss`, a `dev`-group dependency) from `static/css/input.css` into `static/css/output.css`. `output.css` is a **gitignored build artifact**: images build it in the Dockerfile `tailwind-builder` stage; local checkouts build it with `make css` (`make dev` runs it automatically). **A bare source-checkout deploy (uvicorn straight from `git pull`) must run `make css` after every pull** or `/static/css/output.css` 404s. The CLI binary is pinned via `TAILWINDCSS_VERSION` in the Makefile, Dockerfile and ci.yml — bump together.
+- **Alpine.js** is vendored and version-pinned at `static/js/vendor/alpine-3.15.12.min.js`.
+- **Fonts** (IBM Plex Sans/Mono woff2) are served from `static/fonts/` via `static/css/fonts.css`.
 
-**`base.html`**: Replace the inline `<script>…tailwind.config…</script>` block with:
-```html
-<script src="/static/js/tailwind-config.js"></script>
-```
-
-The anti-flash inline script (line 7) cannot be moved — it must execute before first paint to prevent a theme flash. It is allowed in the CSP via a static SHA-256 hash computed during implementation:
+The anti-flash inline script (line 7 of `base.html`/`login.html`) cannot be moved to a file — it must execute before first paint to prevent a theme flash. It is allowed in the CSP via a static SHA-256 hash:
 ```
 sha256-<hash-of-exact-script-bytes>
 ```
@@ -123,6 +110,19 @@ COPY pyproject.toml uv.lock ./
 RUN uv sync --frozen --no-dev
 
 
+# Builds the gitignored static/css/output.css (#85) — see section 3.
+FROM python:3.14-slim AS tailwind-builder
+
+RUN pip install --no-cache-dir "pytailwindcss>=0.3"
+
+WORKDIR /build
+COPY static/ static/
+COPY app/templates/ app/templates/
+
+ENV TAILWINDCSS_VERSION=v4.3.1
+RUN tailwindcss -i static/css/input.css -o static/css/output.css --minify
+
+
 FROM python:3.14-slim
 
 WORKDIR /app
@@ -133,6 +133,7 @@ COPY --from=builder --chown=appuser:appuser /opt/venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 
 COPY --chown=appuser:appuser . .
+COPY --from=tailwind-builder --chown=appuser:appuser /build/static/css/output.css static/css/output.css
 
 USER appuser
 
@@ -400,7 +401,7 @@ The **single** home for the canonical security headers, imported by both `caddy/
 # (see the "Inline script hash" section). Caddy's `header` SETs (replaces) each value,
 # so exactly one canonical copy reaches the client even though the app emits a baseline.
 header {
-	Content-Security-Policy "default-src 'self'; script-src 'self' 'sha256-<HASH>' https://cdn.tailwindcss.com https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; object-src 'none'; form-action 'self'"
+	Content-Security-Policy "default-src 'self'; script-src 'self' 'sha256-<HASH>'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; object-src 'none'; form-action 'self'"
 	Strict-Transport-Security "max-age=63072000; includeSubDomains; preload"
 	X-Content-Type-Options "nosniff"
 	X-Frame-Options "DENY"
@@ -410,13 +411,13 @@ header {
 }
 ```
 
-Note on `style-src 'unsafe-inline'`: Tailwind CDN injects styles at runtime via a `<style>` tag; this directive is unavoidable with the CDN build. To eliminate it entirely, switch to the Tailwind CLI build process (a future hardening step, not in scope here).
+Note on `style-src 'unsafe-inline'`: the templates carry pervasive inline `style="…"` attributes (dynamic widths, token-var colours), which this directive permits. Style injection is not a script-execution vector; tightening it further is tracked with the strict-CSP work (#106). No directive references a third-party origin — every asset is self-hosted (#85).
 
 ---
 
 ## 10. `caddy/Caddyfile` (Compose) and `caddy/Caddyfile.k8s` (Kubernetes)
 
-The Compose Caddyfile terminates TLS on :443, serves the static assets directly, sets the canonical headers, and proxies everything else to the app. A plain-HTTP :80 site answers the container healthcheck and redirects everything else to HTTPS. The repo files are authoritative — abbreviated here:
+The Compose Caddyfile terminates TLS on :443, sets the canonical headers, and proxies everything — including `/static`, which the app serves via StaticFiles — to the app (same topology as the K8s sidecar; since #85 the built `output.css` exists only inside the app image, so there is nothing on the host for Caddy to serve). A plain-HTTP :80 site answers the container healthcheck and redirects everything else to HTTPS. The repo files are authoritative — abbreviated here:
 
 ```caddy
 {
@@ -442,11 +443,6 @@ The Compose Caddyfile terminates TLS on :443, serves the static assets directly,
 	}
 	import headers.caddy      # the single canonical-headers source (section 9)
 
-	handle_path /static/* {
-		root * /srv/static
-		file_server
-		header Cache-Control "public, immutable, max-age=31536000"
-	}
 	handle {
 		reverse_proxy app:8000 {
 			# Single canonical client IP; a client-supplied XFF is discarded at the edge (#77).
@@ -479,7 +475,7 @@ Note the **trailing semicolon** — it is part of the script body and therefore 
 hashed bytes. Omitting it yields a hash that does not match the script, and the CSP then
 blocks the very script it was meant to allow.
 
-Substitute the result as `'sha256-<base64>'` in `security_headers.conf`. This is the only inline script remaining after the `tailwind-config.js` extraction.
+Substitute the result as `'sha256-<base64>'` in `caddy/headers.caddy` (and re-mirror the Helm ConfigMap). This is the only inline script in the app.
 
 ---
 
@@ -487,8 +483,8 @@ Substitute the result as `'sha256-<base64>'` in `security_headers.conf`. This is
 
 1. `pyproject.toml` — add `asyncpg`, then `uv lock`
 2. `app/database.py` — Postgres engine + pool settings
-3. `static/js/tailwind-config.js` — new file
-4. `app/templates/base.html` — replace inline script block with `<script src>` tag
+3. `static/css/input.css` + `make css` — Tailwind build (#85)
+4. `app/templates/base.html` — self-hosted asset links (fonts.css, output.css, vendored Alpine)
 5. `Dockerfile`, `.dockerignore`, `.env.example`
 6. `docker-compose.yml`
 7. `caddy/generate-dev-cert.sh`
@@ -516,8 +512,9 @@ curl -sko /dev/null -D - https://localhost/ | grep -E "HTTP|Content-Security|Str
 # HTTP -> HTTPS redirect
 curl -sI http://localhost/ | head -3
 
-# Static asset served by Caddy (not proxied through Python)
-curl -sI https://localhost/static/css/app.css | grep -E "Cache-Control|Server"
+# Static assets proxied to the app (which serves them via StaticFiles) — must be 200,
+# including the image-built Tailwind artifact
+curl -sko /dev/null -w "%{http_code}\n" https://localhost/static/css/output.css
 
 # Tests pass against a containerized Postgres (start one with `make db` first)
 ICEBERG_EBS_TEST_DATABASE_URL=postgresql+asyncpg://iceberg_ebs:iceberg_ebs@localhost:5432/iceberg_ebs \

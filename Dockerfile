@@ -28,6 +28,23 @@ COPY pyproject.toml uv.lock ./
 RUN uv sync --frozen --no-dev
 
 
+# Tailwind build stage (#85): compiles static/css/output.css (a gitignored build
+# artifact) from static/css/input.css with the standalone CLI — no Node. Only the
+# files the class scanner needs are copied in, which also keeps the @source scan
+# surface identical to what input.css declares. TAILWINDCSS_VERSION pins the CLI
+# binary — keep in lockstep with the Makefile `css` target and the ci.yml lint job.
+FROM python:3.14-slim AS tailwind-builder
+
+RUN pip install --no-cache-dir "pytailwindcss>=0.3"
+
+WORKDIR /build
+COPY static/ static/
+COPY app/templates/ app/templates/
+
+ENV TAILWINDCSS_VERSION=v4.3.1
+RUN tailwindcss -i static/css/input.css -o static/css/output.css --minify
+
+
 FROM python:3.14-slim
 
 WORKDIR /app
@@ -38,6 +55,9 @@ COPY --from=builder --chown=appuser:appuser /opt/venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 
 COPY --chown=appuser:appuser . .
+# The checkout has no output.css (gitignored); take the built one from the
+# tailwind-builder stage.
+COPY --from=tailwind-builder --chown=appuser:appuser /build/static/css/output.css static/css/output.css
 
 # Build version is stamped in (the image has no .git for runtime resolution).
 # Pass with: docker build --build-arg ICEBERG_EBS_VERSION="build 142 · 8ebe5f8" .
