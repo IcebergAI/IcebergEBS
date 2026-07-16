@@ -73,6 +73,27 @@ class PackageFindingOut(BaseModel):
     file: str | None = None
     line: int | None = None
 
+    @classmethod
+    def from_raw(cls, finding: object) -> "PackageFindingOut | None":
+        """Build from one stored finding, tolerating the malformed shapes a partial write
+        or manual DB edit can leave (#150): a non-dict entry is skipped (returns None), and
+        missing/blank string fields fall back to the same defaults the detail page uses
+        (`findings_view`), so one bad finding can't 500 the whole `ExtensionOut` response the
+        way a bare `PackageFindingOut(**finding)` would."""
+        if not isinstance(finding, dict):
+            return None
+        code = str(finding.get("code") or "")
+        line = finding.get("line")
+        return cls(
+            code=code,
+            severity=str(finding.get("severity") or "low"),
+            title=str(finding.get("title") or code or "Detection finding"),
+            detail=str(finding.get("detail") or ""),
+            source=str(finding.get("source") or "package"),
+            file=str(finding["file"]) if isinstance(finding.get("file"), str) else None,
+            line=line if isinstance(line, int) and not isinstance(line, bool) else None,
+        )
+
 
 class ThreatIntelLookupOut(BaseModel):
     label: str
@@ -127,7 +148,17 @@ class ExtensionOut(BaseModel):
         perms = ext.permissions_list()
         analysis_raw = ext.analysis_dict()
         host_perms = analysis_raw.get("host_permissions", []) if analysis_raw else []
-        findings = analysis_raw.get("findings", []) if analysis_raw else []
+        if not isinstance(host_perms, list):
+            host_perms = []  # a wrong-shaped stored value must not 500 the response (#150)
+        findings_raw = analysis_raw.get("findings", []) if analysis_raw else []
+        # Tolerate malformed findings (non-dict entries, dicts missing required fields, or a
+        # non-list `findings`) the way the detail page already does, instead of letting
+        # PackageFindingOut(**finding) raise a 500 on the same threat model (#150).
+        findings = (
+            [f for f in (PackageFindingOut.from_raw(x) for x in findings_raw) if f is not None]
+            if isinstance(findings_raw, list)
+            else []
+        )
         threat_intel_indicators = build_threat_intel_indicators(analysis_raw) if include_threat_intel else []
         detail = ext.risk_detail_dict()
         return cls(
@@ -151,7 +182,7 @@ class ExtensionOut(BaseModel):
             risk_level=risk_level(ext.risk_score),
             install_footprint=ext.install_footprint,
             exposure=exposure(ext.risk_score, ext.install_footprint),
-            findings=[PackageFindingOut(**finding) for finding in findings],
+            findings=findings,
             threat_intel_indicators=[ThreatIntelIndicatorOut(**indicator) for indicator in threat_intel_indicators],
         )
 
