@@ -1,5 +1,6 @@
+import asyncio
 import logging
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 
 import httpx
 from fastapi import FastAPI, Request
@@ -22,6 +23,8 @@ from app.scheduler import create_scheduler, drain_inflight
 from app.version import get_version
 
 setup_logging()
+
+logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
@@ -61,10 +64,23 @@ async def lifespan(app: FastAPI):
 
     # Re-fire alerts persisted-but-not-delivered before the previous shutdown/crash, so a
     # restart recovers them promptly rather than waiting for the next scheduled cycle (#109).
+    # Run it as a BACKGROUND task, not inline: uvicorn does not accept connections (including
+    # /healthz) until lifespan startup finishes, and recovery POSTs webhooks sequentially — a
+    # backlog behind a dead/slow destination would burn one webhook timeout per pending
+    # extension before the app could bind, potentially exceeding the liveness window and getting
+    # the pod killed mid-recovery (#155). The scheduler also recovers at the head of each cycle
+    # and the durable marker is the backstop, so it's safe for this task to be cancelled at
+    # shutdown.
     from app.database import engine as _engine
     from app.services import recover_pending_alerts
 
-    await recover_pending_alerts(_engine, client)
+    async def _startup_recovery() -> None:
+        try:
+            await recover_pending_alerts(_engine, client)
+        except Exception:
+            logger.exception("Background startup pending-alert recovery failed")
+
+    app.state.recovery_task = asyncio.create_task(_startup_recovery())
 
     yield
 
@@ -78,6 +94,14 @@ async def lifespan(app: FastAPI):
     scheduler.pause()
     await drain_inflight(settings.shutdown_drain_seconds)
     scheduler.shutdown(wait=False)
+    # Interrupt the background startup-recovery task if it's still delivering: cancelling an
+    # in-flight webhook is safe (the durable marker re-fires it next cycle/startup) and we must
+    # not close the HTTP client out from under it.
+    recovery_task = getattr(app.state, "recovery_task", None)
+    if recovery_task is not None and not recovery_task.done():
+        recovery_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await recovery_task
     await client.aclose()
 
 

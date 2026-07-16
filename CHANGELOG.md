@@ -100,6 +100,12 @@ release to diff against.
 
 ### Fixed
 
+- Startup no longer blocks on re-delivering recovered webhook alerts: `recover_pending_alerts`
+  now runs as a background task after the app binds, instead of inline before uvicorn accepts
+  connections. Previously a backlog of undelivered alerts behind a dead/slow destination could
+  burn one webhook timeout per pending extension before `/healthz` answered — long enough to trip
+  the liveness probe and get the pod killed mid-recovery. The scheduler still recovers at the head
+  of each cycle and the durable marker remains the backstop, so nothing is lost (#155).
 - A transient Chrome scrape mis-parse (a 200 page with a shifted layout) no longer clobbers
   the stored publisher/install count/last-updated date, spiking the risk score ~+31 and firing
   spurious `risk_level_change` alerts — stored values are kept, matching the existing guards
