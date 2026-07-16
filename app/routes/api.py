@@ -9,7 +9,7 @@ from urllib.parse import parse_qs, urlparse
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import JSONResponse, Response
-from pydantic import BaseModel
+from pydantic import BaseModel, StringConstraints
 from sqlalchemy import func
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
@@ -230,7 +230,10 @@ class InventoryItem(BaseModel):
     # downstream, like the add/bulk endpoints).
     store: StoreType
     extension_id: str
-    asset_id: str
+    # Stripped + bounded; a blank asset_id is rejected per-item in the loop (#154) rather than
+    # 422-ing the whole SOAR batch. Left empty, it would upsert a real InstallObservation and
+    # count as a distinct asset — inflating install_footprint and therefore exposure.
+    asset_id: Annotated[str, StringConstraints(strip_whitespace=True, max_length=255)]
     asset_type: str | None = None
     department: str | None = None
     source: str | None = None  # overrides the batch-level source for this row
@@ -783,6 +786,20 @@ async def ingest_inventory(
     affected: set[int] = set()
     tally = {"deferred": 0, "observed": 0, "invalid": 0, "error": 0}
     for item in body.observations:
+        if not item.asset_id:
+            # A blank asset_id (empty or whitespace, now stripped) is not a real asset — reject
+            # it so it never becomes an InstallObservation that inflates install_footprint (#154).
+            tally["invalid"] += 1
+            results.append(
+                {
+                    "store": item.store,
+                    "extension_id": item.extension_id,
+                    "asset_id": item.asset_id,
+                    "status": "invalid",
+                    "detail": "asset_id must not be empty",
+                }
+            )
+            continue
         enroll = await _enroll_extension(item.store, item.extension_id, session, client, user_id, score=False)
         norm_id = enroll.get("extension_id", item.extension_id)
         if enroll["status"] in ("invalid", "error"):

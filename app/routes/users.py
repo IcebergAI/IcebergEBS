@@ -1,7 +1,8 @@
 from datetime import datetime, timezone
+from typing import Annotated
 
 from fastapi import APIRouter, HTTPException, Response
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, StringConstraints, field_validator
 from sqlalchemy import delete as sa_delete
 from sqlalchemy import update as sa_update
 from sqlmodel import select
@@ -11,6 +12,12 @@ from app.deps import AdminUser, CurrentUser, SessionDep
 from app.models import ApiKey, Extension, User
 
 router = APIRouter(prefix="/api", tags=["users"])
+
+# Bound the identity-like fields so a blank/whitespace or multi-KB value can't be created
+# (a blank username renders empty in the UI and is confusing at login; an unbounded one flows
+# into rate-limiter keys and session cookies) — #154.
+MAX_USERNAME_LENGTH = 128
+MAX_EMAIL_LENGTH = 254
 
 
 def _reject_over_long_password(v: str) -> str:
@@ -29,12 +36,18 @@ class UserOut(BaseModel):
 
 
 class CreateUserIn(BaseModel):
-    username: str
+    username: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=MAX_USERNAME_LENGTH)]
     password: str = Field(min_length=8)
-    email: str | None = None
+    email: Annotated[str, StringConstraints(strip_whitespace=True, max_length=MAX_EMAIL_LENGTH)] | None = None
     is_admin: bool = False
 
     _check_password = field_validator("password")(_reject_over_long_password)
+
+    @field_validator("email")
+    @classmethod
+    def _blank_email_to_none(cls, v: str | None) -> str | None:
+        # A stripped-empty email is stored as NULL rather than "" (#154).
+        return v or None
 
 
 class ChangePasswordIn(BaseModel):

@@ -67,6 +67,30 @@ async def test_create_user_duplicate(client):
     assert r.status_code == 409
 
 
+async def test_create_user_rejects_blank_username(client):
+    """#154: an empty or whitespace-only username must 422, not create a blank account."""
+    for username in ("", "   "):
+        r = await client.post("/api/users", json={"username": username, "password": "password123"})
+        assert r.status_code == 422, username
+
+
+async def test_create_user_rejects_overlong_username(client):
+    r = await client.post("/api/users", json={"username": "a" * 200, "password": "password123"})
+    assert r.status_code == 422
+
+
+async def test_create_user_strips_username(client):
+    r = await client.post("/api/users", json={"username": "  spaced  ", "password": "password123"})
+    assert r.status_code == 201
+    assert r.json()["username"] == "spaced"
+
+
+async def test_create_user_blank_email_stored_as_null(client):
+    r = await client.post("/api/users", json={"username": "noemail", "password": "password123", "email": "   "})
+    assert r.status_code == 201
+    assert r.json()["email"] is None
+
+
 async def test_delete_user(client):
     r = await client.post("/api/users", json={"username": "todelete", "password": "password123"})
     uid = r.json()["id"]
