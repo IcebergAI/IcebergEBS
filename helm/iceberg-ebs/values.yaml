@@ -13,11 +13,15 @@ image:
 # Edge reverse proxy sidecar (#188). The cluster ingress terminates TLS and forwards to
 # this Caddy on 8080; Caddy sets the canonical security headers and proxies to the app on
 # localhost:8000. Pinned to a minor (a floating `caddy:alpine` would drift the edge on
-# every pull); Dependabot's docker ecosystem keeps it current.
+# every pull). Dependabot does NOT see this file (its `docker` ecosystem reads Dockerfile
+# `FROM` lines and `docker-compose` reads the compose files — neither parses Helm values),
+# so this tag is kept in lockstep with the Compose Caddy image by
+# tests/test_helm_caddy.py::test_helm_caddy_tag_matches_compose: when Dependabot bumps the
+# Compose image, that test fails until this tag is bumped to match in the same PR (#200).
 caddy:
   image:
     repository: caddy
-    tag: "2.8-alpine"
+    tag: "2.11-alpine"
     pullPolicy: IfNotPresent
   resources:
     requests:
