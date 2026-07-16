@@ -56,6 +56,17 @@ class Settings(BaseSettings):
     api_rate_limit_enabled: bool = False
     api_rate_limit_per_minute: int = 60
     api_rate_limit_burst: int = 20
+    # Per-IP request-rate cap on POST /login (#196). The failure-keyed LoginRateLimiter
+    # above only locks a specific (IP, username) pair after N *failures*, so on its own it
+    # stops neither username-spraying from one IP nor a bcrypt-cost flood of the login
+    # endpoint. This is the edge equivalent of the old nginx `login` limit_req zone
+    # (5 req/min, burst 5) that the Caddy migration dropped — a token bucket keyed on the
+    # client IP. Its own enable switch, independent of api_rate_limit_enabled (so disabling
+    # API limiting can't silently drop login brute-force/DoS protection); defaults off so the
+    # test suite's login flows aren't throttled, and the Compose/Helm prod env sets it on.
+    login_rate_limit_enabled: bool = False
+    login_rate_limit_per_minute: int = 5
+    login_rate_limit_burst: int = 5
     app_base_url: str = ""  # e.g. "https://icebergebs.example.com" — used in webhook payloads
     # Emit logs as single-line JSON (for a log collector) instead of timestamped text (#89).
     log_json: bool = False

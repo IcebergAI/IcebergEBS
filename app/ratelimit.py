@@ -157,8 +157,13 @@ class RequestRateLimiter:
                 del self._buckets[k]
 
 
-# Process-wide singleton used by the API rate-limit middleware (app/main.py).
+# Process-wide singletons used by the edge rate-limit middleware (app/main.py):
+# one bucket for the JSON API, a separate (tighter) one for POST /login (#196).
 api_limiter = RequestRateLimiter(
     per_minute=settings.api_rate_limit_per_minute,
     burst=settings.api_rate_limit_burst,
+)
+login_request_limiter = RequestRateLimiter(
+    per_minute=settings.login_rate_limit_per_minute,
+    burst=settings.login_rate_limit_burst,
 )

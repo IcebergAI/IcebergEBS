@@ -454,7 +454,7 @@ The Compose Caddyfile terminates TLS on :443, serves the static assets directly,
 }
 ```
 
-**Rate limiting is not done in Caddy.** Stock Caddy has no `rate_limit` directive, so the nginx `login`/`api` `limit_req` zones moved **app-side** (`app/ratelimit.py`; the API limiter is enabled by `ICEBERG_EBS_API_RATE_LIMIT_ENABLED`, default on in the Compose/Helm env). In Kubernetes the cluster ingress also rate-limits at the true edge (`limit-rps`/`limit-connections`).
+**Rate limiting is not done in Caddy.** Stock Caddy has no `rate_limit` directive, so the nginx `login`/`api` `limit_req` zones both moved **app-side** (`app/ratelimit.py`): the API limiter over `/api/*` (enabled by `ICEBERG_EBS_API_RATE_LIMIT_ENABLED`) and a tighter per-IP token bucket over `POST /login` (enabled by `ICEBERG_EBS_LOGIN_RATE_LIMIT_ENABLED`, #196) — the login one exists because `POST /login` pays the bcrypt cost even for unknown users, so an unthrottled flood is a CPU-DoS and username-spray vector the failure-keyed lockout can't stop. Both default on in the Compose/Helm env; login has its own switch so disabling the API limiter can't silently drop login protection. In Kubernetes the cluster ingress also rate-limits at the true edge (`limit-rps`/`limit-connections`).
 
 `caddy/Caddyfile.k8s` is the in-pod sidecar variant: it listens on plain HTTP :8080 (the ingress terminates TLS), sets `trusted_proxies static private_ranges` so `{client_ip}` resolves to the real external client the ingress recorded, imports the same `headers.caddy`, and proxies to `localhost:8000`. It is embedded as a mirror in the Helm `caddy` ConfigMap.
 
@@ -603,7 +603,8 @@ icebergEbs:
   httpxTimeout: 15.0       # outbound HTTP timeout in seconds
   secureCookies: true
   logJson: false           # emit single-line JSON logs for a collector (#89)
-  apiRateLimitEnabled: true # app-side API rate limit (#188; Caddy has no rate_limit)
+  apiRateLimitEnabled: true   # app-side API rate limit (#188; Caddy has no rate_limit)
+  loginRateLimitEnabled: true # app-side POST /login rate limit (#196)
 
 # Caddy edge sidecar (#188): the cluster ingress forwards to it on :8080; it sets the
 # canonical security headers and proxies to the app on localhost:8000.
