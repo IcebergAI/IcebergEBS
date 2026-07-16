@@ -53,6 +53,12 @@ services:
       # disabling API limiting can't silently drop login brute-force/DoS protection.
       ICEBERG_EBS_API_RATE_LIMIT_ENABLED: ${ICEBERG_EBS_API_RATE_LIMIT_ENABLED:-true}
       ICEBERG_EBS_LOGIN_RATE_LIMIT_ENABLED: ${ICEBERG_EBS_LOGIN_RATE_LIMIT_ENABLED:-true}
+      # …and the rate/burst tuning knobs, forwarded so setting them in .env isn't silently
+      # ignored (#202). Defaults match app/config.py (api 60/min burst 20; login 5/min burst 5).
+      ICEBERG_EBS_API_RATE_LIMIT_PER_MINUTE: ${ICEBERG_EBS_API_RATE_LIMIT_PER_MINUTE:-60}
+      ICEBERG_EBS_API_RATE_LIMIT_BURST: ${ICEBERG_EBS_API_RATE_LIMIT_BURST:-20}
+      ICEBERG_EBS_LOGIN_RATE_LIMIT_PER_MINUTE: ${ICEBERG_EBS_LOGIN_RATE_LIMIT_PER_MINUTE:-5}
+      ICEBERG_EBS_LOGIN_RATE_LIMIT_BURST: ${ICEBERG_EBS_LOGIN_RATE_LIMIT_BURST:-5}
       # Emit logs as single-line JSON for a log collector (#89); default text.
       ICEBERG_EBS_LOG_JSON: ${ICEBERG_EBS_LOG_JSON:-false}
       # Forwarded so an operator who sets these in .env actually gets them (#87):

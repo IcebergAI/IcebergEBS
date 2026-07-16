@@ -355,6 +355,12 @@ silently ignored — #87). All settings use the `ICEBERG_EBS_` prefix.
 | `ICEBERG_EBS_SESSION_MAX_AGE` | `86400` | Session lifetime in seconds |
 | `ICEBERG_EBS_HTTPX_TIMEOUT` | `15.0` | Outbound HTTP timeout in seconds |
 | `ICEBERG_EBS_LOG_JSON` | `false` | Emit single-line JSON logs for a collector (#89) |
+| `ICEBERG_EBS_API_RATE_LIMIT_ENABLED` | `true` (prod env) | App-side `/api/*` rate limiting (#188) |
+| `ICEBERG_EBS_LOGIN_RATE_LIMIT_ENABLED` | `true` (prod env) | App-side `POST /login` rate limiting (#196) |
+| `ICEBERG_EBS_API_RATE_LIMIT_PER_MINUTE` | `60` | Sustained `/api/*` requests/min per client IP (#202) |
+| `ICEBERG_EBS_API_RATE_LIMIT_BURST` | `20` | `/api/*` back-to-back burst per client IP (#202) |
+| `ICEBERG_EBS_LOGIN_RATE_LIMIT_PER_MINUTE` | `5` | Sustained `POST /login` requests/min per client IP (#202) |
+| `ICEBERG_EBS_LOGIN_RATE_LIMIT_BURST` | `5` | `POST /login` back-to-back burst per client IP (#202) |
 
 Settings **not** in this table (e.g. the login rate-limit tuning `ICEBERG_EBS_LOGIN_MAX_ATTEMPTS` /
 `…_LOGIN_ATTEMPT_WINDOW_SECONDS` / `…_LOGIN_LOCKOUT_SECONDS`, `ICEBERG_EBS_API_KEY_LAST_USED_THROTTLE_SECONDS`,

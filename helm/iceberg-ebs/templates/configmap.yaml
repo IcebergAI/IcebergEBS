@@ -13,5 +13,9 @@ data:
   ICEBERG_EBS_HTTPX_TIMEOUT:          {{ .Values.icebergEbs.httpxTimeout | quote }}
   ICEBERG_EBS_SECURE_COOKIES:         {{ .Values.icebergEbs.secureCookies | quote }}
   ICEBERG_EBS_LOG_JSON:               {{ .Values.icebergEbs.logJson | quote }}
-  ICEBERG_EBS_API_RATE_LIMIT_ENABLED:   {{ .Values.icebergEbs.apiRateLimitEnabled | quote }}
-  ICEBERG_EBS_LOGIN_RATE_LIMIT_ENABLED: {{ .Values.icebergEbs.loginRateLimitEnabled | quote }}
+  ICEBERG_EBS_API_RATE_LIMIT_ENABLED:      {{ .Values.icebergEbs.apiRateLimitEnabled | quote }}
+  ICEBERG_EBS_LOGIN_RATE_LIMIT_ENABLED:    {{ .Values.icebergEbs.loginRateLimitEnabled | quote }}
+  ICEBERG_EBS_API_RATE_LIMIT_PER_MINUTE:   {{ .Values.icebergEbs.apiRateLimitPerMinute | quote }}
+  ICEBERG_EBS_API_RATE_LIMIT_BURST:        {{ .Values.icebergEbs.apiRateLimitBurst | quote }}
+  ICEBERG_EBS_LOGIN_RATE_LIMIT_PER_MINUTE: {{ .Values.icebergEbs.loginRateLimitPerMinute | quote }}
+  ICEBERG_EBS_LOGIN_RATE_LIMIT_BURST:      {{ .Values.icebergEbs.loginRateLimitBurst | quote }}

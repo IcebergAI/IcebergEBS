@@ -22,6 +22,11 @@ _FORWARDED_ENV = [
     # Login has its own switch so disabling API limiting can't silently drop it.
     "ICEBERG_EBS_API_RATE_LIMIT_ENABLED",
     "ICEBERG_EBS_LOGIN_RATE_LIMIT_ENABLED",
+    # …and their rate/burst tuning knobs, so an operator setting them isn't silently ignored (#202).
+    "ICEBERG_EBS_API_RATE_LIMIT_PER_MINUTE",
+    "ICEBERG_EBS_API_RATE_LIMIT_BURST",
+    "ICEBERG_EBS_LOGIN_RATE_LIMIT_PER_MINUTE",
+    "ICEBERG_EBS_LOGIN_RATE_LIMIT_BURST",
 ]
 
 
@@ -49,5 +54,9 @@ def test_helm_values_declare_forwarded_settings():
         "httpxTimeout",
         "apiRateLimitEnabled",
         "loginRateLimitEnabled",
+        "apiRateLimitPerMinute",
+        "apiRateLimitBurst",
+        "loginRateLimitPerMinute",
+        "loginRateLimitBurst",
     ):
         assert key in ie, f"helm values icebergEbs missing: {key}"

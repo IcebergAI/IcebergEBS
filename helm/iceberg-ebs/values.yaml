@@ -69,6 +69,12 @@ icebergEbs:
   # brute-force/DoS protection.
   apiRateLimitEnabled: true
   loginRateLimitEnabled: true
+  # Rate/burst tuning (#202): sustained requests/minute and back-to-back burst per client IP.
+  # Defaults match app/config.py — the old nginx zones (api 60/min burst 20; login 5/min burst 5).
+  apiRateLimitPerMinute: 60
+  apiRateLimitBurst: 20
+  loginRateLimitPerMinute: 5
+  loginRateLimitBurst: 5
 
 postgresql:
   auth:
