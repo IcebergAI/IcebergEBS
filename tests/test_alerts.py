@@ -8,10 +8,11 @@ import respx
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
+from app.config import settings
 from app.fetchers.base import ExtensionMetadata
 from app.main import app as fastapi_app
 from app.models import AlertDestination, AlertLog, AlertRule, Extension
-from app.notifications import ChangeEvent, detect_changes, fire_alerts
+from app.notifications import ChangeEvent, build_alert_payload, detect_changes, fire_alerts
 from app.routes.alerts import get_alert_log
 from app.services import fetch_and_store, fire_pending_alerts
 from app.webhooks import WebhookValidationError, send_webhook
@@ -1036,3 +1037,74 @@ async def test_delete_destination_preserves_alert_logs(client, test_db, admin_us
     r_log = await client.get("/api/alerts/log")
     assert r_log.status_code == 200
     assert len(r_log.json()) == 1
+
+
+# ---------------------------------------------------------------------------
+# build_alert_payload — the single source of the webhook shape (#168)
+# ---------------------------------------------------------------------------
+
+
+def test_build_alert_payload_shape():
+    payload = build_alert_payload(
+        text="hello",
+        event="risk_level_change",
+        ext_id=7,
+        name="Ext",
+        store="chrome",
+        store_url="https://store/ext",
+        old="low",
+        new="high",
+        risk_score=62,
+    )
+    assert payload == {
+        "text": "hello",
+        "event": "risk_level_change",
+        "extension": {"id": 7, "name": "Ext", "store": "chrome", "store_url": "https://store/ext"},
+        "change": {"old": "low", "new": "high"},
+        "risk_score": 62,
+    }
+
+
+def test_build_alert_payload_url_only_when_base_url_set(monkeypatch):
+    monkeypatch.setattr(settings, "app_base_url", "")
+    no_url = build_alert_payload(
+        text="t", event="test", ext_id=3, name="E", store="edge", store_url="u", old=1, new=2, risk_score=0
+    )
+    assert "iceberg_ebs_url" not in no_url["extension"]
+
+    monkeypatch.setattr(settings, "app_base_url", "https://ebs.example.com/")
+    with_url = build_alert_payload(
+        text="t", event="test", ext_id=3, name="E", store="edge", store_url="u", old=1, new=2, risk_score=0
+    )
+    # Trailing slash on the base is stripped; the id is interpolated.
+    assert with_url["extension"]["iceberg_ebs_url"] == "https://ebs.example.com/extensions/3"
+
+
+def test_test_and_real_alert_payloads_share_shape():
+    """The point of #168: the destination-test payload and a real alert payload are
+    built by the same function, so their on-the-wire shape can't drift apart."""
+    real = build_alert_payload(
+        text="real",
+        event="new_version",
+        ext_id=42,
+        name="Real Ext",
+        store="vscode",
+        store_url="https://store/real",
+        old="1.0",
+        new="1.1",
+        risk_score=80,
+    )
+    test = build_alert_payload(
+        text='IcebergEBS test alert from destination "D"',
+        event="test",
+        ext_id=0,
+        name="Example Extension",
+        store="chrome",
+        store_url="https://chromewebstore.google.com/detail/example",
+        old="low",
+        new="high",
+        risk_score=62,
+    )
+    assert real.keys() == test.keys()
+    assert real["extension"].keys() == test["extension"].keys()
+    assert real["change"].keys() == test["change"].keys()

@@ -9,9 +9,9 @@ from sqlalchemy import or_
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from app.config import settings
 from app.deps import CurrentUser, SessionDep, get_owned_or_404
 from app.models import AlertDestination, AlertLog, AlertRule, Extension
+from app.notifications import build_alert_payload
 from app.webhooks import WebhookValidationError, send_webhook, validate_webhook_url
 
 logger = logging.getLogger(__name__)
@@ -324,21 +324,19 @@ async def test_destination(
     session: SessionDep,
 ):
     dest = await get_owned_or_404(session, AlertDestination, dest_id, current_user.id)
-    ext_payload: dict = {
-        "id": 0,
-        "name": "Example Extension",
-        "store": "chrome",
-        "store_url": "https://chromewebstore.google.com/detail/example",
-    }
-    if settings.app_base_url:
-        ext_payload["iceberg_ebs_url"] = f"{settings.app_base_url.rstrip('/')}/extensions/0"
-    payload = {
-        "text": f'IcebergEBS test alert from destination "{dest.label}"',
-        "event": "test",
-        "extension": ext_payload,
-        "change": {"old": "low", "new": "high"},
-        "risk_score": 62,
-    }
+    # Built through the shared builder so the test webhook is byte-for-byte the same
+    # shape real alerts send — it can't silently drift as the payload evolves (#168).
+    payload = build_alert_payload(
+        text=f'IcebergEBS test alert from destination "{dest.label}"',
+        event="test",
+        ext_id=0,
+        name="Example Extension",
+        store="chrome",
+        store_url="https://chromewebstore.google.com/detail/example",
+        old="low",
+        new="high",
+        risk_score=62,
+    )
     client: httpx.AsyncClient = request.app.state.http_client
     try:
         resp = await send_webhook(client, dest.target, payload)
