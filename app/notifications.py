@@ -132,14 +132,17 @@ async def fire_alerts(
 ) -> None:
     """Find alert rules matching the given events and POST webhook payloads.
 
+    Every event is delivered against every matching rule — including multiple
+    events of the same type, which the merged pending marker can hold (#144). Do
+    not collapse to one event per type or the older undelivered event is lost.
+
     Uses its own dedicated session so AlertLog rows are committed immediately,
     independent of any caller transaction that might later be rolled back.
     """
     if not events or extension.user_id is None:
         return
 
-    event_map = {e.event_type: e for e in events}
-    event_types = list(event_map.keys())
+    event_types = list({e.event_type for e in events})
 
     async with AsyncSession(engine) as session:
         rules = (
@@ -161,60 +164,74 @@ async def fire_alerts(
         dests = (await session.exec(select(AlertDestination).where(AlertDestination.id.in_(dest_ids)))).all()
         dest_map = {d.id: d for d in dests}
 
+        # Group rules by the event type they fire on so EVERY event is delivered.
+        # The merged pending marker (#109) can hold several events of one type — e.g.
+        # new_version 1.0→1.1 (delivery failed, retained) then 1.1→1.2 — and firing
+        # one event per rule dropped the older one with no AlertLog even though
+        # fire_pending_alerts then clears the whole marker, losing it for good (#144).
+        rules_by_type: dict[str, list[AlertRule]] = {}
         for rule in rules:
-            dest = dest_map.get(rule.destination_id)
-            if not dest or not dest.enabled:
-                continue
+            rules_by_type.setdefault(rule.event_type, []).append(rule)
 
-            event = event_map[rule.event_type]
-            alert_text = _alert_text(event.event_type, extension.name, event.old_value, event.new_value)
-            payload = build_alert_payload(
-                text=alert_text,
-                event=event.event_type,
-                ext_id=extension.id,
-                name=extension.name,
-                store=extension.store,
-                store_url=extension.store_url,
-                old=event.old_value,
-                new=event.new_value,
-                risk_score=extension.risk_score,
-            )
+        logged = 0
+        # Deliver in list order — oldest→newest, the merge's chronological order — so a
+        # consumer learns every transition the extension passed through (e.g. a risk
+        # level that went low→high→low), not just the final one.
+        for event in events:
+            for rule in rules_by_type.get(event.event_type, []):
+                dest = dest_map.get(rule.destination_id)
+                if not dest or not dest.enabled:
+                    continue
 
-            success = True
-            error: str | None = None
-            try:
-                resp = await send_webhook(client, dest.target, payload)
-                resp.raise_for_status()
-                logger.info(
-                    "Alert webhook fired: event=%s ext=%d dest=%d status=%d",
-                    event.event_type,
-                    extension.id,
-                    dest.id,
-                    resp.status_code,
-                )
-            except Exception as exc:
-                success = False
-                error = str(exc)[:2000]
-                logger.warning(
-                    "Alert webhook failed: event=%s ext=%d dest=%d error=%s",
-                    event.event_type,
-                    extension.id,
-                    dest.id,
-                    exc,
+                alert_text = _alert_text(event.event_type, extension.name, event.old_value, event.new_value)
+                payload = build_alert_payload(
+                    text=alert_text,
+                    event=event.event_type,
+                    ext_id=extension.id,
+                    name=extension.name,
+                    store=extension.store,
+                    store_url=extension.store_url,
+                    old=event.old_value,
+                    new=event.new_value,
+                    risk_score=extension.risk_score,
                 )
 
-            session.add(
-                AlertLog(
-                    rule_id=rule.id,
-                    destination_id=dest.id,
-                    extension_id=extension.id,
-                    user_id=extension.user_id,
-                    event_type=event.event_type,
-                    detail=json.dumps({"old": event.old_value, "new": event.new_value}),
-                    success=success,
-                    error=error,
+                success = True
+                error: str | None = None
+                try:
+                    resp = await send_webhook(client, dest.target, payload)
+                    resp.raise_for_status()
+                    logger.info(
+                        "Alert webhook fired: event=%s ext=%d dest=%d status=%d",
+                        event.event_type,
+                        extension.id,
+                        dest.id,
+                        resp.status_code,
+                    )
+                except Exception as exc:
+                    success = False
+                    error = str(exc)[:2000]
+                    logger.warning(
+                        "Alert webhook failed: event=%s ext=%d dest=%d error=%s",
+                        event.event_type,
+                        extension.id,
+                        dest.id,
+                        exc,
+                    )
+
+                session.add(
+                    AlertLog(
+                        rule_id=rule.id,
+                        destination_id=dest.id,
+                        extension_id=extension.id,
+                        user_id=extension.user_id,
+                        event_type=event.event_type,
+                        detail=json.dumps({"old": event.old_value, "new": event.new_value}),
+                        success=success,
+                        error=error,
+                    )
                 )
-            )
+                logged += 1
 
         try:
             await session.commit()
@@ -227,7 +244,7 @@ async def fire_alerts(
             logger.exception(
                 "Failed to record %d AlertLog row(s) for ext=%s after delivering "
                 "webhooks — alert history will be incomplete",
-                len(rules),
+                logged,
                 extension.id,
             )
             raise
