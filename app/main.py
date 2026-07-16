@@ -13,6 +13,7 @@ from app.deps import WebUser
 from app.fetchers.transport import RetryTransport
 from app.logging_config import setup_logging
 from app.middleware import CSRFOriginMiddleware
+from app.ratelimit import api_limiter
 from app.routes import alerts as alerts_routes
 from app.routes import api as api_routes
 from app.routes import keys as keys_routes
@@ -139,13 +140,35 @@ async def readyz() -> JSONResponse:
 
 
 # Conservative app-layer security-header floor (#66, defence-in-depth). In production
-# the reverse proxy (nginx/security_headers.conf) is the source of truth: it strips
-# these upstream copies and re-adds its own canonical CSP + HSTS, so exactly one value
-# reaches the client. This floor only matters on a non-proxied path (or if the proxy
-# header config regresses). script-src/default-src are deliberately omitted so that on
-# any path where both the app and proxy CSPs are enforced, the app policy can never
-# intersect with — and break — the proxy's CDN asset loading.
+# the reverse proxy (Caddy — caddy/headers.caddy) is the source of truth: it SETs
+# (replaces) these with its own canonical CSP + HSTS, so exactly one value reaches the
+# client. This floor only matters on a non-proxied path (or if the proxy header config
+# regresses). script-src/default-src are deliberately omitted so that on any path where
+# both the app and proxy CSPs are enforced, the app policy can never intersect with —
+# and break — the proxy's CDN asset loading.
 _BASELINE_CSP = "frame-ancestors 'none'; base-uri 'self'; object-src 'none'; form-action 'self'"
+
+
+@app.middleware("http")
+async def api_rate_limit(request: Request, call_next) -> Response:
+    """Token-bucket per-IP rate limit on the JSON API (#188).
+
+    The app-side replacement for the nginx ``api`` ``limit_req`` zone, added when the
+    edge proxy became Caddy (which has no built-in rate_limit). Off unless
+    ``api_rate_limit_enabled`` (the prod Compose/Helm env sets it); in production the
+    cluster ingress also limits at the true edge. Keyed on the client IP, which uvicorn
+    derives from the Caddy-set canonical X-Forwarded-For (spoof-proof per #77).
+    """
+    if settings.api_rate_limit_enabled and request.url.path.startswith("/api/"):
+        client_ip = request.client.host if request.client else "-"
+        retry_after = api_limiter.check(client_ip)
+        if retry_after is not None:
+            return JSONResponse(
+                {"detail": "Rate limit exceeded. Slow down."},
+                status_code=429,
+                headers={"Retry-After": str(retry_after)},
+            )
+    return await call_next(request)
 
 
 @app.middleware("http")

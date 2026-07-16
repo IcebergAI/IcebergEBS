@@ -1,4 +1,4 @@
-"""Observability baseline (#89): structured logs, scheduler visibility, nginx log fields."""
+"""Observability baseline (#89): structured logs, scheduler visibility, edge access logs."""
 
 import json
 import logging
@@ -9,7 +9,10 @@ from app import scheduler_state
 from app.config import settings
 from app.logging_config import _TEXT_FORMAT, JsonFormatter, setup_logging
 
-_NGINX_CONF = Path(__file__).resolve().parent.parent / "nginx" / "nginx.conf"
+_CADDYFILES = [
+    Path(__file__).resolve().parent.parent / "caddy" / "Caddyfile",
+    Path(__file__).resolve().parent.parent / "caddy" / "Caddyfile.k8s",
+]
 
 
 def test_text_format_includes_timestamp():
@@ -80,8 +83,11 @@ def test_setup_logging_routes_uvicorn_loggers_through_root():
         assert lg.propagate is True
 
 
-def test_nginx_log_format_has_ua_and_timing():
-    conf = _NGINX_CONF.read_text()
-    assert "$http_user_agent" in conf
-    assert "$http_referer" in conf
-    assert "$upstream_response_time" in conf
+def test_caddy_access_logging_enabled():
+    # Caddy emits a structured (JSON) access log when the `log` directive is present; its
+    # default schema already carries request User-Agent/Referer (under request>headers) and
+    # request `duration` (timing) — the fields the old nginx custom log_format added by hand
+    # (#89). Assert every Caddyfile enables it so the edge proxy keeps logging requests.
+    for caddyfile in _CADDYFILES:
+        conf = caddyfile.read_text()
+        assert "\n\tlog\n" in conf or "\n    log\n" in conf, f"{caddyfile.name} does not enable access logging"

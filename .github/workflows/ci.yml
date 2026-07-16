@@ -136,7 +136,7 @@ jobs:
           "$(go env GOPATH)/bin/actionlint" -color
 
   # Browser-level UI smoke (#100): boots the real stack (Postgres + uvicorn behind
-  # nginx with security_headers.conf) and drives it with Playwright, so a CSP
+  # the Caddy edge proxy) and drives it with Playwright, so a CSP
   # violation — e.g. the hand-maintained inline-script hash drifting — or a broken
   # Alpine component fails CI. The API/unit suite can see none of that. Playwright is
   # installed into a throwaway venv, not the dev group: like zizmor/vulture it's a
@@ -158,7 +158,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Generate self-signed dev cert
-        run: bash nginx/generate-dev-cert.sh
+        run: bash caddy/generate-dev-cert.sh
       - name: Write .env for the stack
         run: |
           {
@@ -170,7 +170,7 @@ jobs:
           } > .env
       - name: Start the stack
         run: docker compose up -d --build
-      - name: Wait for the app behind nginx
+      - name: Wait for the app behind caddy
         run: |
           for _ in $(seq 1 60); do
             if curl -ksSf "${BASE_URL}/login" >/dev/null 2>&1; then echo "stack up"; exit 0; fi

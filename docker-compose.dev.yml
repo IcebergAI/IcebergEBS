@@ -4,8 +4,8 @@
 #
 # It publishes Postgres on localhost (so the test suite / a host-side uvicorn can
 # reach it), mounts the source for live reload, and supplies throwaway dev
-# credentials so you don't need a populated .env. nginx is intentionally not
-# started in dev (run the two named services only, as above).
+# credentials so you don't need a populated .env. The Caddy edge proxy is
+# intentionally not started in dev (run the two named services only, as above).
 services:
   postgres:
     ports:

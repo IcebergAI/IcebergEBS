@@ -1,0 +1,94 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "iceberg-ebs.fullname" . }}-caddy
+  labels:
+    {{- include "iceberg-ebs.labels" . | nindent 4 }}
+# NOTE: the two entries below are an EXACT mirror of the canonical files at repo root —
+# caddy/Caddyfile.k8s and caddy/headers.caddy. Helm's .Files.Get cannot read files above
+# the chart directory, so the K8s edge config is embedded here rather than referenced.
+# tests/test_helm_caddy.py compares each block byte-for-byte with the canonical file, and
+# tests/test_csp_hash.py checks the CSP pin here too — so the "single source" guarantee
+# is enforced by CI, not by hand (#188). Edit caddy/ and re-mirror, never edit only here.
+data:
+  # Mirror of caddy/Caddyfile.k8s (mounted as /etc/caddy/Caddyfile — the default config path).
+  Caddyfile: |
+    # In-pod reverse proxy for the Kubernetes deployment (#188). Topology: cluster ingress
+    # (TLS termination via cert-manager, edge rate limiting) → THIS Caddy sidecar → app on
+    # localhost:8000. Caddy owns the canonical security headers here too (imported from the
+    # same headers.caddy), so the ingress no longer has to duplicate the CSP snippet.
+    #
+    # Delivered to the pod as a ConfigMap mounted at /etc/caddy (see the Helm chart), so the
+    # `import headers.caddy` path resolves next to this file exactly as it does in Compose.
+    {
+    	admin off
+    	# The ingress terminates TLS and forwards plain HTTP to this sidecar — no TLS here.
+    	auto_https off
+    	servers {
+    		# Trust the cluster ingress (a private-range peer) to have set X-Forwarded-For to
+    		# the real external client, so {client_ip} below resolves to that client rather than
+    		# the ingress pod IP. A direct (untrusted) peer's forged XFF is still discarded (#77).
+    		trusted_proxies static private_ranges
+    		# STRICT parsing (Caddy recommends it whenever trusted proxies *append* to XFF, which
+    		# ingress-nginx can — e.g. behind another private-range LB). Without it, the right-to-left
+    		# scan can skip a trusted private-range suffix and return an attacker-controlled leftmost
+    		# value as {client_ip}, letting a forged XFF evade the app's per-IP rate limiters (#77).
+    		trusted_proxies_strict
+    	}
+    }
+
+    :8080 {
+    	# Structured (JSON) access log to stderr — carries request User-Agent/Referer and
+    	# duration by default (#89); Cookie/Authorization are redacted.
+    	log
+
+    	encode gzip
+    	request_body {
+    		max_size 2MB
+    	}
+
+    	# Sidecar liveness/readiness endpoint (answered locally, not proxied).
+    	handle /caddy-health {
+    		respond "ok" 200
+    	}
+
+    	# Canonical security headers (single source of truth, shared with Compose).
+    	import headers.caddy
+
+    	# Everything (including /static, which the app serves via StaticFiles) → the app in the
+    	# same pod. header_up X-Forwarded-For {client_ip} passes a single canonical client IP:
+    	# with trusted_proxies set, {client_ip} is the real external client from the ingress's XFF.
+    	handle {
+    		reverse_proxy localhost:8000 {
+    			header_up X-Forwarded-For {client_ip}
+    			transport http {
+    				dial_timeout 10s
+    				read_timeout 120s
+    			}
+    		}
+    	}
+    }
+  # Mirror of caddy/headers.caddy (imported by the Caddyfile above via `import headers.caddy`).
+  headers.caddy: |
+    # Canonical security headers — the SINGLE source of truth, imported by both the
+    # Compose Caddyfile and the Kubernetes Caddyfile (caddy/Caddyfile{,.k8s}). This is
+    # what replaced the old two-places duplication (nginx/security_headers.conf AND the
+    # Helm ingress configuration-snippet) that #188 set out to remove.
+    #
+    # The app emits a *baseline* copy of these too (app/main.py:security_headers, #66) —
+    # deliberately without script-src/default-src so it can never intersect and break
+    # this fuller CDN-aware policy. Caddy SETs (replaces) each header here, so exactly one
+    # canonical value reaches the client even though the upstream sent its baseline.
+    #
+    # The script-src sha256 hash pins the one inline bootstrap script in base.html; if that
+    # script changes, regenerate the hash (see .claude/rules/frontend.md) and update it here.
+    header {
+    	Content-Security-Policy "default-src 'self'; script-src 'self' 'sha256-+Eb7yRWu45ifRb64zPIDP0hvsT4OloSS8kNklIXpCO4=' https://cdn.tailwindcss.com https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; object-src 'none'; form-action 'self'"
+    	Strict-Transport-Security "max-age=63072000; includeSubDomains; preload"
+    	X-Content-Type-Options "nosniff"
+    	X-Frame-Options "DENY"
+    	Referrer-Policy "same-origin"
+    	Permissions-Policy "accelerometer=(), camera=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), payment=(), usb=()"
+    	# Don't advertise the server software (parity with nginx `server_tokens off`).
+    	-Server
+    }

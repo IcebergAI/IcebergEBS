@@ -9,11 +9,16 @@ metadata:
     nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
     nginx.ingress.kubernetes.io/proxy-body-size: "2m"
     nginx.ingress.kubernetes.io/proxy-read-timeout: "120"
+    # Edge rate limiting stays at the cluster ingress (#188): stock Caddy has no
+    # rate_limit directive, so the in-pod Caddy sidecar does not limit; the app-side
+    # limiter (ICEBERG_EBS_API_RATE_LIMIT_ENABLED) is the second layer.
     nginx.ingress.kubernetes.io/limit-rps: "2"
     nginx.ingress.kubernetes.io/limit-connections: "20"
-    nginx.ingress.kubernetes.io/configuration-snippet: |
-      add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'sha256-+Eb7yRWu45ifRb64zPIDP0hvsT4OloSS8kNklIXpCO4=' https://cdn.tailwindcss.com https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'" always;
-      add_header Permissions-Policy "accelerometer=(), camera=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), payment=(), usb=()" always;
+    # The Caddy sidecar now owns the canonical security headers (CSP, HSTS,
+    # Permissions-Policy, …) via caddy/headers.caddy, so the ingress no longer duplicates
+    # a configuration-snippet CSP — that two-places duplication is exactly what #188
+    # removed. Disable the ingress-controller's own HSTS so Caddy's is the single copy.
+    nginx.ingress.kubernetes.io/hsts: "false"
     {{- if .Values.ingress.certManagerIssuer }}
     cert-manager.io/cluster-issuer: {{ .Values.ingress.certManagerIssuer | quote }}
     {{- end }}
@@ -33,4 +38,4 @@ spec:
               service:
                 name: {{ include "iceberg-ebs.fullname" . }}
                 port:
-                  number: 8000
+                  number: 8080

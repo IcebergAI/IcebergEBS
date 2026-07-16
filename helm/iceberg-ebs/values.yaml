@@ -10,6 +10,23 @@ image:
   tag: ""
   pullPolicy: IfNotPresent
 
+# Edge reverse proxy sidecar (#188). The cluster ingress terminates TLS and forwards to
+# this Caddy on 8080; Caddy sets the canonical security headers and proxies to the app on
+# localhost:8000. Pinned to a minor (a floating `caddy:alpine` would drift the edge on
+# every pull); Dependabot's docker ecosystem keeps it current.
+caddy:
+  image:
+    repository: caddy
+    tag: "2.8-alpine"
+    pullPolicy: IfNotPresent
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 128Mi
+
 # Must stay at 1 — APScheduler runs per-process; multiple replicas would each
 # independently refresh watchlisted extensions and write duplicate AlertLog rows.
 replicaCount: 1
@@ -41,6 +58,10 @@ icebergEbs:
   httpxTimeout: 15.0       # outbound HTTP timeout in seconds
   secureCookies: true
   logJson: false          # emit single-line JSON logs for a collector (#89)
+  # App-side API rate limiting (#188): the edge equivalent of the old nginx `api` zone,
+  # since Caddy has no rate_limit directive. Belt-and-suspenders with the ingress
+  # limit-rps/limit-connections annotations, which throttle at the true cluster edge.
+  apiRateLimitEnabled: true
 
 postgresql:
   auth:

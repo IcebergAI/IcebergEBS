@@ -1,0 +1,55 @@
+# In-pod reverse proxy for the Kubernetes deployment (#188). Topology: cluster ingress
+# (TLS termination via cert-manager, edge rate limiting) → THIS Caddy sidecar → app on
+# localhost:8000. Caddy owns the canonical security headers here too (imported from the
+# same headers.caddy), so the ingress no longer has to duplicate the CSP snippet.
+#
+# Delivered to the pod as a ConfigMap mounted at /etc/caddy (see the Helm chart), so the
+# `import headers.caddy` path resolves next to this file exactly as it does in Compose.
+{
+	admin off
+	# The ingress terminates TLS and forwards plain HTTP to this sidecar — no TLS here.
+	auto_https off
+	servers {
+		# Trust the cluster ingress (a private-range peer) to have set X-Forwarded-For to
+		# the real external client, so {client_ip} below resolves to that client rather than
+		# the ingress pod IP. A direct (untrusted) peer's forged XFF is still discarded (#77).
+		trusted_proxies static private_ranges
+		# STRICT parsing (Caddy recommends it whenever trusted proxies *append* to XFF, which
+		# ingress-nginx can — e.g. behind another private-range LB). Without it, the right-to-left
+		# scan can skip a trusted private-range suffix and return an attacker-controlled leftmost
+		# value as {client_ip}, letting a forged XFF evade the app's per-IP rate limiters (#77).
+		trusted_proxies_strict
+	}
+}
+
+:8080 {
+	# Structured (JSON) access log to stderr — carries request User-Agent/Referer and
+	# duration by default (#89); Cookie/Authorization are redacted.
+	log
+
+	encode gzip
+	request_body {
+		max_size 2MB
+	}
+
+	# Sidecar liveness/readiness endpoint (answered locally, not proxied).
+	handle /caddy-health {
+		respond "ok" 200
+	}
+
+	# Canonical security headers (single source of truth, shared with Compose).
+	import headers.caddy
+
+	# Everything (including /static, which the app serves via StaticFiles) → the app in the
+	# same pod. header_up X-Forwarded-For {client_ip} passes a single canonical client IP:
+	# with trusted_proxies set, {client_ip} is the real external client from the ingress's XFF.
+	handle {
+		reverse_proxy localhost:8000 {
+			header_up X-Forwarded-For {client_ip}
+			transport http {
+				dial_timeout 10s
+				read_timeout 120s
+			}
+		}
+	}
+}

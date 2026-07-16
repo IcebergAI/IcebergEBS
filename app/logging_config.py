@@ -1,7 +1,7 @@
 """Structured application logging (#89).
 
 The default format gains a timestamp (``asctime``) so plain ``docker logs`` output is
-correlatable with nginx access logs and user reports even when nothing is putting a
+correlatable with the edge proxy's access logs and user reports even when nothing is putting a
 timestamp in front of stdout. Set ``ICEBERG_EBS_LOG_JSON=true`` for single-line JSON
 records that any log collector can parse without a grok pattern.
 """

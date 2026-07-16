@@ -17,13 +17,13 @@ def test_app_is_locked_down():
     assert "healthcheck" in app
 
 
-def test_nginx_is_locked_down():
-    nginx = _SERVICES["nginx"]
-    assert "no-new-privileges:true" in nginx["security_opt"]
-    assert nginx["cap_drop"] == ["ALL"]
-    assert "NET_BIND_SERVICE" in nginx["cap_add"]
-    assert nginx["read_only"] is True
-    assert "healthcheck" in nginx
+def test_caddy_is_locked_down():
+    caddy = _SERVICES["caddy"]
+    assert "no-new-privileges:true" in caddy["security_opt"]
+    assert caddy["cap_drop"] == ["ALL"]
+    assert "NET_BIND_SERVICE" in caddy["cap_add"]
+    assert caddy["read_only"] is True
+    assert "healthcheck" in caddy
 
 
 def test_postgres_blocks_privilege_escalation():
@@ -31,5 +31,5 @@ def test_postgres_blocks_privilege_escalation():
     assert "no-new-privileges:true" in _SERVICES["postgres"]["security_opt"]
 
 
-def test_nginx_waits_for_app_health():
-    assert _SERVICES["nginx"]["depends_on"]["app"]["condition"] == "service_healthy"
+def test_caddy_waits_for_app_health():
+    assert _SERVICES["caddy"]["depends_on"]["app"]["condition"] == "service_healthy"

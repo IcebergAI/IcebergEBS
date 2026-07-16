@@ -58,6 +58,18 @@ release to diff against.
 
 ### Changed
 
+- **Replaced nginx with [Caddy](https://caddyserver.com) as the edge reverse proxy** (#188).
+  The canonical security headers — CSP (with its inline-script hash), HSTS, and the rest — now
+  live in **one** place, `caddy/headers.caddy`, imported by both the Compose Caddyfile and the
+  Kubernetes sidecar config; previously the CSP was hand-duplicated across
+  `nginx/security_headers.conf` and the Helm ingress snippet, and the two copies had drifted.
+  The Kubernetes topology is now **cluster ingress → in-pod Caddy sidecar → app**, so the
+  ingress no longer carries a duplicated CSP snippet. Because Caddy has no built-in rate-limit
+  directive, the old nginx `login`/`api` `limit_req` zones moved **app-side**: a new token-bucket
+  API rate limiter (`ICEBERG_EBS_API_RATE_LIMIT_ENABLED`, on in the Compose/Helm env) keyed on
+  the client IP, with the K8s cluster ingress still limiting at the true edge. The
+  `X-Forwarded-For` anti-spoof (#77) is preserved — Caddy sets a single canonical `{client_ip}`,
+  discarding a client-supplied XFF at the edge and honouring the ingress's value in-cluster.
 - **Postgres pinned to `18-alpine`** (was `16-alpine`), bumped together across the Compose server,
   the `backup`/`pg_dump` service, and the CI test service container so `pg_dump`'s version always
   matches the server's. An existing PG16 `postgres_data` volume will **not** start under 18 — see

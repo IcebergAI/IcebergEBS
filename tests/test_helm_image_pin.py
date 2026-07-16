@@ -17,8 +17,8 @@ def test_values_image_tag_has_no_default():
 
 def test_deployment_requires_image_tag():
     d = (_CHART / "templates" / "deployment.yaml").read_text()
-    # The `image:` line must guard the tag with `required` so an empty value fails the
-    # render instead of deploying :latest.
-    image_line = next(ln for ln in d.splitlines() if ln.lstrip().startswith("image:"))
+    # The app `image:` line must guard the tag with `required` so an empty value fails the
+    # render instead of deploying :latest. (There is also a Caddy sidecar `image:` line since
+    # #188; select the app image by its .Values.image.tag reference, not just position.)
+    image_line = next(ln for ln in d.splitlines() if ln.lstrip().startswith("image:") and ".Values.image.tag" in ln)
     assert "required" in image_line
-    assert ".Values.image.tag" in image_line

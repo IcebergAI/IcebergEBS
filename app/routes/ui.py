@@ -117,7 +117,7 @@ async def login_post(
     password: Annotated[str, Form()],
     session: SessionDep,
 ):
-    # App-level brute-force throttle, independent of nginx (M3 / #8).
+    # App-level brute-force throttle, independent of the edge proxy (M3 / #8).
     key = login_limiter.key(request.client.host if request.client else None, username)
     retry_after = login_limiter.retry_after(key)
     if retry_after is not None:

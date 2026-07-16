@@ -17,8 +17,8 @@ def test_networkpolicy_default_deny_and_hops():
     assert "kind: NetworkPolicy" in t
     # default-deny ingress for the whole namespace
     assert "default-deny-ingress" in t and "podSelector: {}" in t
-    # explicit hops
-    assert "allow-app-from-ingress" in t and "port: 8000" in t
+    # explicit hops: ingress → the pod's Caddy sidecar on 8080 (#188), app → postgres 5432
+    assert "allow-app-from-ingress" in t and "port: 8080" in t
     assert "allow-postgres-from-app" in t and "port: 5432" in t
     # gated + egress left open (no Egress policy type in any policy)
     assert "if .Values.networkPolicy.enabled" in t
