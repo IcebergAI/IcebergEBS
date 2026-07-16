@@ -32,11 +32,8 @@ def _host_permissions(ext: Extension) -> frozenset[str]:
     successful inspection (see services.fetch_and_store), so a transient download
     failure leaves both stale and cannot produce a spurious permission_change.
     """
-    try:
-        data = json.loads(ext.package_analysis or "null")
-    except (json.JSONDecodeError, TypeError):
-        return frozenset()
-    if not isinstance(data, dict):
+    data = ext.analysis_dict()  # decode + object-shape parse owned by the accessor (#167)
+    if data is None:
         return frozenset()
     hosts = data.get("host_permissions", [])
     if not isinstance(hosts, list):
@@ -67,8 +64,8 @@ def detect_changes(old: Extension, new: Extension) -> list[ChangeEvent]:
     # *://*/*, …) are stored separately inside package_analysis, not in
     # ext.permissions — gaining broad host access is the highest-signal capability
     # change an update can make, so it must trigger permission_change too (#60).
-    old_perms = frozenset(json.loads(old.permissions or "[]")) | _host_permissions(old)
-    new_perms = frozenset(json.loads(new.permissions or "[]")) | _host_permissions(new)
+    old_perms = frozenset(old.permissions_list()) | _host_permissions(old)
+    new_perms = frozenset(new.permissions_list()) | _host_permissions(new)
     if old_perms != new_perms:
         events.append(ChangeEvent("permission_change", sorted(old_perms), sorted(new_perms)))
 

@@ -24,7 +24,6 @@ from app.models import Extension, FetchLog, InstallCountHistory, InstallObservat
 from app.scoring import risk_level
 from app.services import fetch_and_store, fire_pending_alerts
 from app.threat_intel import build_threat_intel_indicators
-from app.utils import safe_json_loads
 
 logger = logging.getLogger(__name__)
 
@@ -123,14 +122,14 @@ class ExtensionOut(BaseModel):
         an O(domains × URLs) cost the list view never renders. The list endpoint
         opts out; single-extension views keep the default (D2 / #12).
         """
-        # Parse defensively: a partial write or manual DB edit could leave invalid
-        # JSON, which must not 500 the endpoint — fall back and log instead (#17).
-        perms = safe_json_loads(ext.permissions, "[]", "permissions", ext.id)
-        analysis_raw = safe_json_loads(ext.package_analysis, "null", "package_analysis", ext.id)
+        # The Extension accessors own the defensive parse — a partial write or manual DB
+        # edit can't 500 the endpoint (#17/#61), they log + fall back instead (#167).
+        perms = ext.permissions_list()
+        analysis_raw = ext.analysis_dict()
         host_perms = analysis_raw.get("host_permissions", []) if analysis_raw else []
         findings = analysis_raw.get("findings", []) if analysis_raw else []
         threat_intel_indicators = build_threat_intel_indicators(analysis_raw) if include_threat_intel else []
-        detail = safe_json_loads(ext.risk_detail, "null", "risk_detail", ext.id)
+        detail = ext.risk_detail_dict()
         return cls(
             id=ext.id,
             store=ext.store,
@@ -565,7 +564,7 @@ EXPORT_FIELDS = [
 
 
 def _export_row(ext: Extension) -> dict:
-    perms = safe_json_loads(ext.permissions, "[]", "permissions", ext.id)
+    perms = ext.permissions_list()
     return {
         "id": ext.id,
         "store": ext.store,

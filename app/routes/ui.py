@@ -28,7 +28,6 @@ from app.models import AlertDestination, AlertRule, ApiKey, Extension, FetchLog,
 from app.ratelimit import login_limiter
 from app.routes.alerts import get_alert_log
 from app.threat_intel import build_threat_intel_indicators
-from app.utils import safe_json_loads
 from app.version import get_version
 
 router = APIRouter()
@@ -475,12 +474,12 @@ async def extension_detail(
         )
     ).all()
 
-    # Parse defensively: a partial write or manual DB edit could leave invalid JSON,
-    # which must not 500 the detail page — fall back and log instead (#61, mirroring
-    # the JSON API's #17 hardening).
-    permissions = safe_json_loads(ext.permissions, "[]", "permissions", ext.id)
-    risk_detail = safe_json_loads(ext.risk_detail, "null", "risk_detail", ext.id)
-    package_analysis = safe_json_loads(ext.package_analysis, "null", "package_analysis", ext.id)
+    # The Extension accessors own the defensive parse — a partial write or manual DB edit
+    # can't 500 the detail page; they log + fall back, including on valid-but-wrong-shape
+    # JSON (#61/#150 hardening, #167).
+    permissions = ext.permissions_list()
+    risk_detail = ext.risk_detail_dict()
+    package_analysis = ext.analysis_dict()
 
     host_permissions = []
     if package_analysis:

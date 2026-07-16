@@ -90,8 +90,8 @@ def _effective_values(
         permissions: list[str] = analysis.permissions
         host_permissions: list[str] = analysis.host_permissions
     else:
-        permissions = json.loads(ext.permissions or "[]")
-        stored_pkg = json.loads(ext.package_analysis or "null") or {}
+        permissions = ext.permissions_list()
+        stored_pkg = ext.analysis_dict() or {}
         host_permissions = stored_pkg.get("host_permissions", [])
 
     publisher_changed = bool(
@@ -339,8 +339,11 @@ async def recover_pending_alerts(engine: AsyncEngine, client: httpx.AsyncClient)
             if ext is None or ext.pending_alert_events is None:
                 continue
             raw = ext.pending_alert_events
+            # ext.pending_events() owns the JSON decode + list-shape parse (#167); the
+            # remaining guard is for a malformed *event* dict (wrong/missing keys) that
+            # ChangeEvent(**e) would reject.
             try:
-                events = [ChangeEvent(**e) for e in json.loads(raw)]
+                events = [ChangeEvent(**e) for e in ext.pending_events()]
             except Exception:
                 logger.exception("Discarding unparsable pending_alert_events for %s", ext.extension_id)
                 # Compare-and-clear so a concurrent refresh that replaced the corrupt marker
