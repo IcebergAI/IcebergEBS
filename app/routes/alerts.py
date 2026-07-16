@@ -10,7 +10,7 @@ from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.config import settings
-from app.deps import CurrentUser, SessionDep
+from app.deps import CurrentUser, SessionDep, get_owned_or_404
 from app.models import AlertDestination, AlertLog, AlertRule, Extension
 from app.webhooks import WebhookValidationError, send_webhook, validate_webhook_url
 
@@ -123,9 +123,7 @@ async def update_destination(
     current_user: CurrentUser,
     session: SessionDep,
 ) -> DestinationOut:
-    dest = await session.get(AlertDestination, dest_id)
-    if not dest or dest.user_id != current_user.id:
-        raise HTTPException(status_code=404, detail="Not found")
+    dest = await get_owned_or_404(session, AlertDestination, dest_id, current_user.id)
     if body.label is not None:
         dest.label = body.label
     if body.target is not None:
@@ -145,9 +143,7 @@ async def delete_destination(
     current_user: CurrentUser,
     session: SessionDep,
 ):
-    dest = await session.get(AlertDestination, dest_id)
-    if not dest or dest.user_id != current_user.id:
-        raise HTTPException(status_code=404, detail="Not found")
+    dest = await get_owned_or_404(session, AlertDestination, dest_id, current_user.id)
     # The FK ON DELETE actions handle the cleanup: the destination's rules cascade
     # away, and the AlertLog history rows pointing at this destination (and at those
     # rules) keep their user_id but have destination_id/rule_id set to NULL — so they
@@ -183,15 +179,13 @@ async def create_rule(
         raise HTTPException(status_code=422, detail=f"event_type must be one of: {sorted(VALID_EVENT_TYPES)}")
 
     # Validate destination belongs to this user
-    dest = await session.get(AlertDestination, body.destination_id)
-    if not dest or dest.user_id != current_user.id:
-        raise HTTPException(status_code=404, detail="Destination not found")
+    await get_owned_or_404(
+        session, AlertDestination, body.destination_id, current_user.id, detail="Destination not found"
+    )
 
     # Validate extension belongs to this user (if provided)
     if body.extension_id is not None:
-        ext = await session.get(Extension, body.extension_id)
-        if not ext or ext.user_id != current_user.id:
-            raise HTTPException(status_code=404, detail="Extension not found")
+        await get_owned_or_404(session, Extension, body.extension_id, current_user.id, detail="Extension not found")
 
     rule = AlertRule(
         user_id=current_user.id,
@@ -213,13 +207,11 @@ async def update_rule(
     current_user: CurrentUser,
     session: SessionDep,
 ) -> RuleOut:
-    rule = await session.get(AlertRule, rule_id)
-    if not rule or rule.user_id != current_user.id:
-        raise HTTPException(status_code=404, detail="Not found")
+    rule = await get_owned_or_404(session, AlertRule, rule_id, current_user.id)
     if body.destination_id is not None:
-        dest = await session.get(AlertDestination, body.destination_id)
-        if not dest or dest.user_id != current_user.id:
-            raise HTTPException(status_code=404, detail="Destination not found")
+        await get_owned_or_404(
+            session, AlertDestination, body.destination_id, current_user.id, detail="Destination not found"
+        )
         rule.destination_id = body.destination_id
     if body.enabled is not None:
         rule.enabled = body.enabled
@@ -235,9 +227,7 @@ async def delete_rule(
     current_user: CurrentUser,
     session: SessionDep,
 ):
-    rule = await session.get(AlertRule, rule_id)
-    if not rule or rule.user_id != current_user.id:
-        raise HTTPException(status_code=404, detail="Not found")
+    rule = await get_owned_or_404(session, AlertRule, rule_id, current_user.id)
     # AlertLog.rule_id is ON DELETE SET NULL, so the history rows survive the rule.
     await session.delete(rule)
     await session.commit()
@@ -333,9 +323,7 @@ async def test_destination(
     current_user: CurrentUser,
     session: SessionDep,
 ):
-    dest = await session.get(AlertDestination, dest_id)
-    if not dest or dest.user_id != current_user.id:
-        raise HTTPException(status_code=404, detail="Not found")
+    dest = await get_owned_or_404(session, AlertDestination, dest_id, current_user.id)
     ext_payload: dict = {
         "id": 0,
         "name": "Example Extension",

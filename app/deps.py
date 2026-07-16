@@ -4,9 +4,9 @@ Per FastAPI guidance, declare each `Annotated[..., Depends(...)]` once and reuse
 across path operations instead of repeating the full form in every signature.
 """
 
-from typing import Annotated
+from typing import Annotated, TypeVar
 
-from fastapi import Depends
+from fastapi import Depends, HTTPException
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.auth import require_admin, require_admin_ui, require_api_auth, require_auth
@@ -15,6 +15,34 @@ from app.models import User
 
 # Database session (one per request).
 SessionDep = Annotated[AsyncSession, Depends(get_session)]
+
+_T = TypeVar("_T")
+
+
+async def get_owned_or_404(
+    session: AsyncSession,
+    model: type[_T],
+    obj_id: int,
+    user_id: int,
+    *,
+    detail: str = "Not found",
+) -> _T:
+    """Load ``model`` row ``obj_id`` and assert it belongs to ``user_id``, else 404.
+
+    Consolidates the owner-scoped fetch gate that was repeated ~12× across the JSON
+    API routes (``api.py`` / ``alerts.py`` / ``keys.py``) — one place to change if
+    the semantics ever do (admin override, audit-on-denied-access, 403-vs-404).
+    A missing row and another user's row both return the same 404 so ownership
+    can't be probed. Returns the row for the caller to use.
+
+    HTML routes that redirect-and-flash on a miss (``ui.py``) intentionally keep
+    their own handling — this helper is for the JSON 404 gate only (#169).
+    """
+    obj = await session.get(model, obj_id)
+    if obj is None or getattr(obj, "user_id", None) != user_id:
+        raise HTTPException(status_code=404, detail=detail)
+    return obj
+
 
 # Authenticated user via the JSON API path (Bearer token or session cookie) — raises
 # 401/403, never redirects.

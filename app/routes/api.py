@@ -17,7 +17,7 @@ from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.database import engine
-from app.deps import CurrentUser, SessionDep
+from app.deps import CurrentUser, SessionDep, get_owned_or_404
 from app.extension_queries import ExtensionFilters, build_extension_query, count_rows, exposure
 from app.fetchers.base import FetchError
 from app.models import Extension, FetchLog, InstallCountHistory, InstallObservation
@@ -788,9 +788,7 @@ async def get_extension(
     current_user: CurrentUser,
     session: SessionDep,
 ) -> ExtensionOut:
-    ext = await session.get(Extension, ext_id)
-    if not ext or ext.user_id != current_user.id:
-        raise HTTPException(status_code=404, detail="Not found")
+    ext = await get_owned_or_404(session, Extension, ext_id, current_user.id)
     return ExtensionOut.from_db(ext)
 
 
@@ -800,9 +798,7 @@ async def delete_extension(
     current_user: CurrentUser,
     session: SessionDep,
 ):
-    ext = await session.get(Extension, ext_id)
-    if not ext or ext.user_id != current_user.id:
-        raise HTTPException(status_code=404, detail="Not found")
+    ext = await get_owned_or_404(session, Extension, ext_id, current_user.id)
 
     # Every child FK (AlertLog, AlertRule, FetchLog, InstallCountHistory) is
     # ON DELETE CASCADE, so deleting the extension removes its dependent rows.
@@ -818,9 +814,7 @@ async def refresh_extension(
     current_user: CurrentUser,
     session: SessionDep,
 ) -> ExtensionOut:
-    ext = await session.get(Extension, ext_id)
-    if not ext or ext.user_id != current_user.id:
-        raise HTTPException(status_code=404, detail="Not found")
+    ext = await get_owned_or_404(session, Extension, ext_id, current_user.id)
     client: httpx.AsyncClient = request.app.state.http_client
     return ExtensionOut.from_db(await _fetch_and_score(ext, session, client))
 
@@ -832,9 +826,7 @@ async def toggle_watchlist(
     current_user: CurrentUser,
     session: SessionDep,
 ) -> ExtensionOut:
-    ext = await session.get(Extension, ext_id)
-    if not ext or ext.user_id != current_user.id:
-        raise HTTPException(status_code=404, detail="Not found")
+    ext = await get_owned_or_404(session, Extension, ext_id, current_user.id)
     ext.watchlist = body.watchlist
     session.add(ext)
     await session.commit()
@@ -848,9 +840,7 @@ async def get_history(
     current_user: CurrentUser,
     session: SessionDep,
 ) -> list[HistoryPoint]:
-    ext = await session.get(Extension, ext_id)
-    if not ext or ext.user_id != current_user.id:
-        raise HTTPException(status_code=404, detail="Not found")
+    await get_owned_or_404(session, Extension, ext_id, current_user.id)
     rows = (
         await session.exec(
             select(InstallCountHistory)
