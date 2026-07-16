@@ -345,10 +345,12 @@ async def dashboard(
     q: str | None = None,
     sort: str = "risk_score",
     order: str = "desc",
-    page: int = 1,
+    page: str = "1",
 ):
     # Tolerate junk query params from the UI (don't 422 a browser) — fall back
-    # to defaults rather than rejecting.
+    # to defaults rather than rejecting. `page` is a str for the same reason: a
+    # mangled / hand-edited `?page=abc` must render the dashboard, not raw-422 the
+    # way a typed `int` param would (#152).
     if store not in ("chrome", "vscode", "edge"):
         store = None
     if risk not in RISK_BANDS:
@@ -358,7 +360,10 @@ async def dashboard(
     if order not in ("asc", "desc"):
         order = "desc"
     q = (q or "").strip() or None
-    page = max(page, 1)
+    try:
+        page = max(int(page), 1)
+    except (TypeError, ValueError):
+        page = 1
 
     now = datetime.now(timezone.utc)
     stale_after = _stale_after()

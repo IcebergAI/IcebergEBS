@@ -89,6 +89,17 @@ async def test_dashboard_tolerates_bad_params(client, test_db, admin_user):
     assert "Showing 1–3 of 3" in r.text
 
 
+async def test_dashboard_tolerates_non_numeric_page(client, test_db, admin_user):
+    """#152: a mangled / hand-edited non-numeric `page` must render the dashboard (falling
+    back to page 1), not raw-422 the way a typed int param did."""
+    async with AsyncSession(test_db) as s:
+        await _seed(s, admin_user, 3)
+    for page in ("abc", "", "2.5", "1e3"):
+        r = await client.get(f"/?page={page}")
+        assert r.status_code == 200, page
+        assert "Showing 1–3 of 3" in r.text  # fell back to page 1
+
+
 async def test_detail_page_tolerates_malformed_json(client, test_db, admin_user):
     # A partial write / manual edit can leave invalid JSON in the stored columns;
     # the detail page must fall back instead of 500-ing, like the JSON API (#61).
