@@ -271,6 +271,63 @@ async def test_stamped_but_empty_db_is_rebuilt(temp_db):
         sync.dispose()
 
 
+async def test_unstamped_create_all_head_schema_is_adopted_not_rebuilt(temp_db):
+    """An aborted test run leaves the dev DB with a create_all'd head schema and no
+    alembic_version (conftest drops it in setup; #199). The next boot must adopt that schema
+    as head — NOT misclassify it as a pre-Alembic baseline, stamp the baseline, and then
+    re-run post-baseline migrations against columns create_all already made (DuplicateColumn,
+    crashing `make dev`). Reproduces the exact interrupted-suite state and asserts recovery.
+    """
+    # Build the current (head) schema with create_all and NO alembic_version — precisely
+    # what tests/conftest.py leaves behind if the suite is aborted before teardown.
+    engine = create_async_engine(_async_url(temp_db))
+    async with engine.begin() as conn:
+        await conn.run_sync(SQLModel.metadata.create_all)
+    await engine.dispose()
+    assert "alembic_version" not in _tables(temp_db)  # unstamped
+    assert "installobservation" in _tables(temp_db)  # …but already at the head schema
+
+    await _migrate(temp_db)  # the `make dev` boot that used to crash with DuplicateColumn
+
+    # Adopted at head with the schema intact and matching the models — nothing rebuilt.
+    head = ScriptDirectory.from_config(_alembic_config()).get_current_head()
+    assert _version(temp_db) == (head,)
+    sync = create_engine(_sync_url(temp_db))
+    try:
+        with sync.connect() as conn:
+            ctx = MigrationContext.configure(conn, opts={"compare_type": True})
+            assert compare_metadata(ctx, SQLModel.metadata) == []
+    finally:
+        sync.dispose()
+
+
+async def test_unstamped_older_post_baseline_schema_is_refused_not_stamped_head(temp_db):
+    """#199 review: an unstamped schema that is post-baseline but OLDER than head — an aborted
+    test run from an older checkout, after which the code was updated — must NOT be stamped at
+    head. Doing so would skip every intervening migration, leaving tables/columns permanently
+    missing behind a head stamp. Adoption refuses loudly instead, since the revision can't be
+    inferred to migrate safely.
+    """
+    # Bring the DB to an intermediate post-baseline revision (created_at is already timestamptz
+    # there, but the schema lacks later additions), then drop alembic_version to make it the
+    # unstamped older-checkout state.
+    sync = create_engine(_sync_url(temp_db))
+    with sync.connect() as conn:
+        cfg = _alembic_config()
+        cfg.attributes["connection"] = conn
+        command.upgrade(cfg, "a1b2c3d4e5f6")  # first post-baseline (timestamptz), well before head
+        conn.commit()
+    with sync.begin() as conn:
+        conn.execute(text("DROP TABLE alembic_version"))
+    sync.dispose()
+    assert "alembic_version" not in _tables(temp_db)  # unstamped
+    assert "installobservation" not in _tables(temp_db)  # …and older than head
+
+    # Must refuse rather than silently stamp head and skip the intervening migrations.
+    with pytest.raises(RuntimeError, match="unstamped post-baseline schema that does not match"):
+        await _migrate(temp_db)
+
+
 def test_head_matches_models(temp_db):
     """Autogenerate finds no diff between the migrations head and the models.
 

@@ -116,6 +116,16 @@ release to diff against.
 
 ### Fixed
 
+- **An aborted test run no longer leaves the dev database unbootable** (#199). The #113 fix drops
+  `alembic_version` in the test setup, so during a run the dev DB holds a `create_all`'d head
+  schema with no stamp. If the suite was aborted before teardown, the next `make dev` boot
+  misclassified that head schema as a *pre-Alembic baseline*, stamped the baseline, and re-ran
+  the post-baseline migrations against columns `create_all` had already made — failing with
+  `DuplicateColumn`. Adoption now compares the unstamped schema against the current models: an
+  exact match (== head) is stamped at *head*, making the boot a no-op; an unstamped schema that
+  is post-baseline but does **not** match head (an aborted run from an *older* checkout, then the
+  code updated) is refused with a clear "drop the dev database" error rather than stamped at head
+  and silently skipping the intervening migrations. Inert in production (never runs `create_all`).
 - **The at-startup retention prune is no longer silently skipped as a misfire** (#198). The prune
   job fires at startup (#145) via `next_run_time=now`, but relied on APScheduler's default 1-second
   `misfire_grace_time`: a >1s gap between the scheduler being created and the executor picking the
