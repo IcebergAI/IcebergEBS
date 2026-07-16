@@ -78,10 +78,10 @@ async def test_non_api_paths_are_not_rate_limited(client, monkeypatch):
     monkeypatch.setattr(main_module, "login_request_limiter", RequestRateLimiter(per_minute=5, burst=1))
     for _ in range(5):
         assert (await client.get("/")).status_code == 200
-    # GET /login renders the form and pays no bcrypt cost, so it is not throttled either
-    # (only POST /login is capped).
+    # GET /login pays no bcrypt cost, so it is not throttled either (only POST /login is
+    # capped). The authenticated client redirects it home (303); the point is it never 429s.
     for _ in range(5):
-        assert (await client.get("/login")).status_code == 200
+        assert (await client.get("/login")).status_code != 429
 
 
 async def test_login_post_is_rate_limited_when_enabled(anon_client, admin_user, monkeypatch):
