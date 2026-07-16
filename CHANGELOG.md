@@ -116,6 +116,13 @@ release to diff against.
 
 ### Fixed
 
+- **The at-startup retention prune is no longer silently skipped as a misfire** (#198). The prune
+  job fires at startup (#145) via `next_run_time=now`, but relied on APScheduler's default 1-second
+  `misfire_grace_time`: a >1s gap between the scheduler being created and the executor picking the
+  job up — a CPU-starved container start, exactly the restart-churn #145 targets — dropped the
+  startup prune as a misfire, so nothing pruned until +24h. Both scheduler jobs now set
+  `misfire_grace_time=None`, so a due fire runs however late the loop is (coalesced to one run)
+  rather than being skipped.
 - **A corrupt pending-alert marker can no longer loop forever or crash a refresh** (#197). The
   durable `pending_alert_events` marker (#109) is now decoded in one place
   (`services._parse_pending_events`), which drops both non-dict entries and malformed event dicts

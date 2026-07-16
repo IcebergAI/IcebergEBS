@@ -102,3 +102,25 @@ async def test_scheduler_prune_first_fire_is_at_startup_not_in_24h(monkeypatch):
         assert job.next_run_time <= datetime.now(timezone.utc) + timedelta(minutes=1)
     finally:
         await client.aclose()
+
+
+async def test_scheduler_jobs_disable_misfire_grace_time(monkeypatch):
+    """#198: both scheduler jobs set misfire_grace_time=None. APScheduler's 1s default would
+    silently drop a due fire when the single-worker loop is busy/stalled at fire time. For the
+    prune's at-startup fire that means a >1s gap between create_scheduler() stamping
+    next_run_time and the executor picking it up (a CPU-starved restart — the exact scenario
+    #145 targets) skips the prune entirely until +24h. None removes the limit so it always runs."""
+    import httpx
+
+    from app import scheduler as scheduler_mod
+    from app.config import settings
+
+    client = httpx.AsyncClient()
+    try:
+        monkeypatch.setattr(settings, "retention_days", 30)
+        sched = scheduler_mod.create_scheduler(client)
+        # Explicitly set to None (not APScheduler's 1s default) on both jobs.
+        assert sched.get_job("watchlist_refresh").misfire_grace_time is None
+        assert sched.get_job("retention_prune").misfire_grace_time is None
+    finally:
+        await client.aclose()

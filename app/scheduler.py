@@ -194,6 +194,12 @@ def create_scheduler(client: httpx.AsyncClient) -> AsyncIOScheduler:
         args=[client],
         id="watchlist_refresh",
         replace_existing=True,
+        # APScheduler's default misfire_grace_time is 1s: if the single-worker event loop is
+        # busy (a long refresh, GC, a CPU-starved container) when a fire is due, the run is
+        # silently dropped as a misfire rather than run late. None removes that limit so a
+        # missed refresh runs when the loop frees up; coalesce (default True) collapses a
+        # backlog to one run (#198).
+        misfire_grace_time=None,
     )
     # Daily data-retention prune, only when ICEBERG_EBS_RETENTION_DAYS is configured.
     # run_retention_prune is itself a no-op when disabled, but skipping the job
@@ -211,5 +217,11 @@ def create_scheduler(client: httpx.AsyncClient) -> AsyncIOScheduler:
             # (#145). This fires on the scheduler executor after startup, so it does not block
             # the server from binding / answering probes (cf. #155).
             next_run_time=datetime.now(timezone.utc),
+            # Without this the startup fire is subject to APScheduler's 1s default
+            # misfire_grace_time: a >1s gap between create_scheduler() stamping next_run_time
+            # and the executor picking the job up (exactly the CPU-starved restart #145
+            # targets) drops the startup prune as a misfire, and no prune runs until +24h.
+            # None removes the limit so the prune always runs, however late the loop is (#198).
+            misfire_grace_time=None,
         )
     return scheduler
