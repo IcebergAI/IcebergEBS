@@ -100,6 +100,14 @@ release to diff against.
 
 ### Fixed
 
+- Startup no longer blocks on re-delivering recovered webhook alerts: `recover_pending_alerts` no
+  longer runs during lifespan startup at all — it's deferred to the head of each scheduler refresh
+  cycle (where it already ran), backed by the durable pending-alert marker. Previously a backlog of
+  undelivered alerts behind a dead/slow destination could burn one webhook timeout per pending
+  extension before `/healthz` answered — long enough to trip the liveness probe and get the pod
+  killed mid-recovery. Recovered alerts are now re-fired on the next cycle (≤ `fetch_interval_minutes`
+  later) instead of at startup; nothing is lost, and recovery runs in exactly one place so it can't
+  race a concurrent refresh's delivery of the same events (#155).
 - A transient Chrome scrape mis-parse (a 200 page with a shifted layout) no longer clobbers
   the stored publisher/install count/last-updated date, spiking the risk score ~+31 and firing
   spurious `risk_level_change` alerts — stored values are kept, matching the existing guards

@@ -326,8 +326,9 @@ async def recover_pending_alerts(engine: AsyncEngine, client: httpx.AsyncClient)
 
     Scans for extensions whose ``pending_alert_events`` marker is still set — meaning the
     process died between committing a state change and delivering its alert — and fires
-    them. Called at startup and at the head of each refresh cycle. ``fire_pending_alerts``
-    clears the marker on success, so this is idempotent and self-healing.
+    them. Called at the head of each scheduler refresh cycle (only — not at startup, so it
+    can't block the server from binding, #155). ``fire_pending_alerts`` clears the marker on
+    success, so this is idempotent and self-healing.
     """
     async with AsyncSession(engine) as session:
         ext_ids = (await session.exec(select(Extension.id).where(Extension.pending_alert_events.is_not(None)))).all()

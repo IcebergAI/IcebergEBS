@@ -59,12 +59,17 @@ async def lifespan(app: FastAPI):
     scheduler.start()
     app.state.scheduler = scheduler
 
-    # Re-fire alerts persisted-but-not-delivered before the previous shutdown/crash, so a
-    # restart recovers them promptly rather than waiting for the next scheduled cycle (#109).
-    from app.database import engine as _engine
-    from app.services import recover_pending_alerts
-
-    await recover_pending_alerts(_engine, client)
+    # Alerts persisted-but-not-delivered before a prior shutdown/crash are recovered at the
+    # head of each scheduler refresh cycle (recover_pending_alerts in scheduler.py), backed by
+    # the durable pending-alert marker (#109). We deliberately do NOT recover here in the
+    # lifespan: uvicorn does not accept connections (including /healthz) until startup finishes,
+    # and recovery POSTs webhooks sequentially — a backlog behind a dead/slow destination would
+    # burn one webhook timeout per pending extension before the app could bind, potentially
+    # exceeding the liveness window and getting the pod killed mid-recovery (#155). Deferring to
+    # the scheduler keeps startup fast and unblocked; the marker makes the deferral safe — the
+    # events are re-fired on the next cycle (≤ fetch_interval_minutes later), never lost. It also
+    # keeps recovery running in exactly one place, so it can't race a concurrent refresh's
+    # delivery of the same events.
 
     yield
 
