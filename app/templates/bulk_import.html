@@ -9,7 +9,7 @@
     <code class="mono">store,id</code> (e.g. <code class="mono">vscode,ms-python.python</code>) or a full store URL.
     IcebergEBS fetches, analyses and scores each one, skipping any already tracked.</p>
 
-  <div class="surface p-6" x-data="bulkImport()">
+  <div class="surface p-6" x-data="bulkImport">
     <label class="label-cap block mb-1.5">Extensions</label>
     <textarea class="field field-mono" rows="8" x-model="text" :disabled="loading"
       placeholder="chrome,cjpalhdlnbpafiamejdnhcphjbkeiagm&#10;vscode,ms-python.python&#10;https://microsoftedge.microsoft.com/addons/detail/jmjflgjpcpepeafmmgdpfkogkghcpiha"></textarea>
@@ -17,10 +17,10 @@
     <div class="flex items-center gap-2 mt-4">
       <button class="btn btn-primary" @click="submit()" :disabled="loading">
         <span x-show="!loading">Import &amp; analyze</span>
-        <span x-show="loading" x-text="`Importing… (${done}/${total})`"></span>
+        <span x-show="loading" x-text="progressLabel"></span>
       </button>
       <a href="/extensions/add" class="btn btn-ghost">Single add</a>
-      <div class="text-meta ml-auto" x-show="lineCount > 0" x-text="`${lineCount} line${lineCount === 1 ? '' : 's'}`"></div>
+      <div class="text-meta ml-auto" x-show="lineCount > 0" x-text="lineCountLabel"></div>
     </div>
 
     <div x-show="error" x-cloak class="mt-4 text-[12.5px]" style="color:var(--risk-critical)" x-text="error"></div>
@@ -29,10 +29,10 @@
     <template x-if="summary">
       <div class="mt-6">
         <div class="flex items-center gap-2 flex-wrap mb-3">
-          <span class="badge badge-low" x-show="summary.added > 0" x-text="`${summary.added} added`"></span>
-          <span class="badge badge-medium" x-show="summary.duplicates > 0" x-text="`${summary.duplicates} duplicate`"></span>
-          <span class="badge badge-high" x-show="summary.invalid > 0" x-text="`${summary.invalid} invalid`"></span>
-          <span class="badge badge-critical" x-show="summary.errors > 0" x-text="`${summary.errors} failed`"></span>
+          <span class="badge badge-low" x-show="summary.added > 0" x-text="summaryLabel('added')"></span>
+          <span class="badge badge-medium" x-show="summary.duplicates > 0" x-text="summaryLabel('duplicates')"></span>
+          <span class="badge badge-high" x-show="summary.invalid > 0" x-text="summaryLabel('invalid')"></span>
+          <span class="badge badge-critical" x-show="summary.errors > 0" x-text="summaryLabel('errors')"></span>
         </div>
         <div class="surface overflow-hidden">
           <table>
@@ -40,7 +40,7 @@
             <tbody>
               <template x-for="(res, i) in summary.results" :key="i">
                 <tr :style="res.status === 'added' ? 'cursor:pointer' : ''"
-                    @click="res.id && (window.location = '/extensions/' + res.id)">
+                    @click="openResult(res)">
                   <td><span class="badge badge-store" :class="res.store ? 'badge-' + res.store : ''" x-text="res.store || '—'"></span></td>
                   <td class="mono text-[12px]" style="color:var(--ink-7)" x-text="res.extension_id"></td>
                   <td>
@@ -60,40 +60,9 @@
   </div>
 </div>
 
-<script>
-function bulkImport() {
-  return {
-    text: '',
-    loading: false,
-    error: '',
-    summary: null,
-    done: 0,
-    total: 0,
-    get lineCount() {
-      return this.text.split('\n').map(l => l.trim()).filter(l => l && !l.startsWith('#')).length;
-    },
-    async submit() {
-      this.error = '';
-      this.summary = null;
-      const lines = this.lineCount;
-      if (lines === 0) { this.error = 'Paste at least one extension'; return; }
-      if (lines > 100) { this.error = `Too many — max 100 per import (got ${lines})`; return; }
-      this.loading = true;
-      this.total = lines;
-      this.done = 0;
-      try {
-        const r = await fetch('/api/extensions/bulk', {
-          method: 'POST',
-          headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({ text: this.text }),
-        });
-        const data = await r.json();
-        if (r.ok) this.summary = data;
-        else this.error = data.detail || 'Import failed';
-      } catch { this.error = 'Network error'; }
-      finally { this.loading = false; this.done = this.total; }
-    },
-  };
-}
-</script>
+
+{% endblock %}
+
+{% block page_js %}
+<script defer src="/static/js/pages/bulk-import.js"></script>
 {% endblock %}

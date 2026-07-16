@@ -81,10 +81,7 @@ No third-party origin is contacted at runtime (`tests/test_no_third_party_origin
 - **Alpine.js** is vendored and version-pinned at `static/js/vendor/alpine-3.15.12.min.js`.
 - **Fonts** (IBM Plex Sans/Mono woff2) are served from `static/fonts/` via `static/css/fonts.css`.
 
-The anti-flash inline script (line 7 of `base.html`/`login.html`) cannot be moved to a file — it must execute before first paint to prevent a theme flash. It is allowed in the CSP via a static SHA-256 hash:
-```
-sha256-<hash-of-exact-script-bytes>
-```
+There are **no inline scripts** (#106): the theme/anti-flash bootstrap is the external `static/js/theme-boot.js`, loaded synchronously at the top of `<head>` so it still runs before first paint, and Alpine is the `@alpinejs/csp` build with all components registered from same-origin files (`static/js/app.js` + `static/js/pages/`). `tests/test_csp_strict.py` fails CI if an inline `<script>` or `on*=` handler reappears.
 
 ---
 
@@ -397,14 +394,14 @@ For production: mount a Let's Encrypt cert (e.g. via Certbot) or any CA-issued c
 
 ## 9. `caddy/headers.caddy`
 
-The **single** home for the canonical security headers, imported by both `caddy/Caddyfile` (Compose) and `caddy/Caddyfile.k8s` (the Kubernetes sidecar) via `import headers.caddy`. Consolidating the CSP here — one definition, not the pre-#188 pair in `nginx/security_headers.conf` **and** the Helm ingress snippet — is the point of the Caddy migration. (The Helm ConfigMap embeds a test-guarded mirror because Helm can't read files above the chart; `tests/test_csp_hash.py` and `tests/test_helm_caddy.py` fail if the copies drift.)
+The **single** home for the canonical security headers, imported by both `caddy/Caddyfile` (Compose) and `caddy/Caddyfile.k8s` (the Kubernetes sidecar) via `import headers.caddy`. Consolidating the CSP here — one definition, not the pre-#188 pair in `nginx/security_headers.conf` **and** the Helm ingress snippet — is the point of the Caddy migration. (The Helm ConfigMap embeds a test-guarded mirror because Helm can't read files above the chart; `tests/test_csp_strict.py` and `tests/test_helm_caddy.py` fail if the copies drift.)
 
 ```caddy
-# Compute the SHA-256 of the anti-flash inline script and substitute <HASH> below
-# (see the "Inline script hash" section). Caddy's `header` SETs (replaces) each value,
-# so exactly one canonical copy reaches the client even though the app emits a baseline.
+# script-src is a strict 'self' (#106): no inline scripts exist, so there is no hash
+# to maintain. Caddy's `header` SETs (replaces) each value, so exactly one canonical
+# copy reaches the client even though the app emits a baseline.
 header {
-	Content-Security-Policy "default-src 'self'; script-src 'self' 'sha256-<HASH>'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; object-src 'none'; form-action 'self'"
+	Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; object-src 'none'; form-action 'self'"
 	Strict-Transport-Security "max-age=63072000; includeSubDomains; preload"
 	X-Content-Type-Options "nosniff"
 	X-Frame-Options "DENY"
@@ -465,23 +462,6 @@ The Compose Caddyfile terminates TLS on :443, sets the canonical headers, and pr
 
 ---
 
-## Inline script hash
-
-During implementation, compute the SHA-256 of the anti-flash script (the exact bytes between the `<script>` tags on line 7 of `base.html`):
-
-```bash
-printf '%s' "(function(){var t=localStorage.getItem('icebergebs-theme')||'light';document.documentElement.setAttribute('data-theme',t);})();" \
-  | openssl dgst -sha256 -binary | openssl base64
-```
-
-Note the **trailing semicolon** — it is part of the script body and therefore part of the
-hashed bytes. Omitting it yields a hash that does not match the script, and the CSP then
-blocks the very script it was meant to allow.
-
-Substitute the result as `'sha256-<base64>'` in `caddy/headers.caddy` (and re-mirror the Helm ConfigMap). This is the only inline script in the app.
-
----
-
 ## Build order
 
 1. `pyproject.toml` — add `asyncpg`, then `uv lock`
@@ -491,9 +471,8 @@ Substitute the result as `'sha256-<base64>'` in `caddy/headers.caddy` (and re-mi
 5. `Dockerfile`, `.dockerignore`, `.env.example`
 6. `docker-compose.yml`
 7. `caddy/generate-dev-cert.sh`
-8. Compute inline script SHA-256 hash
-9. `caddy/headers.caddy` — with computed hash
-10. `caddy/Caddyfile` and `caddy/Caddyfile.k8s`
+8. `caddy/headers.caddy` — the strict same-origin CSP
+9. `caddy/Caddyfile` and `caddy/Caddyfile.k8s`
 
 ---
 

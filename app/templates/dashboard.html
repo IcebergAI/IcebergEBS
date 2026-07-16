@@ -101,7 +101,10 @@
 {% macro sort_link(col) %}{{ qs(sort=col, order=('asc' if sort == col and order == 'desc' else 'desc'), page=1) }}{% endmacro %}
 {% set active_pill = 'background:var(--ink-8);color:white;border-color:var(--ink-8)' %}
 
-<div x-data="dashboardData()">
+{# Server data reaches the component via a JSON island (never the x-data
+   attribute — the CSP build's parser doesn't decode |tojson's \uXXXX escapes). #}
+<script id="dashboard-data" type="application/json">{{ extensions | tojson }}</script>
+<div x-data="dashboardData">
 
   {# Filter + search bar (server-driven via query params) #}
   <div class="flex items-center justify-between mb-3 flex-wrap gap-2">
@@ -154,7 +157,7 @@
       </thead>
       <tbody>
         <template x-for="ext in extensions" :key="ext.id">
-          <tr style="cursor:pointer" @click="window.location='/extensions/' + ext.id">
+          <tr style="cursor:pointer" @click="openExt(ext)">
             <td>
               <div class="flex items-center gap-2">
                 <div class="font-medium" style="color:var(--ink-8)" x-text="ext.name || ext.extension_id"></div>
@@ -174,7 +177,7 @@
             </td>
             <td>
               <div class="flex items-center gap-3" style="min-width:200px">
-                <div class="mono text-[14px] font-semibold tabular-nums" :style="'color:' + scoreColor(ext.risk_score) + ';min-width:24px'" x-text="ext.risk_score ?? '—'"></div>
+                <div class="mono text-[14px] font-semibold tabular-nums" :style="'color:' + scoreColor(ext.risk_score) + ';min-width:24px'" x-text="scoreText(ext)"></div>
                 <div class="score-bar-track flex-1">
                   <div class="score-bar-fill" :style="'width:' + (ext.risk_score || 0) + '%;background:' + scoreColor(ext.risk_score)"></div>
                 </div>
@@ -182,8 +185,8 @@
               </div>
             </td>
             <td style="color:var(--ink-7)" x-text="ext.publisher || '—'"></td>
-            <td class="text-right mono tabular-nums" style="color:var(--ink-6)" x-text="ext.install_count != null ? ext.install_count.toLocaleString() : '—'"></td>
-            <td style="color:var(--ink-6)" x-text="ext.last_updated ? new Date(ext.last_updated).toLocaleDateString() : '—'"></td>
+            <td class="text-right mono tabular-nums" style="color:var(--ink-6)" x-text="installsText(ext)"></td>
+            <td style="color:var(--ink-6)" x-text="updatedText(ext)"></td>
             <td>
               <div class="flex justify-end gap-1" @click.stop>
                 <button class="btn btn-ghost btn-sm" title="Refresh" @click="refreshExt(ext.id)">
@@ -210,33 +213,9 @@
   {% endif %}
 </div>
 
-<script>
-function dashboardData() {
-  return {
-    extensions: {{ extensions | tojson }},
-    riskLevel(score) {
-      if (score == null) return 'unknown';
-      if (score >= 75) return 'critical';
-      if (score >= 50) return 'high';
-      if (score >= 25) return 'medium';
-      return 'low';
-    },
-    scoreColor(score) {
-      return {
-        critical: 'oklch(0.60 0.18 22)',
-        high:     'oklch(0.68 0.16 50)',
-        medium:   'oklch(0.74 0.14 85)',
-        low:      'oklch(0.66 0.14 155)',
-        unknown:  'oklch(0.58 0.012 245)',
-      }[this.riskLevel(score)];
-    },
-  };
-}
-function refreshExt(id) {
-  fetch('/api/extensions/' + id + '/refresh', { method: 'POST' })
-    .then(r => r.ok ? location.reload() : alert('Refresh failed'));
-}
-</script>
-
 {% endif %}
+{% endblock %}
+
+{% block page_js %}
+<script defer src="/static/js/pages/dashboard.js"></script>
 {% endblock %}

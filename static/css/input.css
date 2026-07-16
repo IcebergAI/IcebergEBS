@@ -11,6 +11,8 @@
 @import "tailwindcss" source(none);
 
 @source "../../app/templates";
+@source "../js/app.js";
+@source "../js/pages";
 @source "../js/topbar-search.js";
 @source "../js/trend-chart.js";
 

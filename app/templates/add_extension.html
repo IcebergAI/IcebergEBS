@@ -12,35 +12,7 @@
     <a href="/extensions/bulk" class="btn btn-ghost btn-sm">Bulk import →</a>
   </div>
 
-  <div class="surface p-6" x-data="{
-    store: '',
-    extensionId: '',
-    loading: false,
-    error: '',
-    detectStore() {
-      const v = this.extensionId.trim();
-      if (v.includes('chromewebstore.google.com') || v.includes('chrome.google.com/webstore')) this.store = 'chrome';
-      else if (v.includes('marketplace.visualstudio.com')) this.store = 'vscode';
-      else if (v.includes('microsoftedge.microsoft.com')) this.store = 'edge';
-    },
-    async submit() {
-      this.error = '';
-      if (!this.store) { this.error = 'Select a store'; return; }
-      if (!this.extensionId.trim()) { this.error = 'Enter an extension ID or URL'; return; }
-      this.loading = true;
-      try {
-        const r = await fetch('/api/extensions', {
-          method: 'POST',
-          headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({ store: this.store, extension_id: this.extensionId.trim() }),
-        });
-        const data = await r.json();
-        if (r.ok) window.location.href = '/extensions/' + data.id;
-        else this.error = data.detail || 'Failed to add extension';
-      } catch { this.error = 'Network error'; }
-      finally { this.loading = false; }
-    },
-  }">
+  <div class="surface p-6" x-data="addExtension">
 
     <label class="label-cap block mb-1.5">Extension ID or store URL</label>
     <input class="field field-mono" placeholder="cjpalhdlnbpafiamejdnhcphjbkeiagm"
@@ -91,4 +63,8 @@
     </div>
   </div>
 </div>
+{% endblock %}
+
+{% block page_js %}
+<script defer src="/static/js/pages/add-extension.js"></script>
 {% endblock %}

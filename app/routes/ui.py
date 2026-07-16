@@ -85,6 +85,12 @@ def _render(request: Request, template: str, ctx: dict, user: User | None = None
     ctx["is_admin"] = user.is_admin if user else False
     ctx["username"] = user.username if user else ""
     ctx["app_version"] = get_version()
+    # Pre-stamp <html data-theme> from the cookie static/js/theme-boot.js maintains,
+    # so the first server-rendered frame is already the right theme; the (external,
+    # synchronous) theme-boot script then re-resolves a 'system' preference against
+    # the current OS setting before first paint (#106).
+    resolved_theme = request.cookies.get("ebs_resolved_theme")
+    ctx["initial_theme"] = resolved_theme if resolved_theme in ("light", "dark") else "light"
     response = templates.TemplateResponse(request=request, name=template, context=ctx)
     if flash:
         _clear_flash(response)

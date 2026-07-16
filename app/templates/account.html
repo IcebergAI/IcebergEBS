@@ -3,7 +3,15 @@
 {% block nav_account %}active{% endblock %}
 
 {% block content %}
-<div x-data="accountPrefs()">
+{# Server data for accountPrefs (static/js/pages/account.js) — JSON island,
+   never x-data attribute args (CSP build, #106). #}
+<script id="account-data" type="application/json">{{ {
+  'destinations': destinations,
+  'rules': rules,
+  'extensions': extensions,
+  'alert_log': alert_log,
+} | tojson }}</script>
+<div x-data="accountPrefs">
 
 <div class="flex items-center gap-2 text-[12.5px] mb-2" style="color:var(--ink-5)">
   <span>Account</span>
@@ -21,15 +29,15 @@
   </div>
   <div class="surface p-4">
     <div class="label-cap">Active rules</div>
-    <div class="kpi"><div class="v mt-1.5" x-text="rules.filter(r=>r.enabled).length"></div></div>
+    <div class="kpi"><div class="v mt-1.5" x-text="enabledRuleCount"></div></div>
   </div>
   <div class="surface p-4">
     <div class="label-cap">Fired · 7 days</div>
-    <div class="kpi"><div class="v mt-1.5" x-text="alertLog.filter(r=>r.success && daysSince(r.sent_at)<7).length"></div></div>
+    <div class="kpi"><div class="v mt-1.5" x-text="deliveredThisWeek"></div></div>
   </div>
   <div class="surface p-4">
     <div class="label-cap">Failed · 7 days</div>
-    <div class="kpi"><div class="v mt-1.5" style="color:var(--risk-critical)" x-text="alertLog.filter(r=>!r.success && daysSince(r.sent_at)<7).length"></div></div>
+    <div class="kpi"><div class="v mt-1.5" style="color:var(--risk-critical)" x-text="failedThisWeek"></div></div>
   </div>
 </div>
 
@@ -230,115 +238,9 @@
 
 </div>
 
-<script>
-function accountPrefs() {
-  const EVENT_LABELS = {
-    risk_level_change: 'Risk level change',
-    publisher_change:  'Publisher change',
-    permission_change: 'Permission change',
-    new_version:       'New version',
-  };
-  return {
-    destinations: ({{ destinations | tojson }}).map(d => ({ ...d, _testing: false, _testMsg: '', _testOk: false })),
-    rules: {{ rules | tojson }},
-    extensions: {{ extensions | tojson }},
-    alertLog: {{ alert_log | tojson }},
-    showAddDest: false, destSaving: false, destError: '',
-    destForm: { label: '', target: '' },
-    showAddRule: false, ruleSaving: false, ruleError: '',
-    ruleForm: { event_type: 'risk_level_change', destination_id: '', extension_id: '' },
-    logFilter: 'all',
-    globalError: '',
-    init() {
-      if (this.destinations.length > 0) this.ruleForm.destination_id = this.destinations[0].id;
-    },
-    get filteredLog() {
-      if (this.logFilter === 'all') return this.alertLog;
-      return this.alertLog.filter(r => this.logFilter === 'delivered' ? r.success : !r.success);
-    },
-    daysSince(iso) { return (Date.now() - new Date(iso)) / 86400000; },
-    async loadLog() {
-      try {
-        const r = await fetch('/api/alerts/log');
-        if (r.ok) this.alertLog = await r.json();
-        else this.globalError = 'Failed to load alert history';
-      } catch { this.globalError = 'Network error loading alert history'; }
-    },
-    eventLabel(t) { return EVENT_LABELS[t] || t; },
-    formatTime(iso) { return new Date(iso).toLocaleString(undefined, {dateStyle:'short', timeStyle:'short'}); },
-    resetDestForm() { this.destForm = { label:'', target:'' }; this.destError = ''; },
-    resetRuleForm() {
-      this.ruleForm = { event_type:'risk_level_change', destination_id: this.destinations[0]?.id ?? '', extension_id:'' };
-      this.ruleError = '';
-    },
-    async addDest() {
-      this.destError = '';
-      if (!this.destForm.label.trim()) { this.destError = 'Label is required'; return; }
-      if (!this.destForm.target.trim()) { this.destError = 'Webhook URL is required'; return; }
-      this.destSaving = true;
-      try {
-        const r = await fetch('/api/alerts/destinations', { method:'POST', headers:{'Content-Type':'application/json'},
-          body: JSON.stringify({ label: this.destForm.label.trim(), target: this.destForm.target.trim() }) });
-        const data = await r.json();
-        if (r.ok) { this.destinations.push({ ...data, _testing: false, _testMsg: '', _testOk: false }); if (!this.ruleForm.destination_id) this.ruleForm.destination_id = data.id; this.showAddDest=false; this.resetDestForm(); }
-        else this.destError = data.detail || 'Save failed';
-      } catch { this.destError = 'Network error'; }
-      finally { this.destSaving = false; }
-    },
-    async toggleDest(d) {
-      const r = await fetch(`/api/alerts/destinations/${d.id}`, { method:'PATCH', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ enabled: !d.enabled }) });
-      if (r.ok) d.enabled = !d.enabled; else this.globalError = 'Update failed';
-    },
-    async testDest(d) {
-      d._testing = true;
-      d._testMsg = '';
-      try {
-        const r = await fetch(`/api/alerts/destinations/${d.id}/test`, { method:'POST' });
-        const data = await r.json();
-        d._testOk  = r.ok;
-        d._testMsg = r.ok ? '✓ delivered' : '✗ ' + (data.detail || 'failed');
-      } catch {
-        d._testOk  = false;
-        d._testMsg = '✗ network error';
-      } finally {
-        d._testing = false;
-      }
-      setTimeout(() => { d._testMsg = ''; }, 4000);
-    },
-    async deleteDest(id) {
-      if (!confirm('Delete this destination? Any rules using it will also be removed.')) return;
-      const r = await fetch(`/api/alerts/destinations/${id}`, { method:'DELETE' });
-      if (r.ok) { this.destinations = this.destinations.filter(d => d.id !== id); this.rules = this.rules.filter(r => r.destination_id !== id); }
-      else this.globalError = 'Delete failed';
-    },
-    async addRule() {
-      this.ruleError = '';
-      if (!this.ruleForm.destination_id) { this.ruleError = 'Select a destination'; return; }
-      this.ruleSaving = true;
-      try {
-        const body = { event_type: this.ruleForm.event_type, destination_id: Number(this.ruleForm.destination_id) };
-        if (this.ruleForm.extension_id) body.extension_id = Number(this.ruleForm.extension_id);
-        const r = await fetch('/api/alerts/rules', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
-        const data = await r.json();
-        if (r.ok) {
-          const dest = this.destinations.find(d => d.id === data.destination_id);
-          const ext = this.extensions.find(e => e.id === data.extension_id);
-          this.rules.push({ ...data, dest_label: dest?.label ?? '—', ext_name: ext?.name ?? null });
-          this.showAddRule = false; this.resetRuleForm();
-        } else this.ruleError = data.detail || 'Save failed';
-      } catch { this.ruleError = 'Network error'; }
-      finally { this.ruleSaving = false; }
-    },
-    async toggleRule(r) {
-      const res = await fetch(`/api/alerts/rules/${r.id}`, { method:'PATCH', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ enabled: !r.enabled }) });
-      if (res.ok) r.enabled = !r.enabled; else this.globalError = 'Update failed';
-    },
-    async deleteRule(id) {
-      if (!confirm('Delete this alert rule?')) return;
-      const r = await fetch(`/api/alerts/rules/${id}`, { method:'DELETE' });
-      if (r.ok) this.rules = this.rules.filter(r => r.id !== id); else this.globalError = 'Delete failed';
-    },
-  };
-}
-</script>
+
+{% endblock %}
+
+{% block page_js %}
+<script defer src="/static/js/pages/account.js"></script>
 {% endblock %}

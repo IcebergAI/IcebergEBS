@@ -58,6 +58,19 @@ release to diff against.
 
 ### Changed
 
+- **Strict same-origin Content-Security-Policy** (#106): `script-src` is now exactly `'self'` —
+  no CDN hosts, no `unsafe-eval`, and **no inline scripts anywhere**. Alpine moved to the
+  **`@alpinejs/csp` build** with every component registered via `Alpine.data()` from
+  same-origin files (`static/js/app.js` + `static/js/pages/`), server data delivered through
+  `<script type="application/json">` islands, and the hash-pinned inline anti-flash script
+  replaced by the external `static/js/theme-boot.js` — deleting the hand-maintained sha256
+  pin entirely. Theme preference upgraded from a binary toggle to **system/light/dark**
+  ('system' follows the OS via `prefers-color-scheme`), cookie-backed for flicker-free
+  server-side first paint. Guards: `tests/test_csp_strict.py` (no inline scripts/handlers,
+  script-src exactly `'self'`) and the e2e suite now fails on **any** CSP console error.
+  This also **fixes Alpine interactivity in production**: behind Caddy the old standard
+  build's expression eval was CSP-blocked (no `unsafe-eval`), so interactive components
+  (dropdown, tabs, forms' client behaviour) silently didn't run.
 - **The frontend is fully self-hosted — no third-party CDN at runtime** (#85). Tailwind is now
   a real v4 build (standalone CLI via `pytailwindcss`, `static/css/input.css` → a gitignored
   `static/css/output.css`, built by `make css` / a Dockerfile `tailwind-builder` stage) instead
