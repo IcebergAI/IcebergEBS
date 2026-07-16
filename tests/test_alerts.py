@@ -910,6 +910,73 @@ async def test_fire_alerts_skips_disabled_destination(test_db, admin_user):
     assert len(logs) == 0
 
 
+@respx.mock
+async def test_fire_alerts_delivers_all_same_type_events(test_db, admin_user):
+    """#144: two events of the SAME type in the pending list are BOTH delivered + logged.
+
+    The #109 merge can leave several events of one type in the marker — e.g. a
+    new_version 1.0→1.1 whose delivery failed, then a 1.1→1.2 the next cycle.
+    fire_alerts used to collapse events to one per type (dict last-wins), so only
+    1.1→1.2 was POSTed/logged and fire_pending_alerts then cleared the whole marker,
+    losing 1.0→1.1 with no AlertLog. Every event must reach its matching rule.
+    """
+    webhook_url = "https://hooks.example.com/all-events"
+    respx.post(f"https://{_PINNED_IP}/all-events").mock(return_value=httpx.Response(200))
+
+    async with AsyncSession(test_db) as session:
+        dest = AlertDestination(user_id=admin_user.id, label="Dest", target=webhook_url, enabled=True)
+        session.add(dest)
+        await session.commit()
+        await session.refresh(dest)
+        dest_id = dest.id
+
+        ext = Extension(
+            user_id=admin_user.id,
+            store="vscode",
+            extension_id="test.allevents",
+            name="All Events",
+            publisher="Pub",
+            version="1.2",
+            store_url="https://example.com",
+            risk_score=60,
+            permissions="[]",
+            last_fetched_at=datetime(2024, 1, 1, tzinfo=timezone.utc),
+        )
+        session.add(ext)
+        await session.commit()
+        await session.refresh(ext)
+
+        rule = AlertRule(
+            user_id=admin_user.id,
+            destination_id=dest_id,
+            event_type="new_version",
+            enabled=True,
+        )
+        session.add(rule)
+        await session.commit()
+        await session.refresh(ext)
+
+        # Two same-type events, oldest first — exactly what the merge stages.
+        events = [
+            ChangeEvent("new_version", "1.0", "1.1"),
+            ChangeEvent("new_version", "1.1", "1.2"),
+        ]
+        async with httpx.AsyncClient() as http:
+            await fire_alerts(events, ext, test_db, http)
+
+    # Both events were POSTed (not collapsed to the latest), in order.
+    assert respx.calls.call_count == 2
+    posted = [json.loads(c.request.content)["change"] for c in respx.calls]
+    assert posted == [{"old": "1.0", "new": "1.1"}, {"old": "1.1", "new": "1.2"}]
+
+    # And both are recorded in the alert log.
+    async with AsyncSession(test_db) as session:
+        logs = (await session.exec(select(AlertLog).where(AlertLog.extension_id == ext.id))).all()
+    assert len(logs) == 2
+    details = sorted(json.loads(log.detail)["new"] for log in logs)
+    assert details == ["1.1", "1.2"]
+
+
 # ---------------------------------------------------------------------------
 # Alert log history preservation
 # ---------------------------------------------------------------------------

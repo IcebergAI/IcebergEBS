@@ -104,6 +104,14 @@ release to diff against.
 
 ### Fixed
 
+- **Alerts no longer drop an older same-type event when several are pending** (#144). The
+  recoverable-alert marker (#109) can hold two events of one type — e.g. a `new_version`
+  1.0→1.1 whose webhook delivery failed and was retained, then a 1.1→1.2 the next cycle.
+  `fire_alerts` collapsed the event list to one per type (dict last-wins), so only the newest
+  was POSTed and logged; `fire_pending_alerts` then cleared the whole marker, losing the older
+  transition with no `AlertLog` row. It now groups rules by event type and delivers **every**
+  event (oldest→newest), so a consumer learns each transition — e.g. a risk level that went
+  low→high→low — instead of just the final one.
 - **Running the test suite no longer leaves the dev database unbootable** (#113). The suite
   builds its schema with `create_all` and drops it at teardown, but `alembic_version` isn't a
   SQLModel table so it survived — stamped at head over an empty schema. The next `make dev`
