@@ -100,6 +100,12 @@ release to diff against.
 
 ### Fixed
 
+- The extension detail page and JSON API no longer 500 when a stored JSON column
+  (`permissions`, `risk_detail`, `package_analysis`) holds **valid JSON of the wrong shape** —
+  e.g. an array where an object is expected, from a partial write or manual DB edit. Reads now go
+  through typed `Extension` accessors (`permissions_list()` / `analysis_dict()` / `risk_detail_dict()`
+  / `pending_events()`) that own one defensive parse guarding both unparsable *and* wrong-shape JSON,
+  extending the earlier #17/#61 hardening that only covered unparsable JSON (#167).
 - Startup no longer blocks on re-delivering recovered webhook alerts: `recover_pending_alerts` no
   longer runs during lifespan startup at all — it's deferred to the head of each scheduler refresh
   cycle (where it already ran), backed by the durable pending-alert marker. Previously a backlog of

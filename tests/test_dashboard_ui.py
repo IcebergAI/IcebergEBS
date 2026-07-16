@@ -113,3 +113,30 @@ async def test_detail_page_tolerates_malformed_json(client, test_db, admin_user)
     r = await client.get(f"/extensions/{ext_id}")
     assert r.status_code == 200
     assert "Broken" in r.text
+
+
+async def test_detail_page_tolerates_wrong_shaped_json(client, test_db, admin_user):
+    # Valid JSON of the wrong container type (a partial write / manual edit) must also
+    # fall back rather than AttributeError-ing on .get/.setdefault — the accessor shape
+    # guard, not just decode guard (#150/#167).
+    async with AsyncSession(test_db) as s:
+        ext = Extension(
+            user_id=admin_user.id,
+            store="chrome",
+            extension_id="b" * 32,
+            name="Misshaped",
+            publisher="Acme",
+            version="1.0",
+            store_url="https://example.com",
+            permissions='{"not": "a list"}',
+            risk_detail="[1, 2, 3]",
+            package_analysis="[1, 2, 3]",  # array where the page expects an object
+        )
+        s.add(ext)
+        await s.commit()
+        await s.refresh(ext)
+        ext_id = ext.id
+
+    r = await client.get(f"/extensions/{ext_id}")
+    assert r.status_code == 200
+    assert "Misshaped" in r.text

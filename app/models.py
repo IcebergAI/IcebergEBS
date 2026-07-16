@@ -4,6 +4,8 @@ from typing import Any, Optional
 from sqlalchemy import Column, DateTime, Index, desc
 from sqlmodel import Field, SQLModel, UniqueConstraint
 
+from app.utils import json_list, json_object
+
 
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
@@ -64,6 +66,27 @@ class Extension(SQLModel, table=True):
     # the next scheduler cycle rather than lost (#109). JSON list of
     # {event_type, old_value, new_value}; cleared once fire_alerts has processed them.
     pending_alert_events: Optional[str] = None
+
+    # Typed accessors for the JSON-in-str columns above (#167): each owns the one
+    # defensive parse (missing / unparsable / wrong-shape → a safe fallback) so
+    # consumers don't re-implement it and can't reintroduce the #17/#61 bug class.
+    # Writers still json.dumps the value back onto the column.
+    def permissions_list(self) -> list:
+        """Stored API permissions as a list; [] when missing/malformed/not a list."""
+        return json_list(self.permissions, "permissions", self.id)
+
+    def analysis_dict(self) -> dict | None:
+        """Stored package_analysis as a dict, or None when absent/malformed/not an object."""
+        return json_object(self.package_analysis, "package_analysis", self.id)
+
+    def risk_detail_dict(self) -> dict | None:
+        """Stored risk_detail breakdown as a dict, or None when absent/malformed/not an object."""
+        return json_object(self.risk_detail, "risk_detail", self.id)
+
+    def pending_events(self) -> list[dict]:
+        """Staged undelivered alert-event dicts (#109); [] when missing/malformed, and
+        non-dict entries dropped."""
+        return [e for e in json_list(self.pending_alert_events, "pending_alert_events", self.id) if isinstance(e, dict)]
 
 
 class FetchLog(SQLModel, table=True):
