@@ -24,8 +24,21 @@
 (function () {
   let bands = []; // [{band, from, to}] from the server payload, sorted by `from`
 
+  // The SVG is assembled as an HTML string, so every non-numeric value that
+  // reaches it must be escaped (CodeQL js/xss-through-dom: the island payload
+  // is DOM text and must not be reinterpreted as HTML). Numbers are coerced
+  // via toFixed()/Number() at their interpolation sites.
+  function esc(value) {
+    return String(value)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+
   function riskToken(band) {
-    return getComputedStyle(document.documentElement).getPropertyValue('--risk-' + band).trim();
+    return esc(getComputedStyle(document.documentElement).getPropertyValue('--risk-' + band).trim());
   }
 
   function bandFor(score) {
@@ -70,8 +83,8 @@
       '<circle class="dot" cx="' + x(i).toFixed(1) + '" cy="' + y(d.s).toFixed(1) + '" r="3" fill="' + bandColor(d.s) + '"></circle>').join('') : '';
 
     const xLabels = axis ?
-      '<text class="axis-label" x="' + padL + '" y="' + (H - 6) + '" text-anchor="start">' + data[0].d + '</text>' +
-      '<text class="axis-label" x="' + (W - padR) + '" y="' + (H - 6) + '" text-anchor="end">' + data[data.length - 1].d + '</text>' : '';
+      '<text class="axis-label" x="' + padL + '" y="' + (H - 6) + '" text-anchor="start">' + esc(data[0].d) + '</text>' +
+      '<text class="axis-label" x="' + (W - padR) + '" y="' + (H - 6) + '" text-anchor="end">' + esc(data[data.length - 1].d) + '</text>' : '';
 
     const cx = x(data.length - 1), cy = y(cur);
     const marker = '<circle cx="' + cx.toFixed(1) + '" cy="' + cy.toFixed(1) + '" r="' + (axis ? 4.5 : 3.5) + '" fill="' + stroke + '" stroke="var(--surface)" stroke-width="2"></circle>';
@@ -90,9 +103,15 @@
     if (!island) return;
     let payload = null;
     try { payload = JSON.parse(island.textContent || 'null'); } catch (e) { return; }
-    if (!payload || !Array.isArray(payload.points) || !Array.isArray(payload.bands) || !payload.bands.length) return;
-    const data = payload.points;
-    bands = payload.bands.slice().sort((a, b) => a.from - b.from);
+    if (!payload || !Array.isArray(payload.points) || !Array.isArray(payload.bands)) return;
+    // Allowlist-validate the payload shape: band names must be plain lowercase
+    // words (they become CSS custom-property lookups) and the geometry numeric.
+    const data = payload.points.filter(p => typeof p.s === 'number' && Number.isFinite(p.s));
+    bands = payload.bands
+      .filter(b => typeof b.band === 'string' && /^[a-z]+$/.test(b.band)
+        && typeof b.from === 'number' && typeof b.to === 'number')
+      .sort((a, b) => a.from - b.from);
+    if (!bands.length) return;
     const full = document.getElementById('risk-trend');
     const mini = document.getElementById('risk-trend-mini');
     function render() {
