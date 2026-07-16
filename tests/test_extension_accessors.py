@@ -40,6 +40,11 @@ def test_permissions_list_wrong_shape_falls_back():
     assert _ext(permissions='{"a": 1}').permissions_list() == []
 
 
+def test_permissions_list_drops_non_string_members():
+    # A wrong-typed member would 500 the list[str] DTO / the export join — drop it (#150).
+    assert _ext(permissions='["tabs", 5, null, {"x": 1}, "storage"]').permissions_list() == ["tabs", "storage"]
+
+
 # --- analysis_dict ----------------------------------------------------------
 
 

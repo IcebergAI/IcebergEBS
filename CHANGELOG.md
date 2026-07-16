@@ -118,6 +118,11 @@ release to diff against.
   through typed `Extension` accessors (`permissions_list()` / `analysis_dict()` / `risk_detail_dict()`
   / `pending_events()`) that own one defensive parse guarding both unparsable *and* wrong-shape JSON,
   extending the earlier #17/#61 hardening that only covered unparsable JSON (#167).
+- The single-extension JSON API no longer 500s on a **malformed `findings` list** in
+  `package_analysis` — a non-dict entry, a finding dict missing required fields, or a `findings`
+  value that isn't a list. Findings now deserialize tolerantly (non-dicts skipped, missing string
+  fields defaulted) the way the detail page already did, completing the #167 wrong-shape hardening
+  for the last stored-JSON read path (#150).
 - Startup no longer blocks on re-delivering recovered webhook alerts: `recover_pending_alerts` no
   longer runs during lifespan startup at all — it's deferred to the head of each scheduler refresh
   cycle (where it already ran), backed by the durable pending-alert marker. Previously a backlog of

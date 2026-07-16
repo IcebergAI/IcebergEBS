@@ -71,9 +71,11 @@ class Extension(SQLModel, table=True):
     # defensive parse (missing / unparsable / wrong-shape → a safe fallback) so
     # consumers don't re-implement it and can't reintroduce the #17/#61 bug class.
     # Writers still json.dumps the value back onto the column.
-    def permissions_list(self) -> list:
-        """Stored API permissions as a list; [] when missing/malformed/not a list."""
-        return json_list(self.permissions, "permissions", self.id)
+    def permissions_list(self) -> list[str]:
+        """Stored API permissions as a list of strings; [] when missing/malformed/not a list,
+        with non-string members dropped — a wrong-typed member would otherwise 500 the
+        ``list[str]`` API DTO and the CSV export's ``";".join(...)`` (#150)."""
+        return [p for p in json_list(self.permissions, "permissions", self.id) if isinstance(p, str)]
 
     def analysis_dict(self) -> dict | None:
         """Stored package_analysis as a dict, or None when absent/malformed/not an object."""

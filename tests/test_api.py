@@ -519,6 +519,100 @@ async def test_add_transport_error_reports_error_not_500(client):
     assert all(e["extension_id"] != "testpub.transport-add" for e in r_list.json()["items"])
 
 
+async def test_extension_out_tolerates_wrong_shaped_findings(client, test_db, admin_user):
+    """#150: a partial write / manual edit can leave valid-JSON-but-wrong-shape in
+    package_analysis. The single-extension API must not 500 — non-dict findings are
+    skipped, dicts missing required fields are defaulted, and a wrong-typed
+    host_permissions / findings container falls back to []."""
+    package_analysis = json.dumps(
+        {
+            "host_permissions": {"not": "a list"},  # wrong container type
+            "findings": [
+                {"code": "GOOD", "severity": "high", "title": "T", "detail": "d", "source": "package", "line": 3},
+                {"code": "PARTIAL"},  # missing severity/title/detail/source → defaulted
+                "not a dict",  # skipped
+                42,  # skipped
+            ],
+        }
+    )
+    async with AsyncSession(test_db) as s:
+        ext = Extension(
+            user_id=admin_user.id,
+            store="chrome",
+            extension_id="a" * 32,
+            name="Misshaped",
+            publisher="Acme",
+            version="1.0",
+            store_url="https://example.com",
+            package_analysis=package_analysis,
+        )
+        s.add(ext)
+        await s.commit()
+        await s.refresh(ext)
+        ext_id = ext.id
+
+    r = await client.get(f"/api/extensions/{ext_id}")
+    assert r.status_code == 200
+    data = r.json()
+    assert data["host_permissions"] == []  # wrong-shape → fallback, not a 500
+    findings = data["findings"]
+    assert {f["code"] for f in findings} == {"GOOD", "PARTIAL"}  # non-dicts skipped
+    partial = next(f for f in findings if f["code"] == "PARTIAL")
+    assert partial["severity"] == "low"  # defaulted
+    assert partial["title"] == "PARTIAL"  # falls back to code
+    assert partial["source"] == "package"
+
+
+async def test_extension_out_sanitizes_non_string_list_members(client, test_db, admin_user):
+    """#150 review: a permissions / host_permissions list whose members aren't all strings
+    must not 500 the list[str] DTO — non-string members are dropped, not rejected."""
+    async with AsyncSession(test_db) as s:
+        ext = Extension(
+            user_id=admin_user.id,
+            store="chrome",
+            extension_id="d" * 32,
+            name="Members",
+            publisher="Acme",
+            version="1.0",
+            store_url="https://example.com",
+            permissions='["tabs", 5, null, {"x": 1}]',
+            package_analysis=json.dumps({"host_permissions": ["https://ok/*", 123, True, {"bad": "x"}]}),
+        )
+        s.add(ext)
+        await s.commit()
+        await s.refresh(ext)
+        ext_id = ext.id
+
+    r = await client.get(f"/api/extensions/{ext_id}")
+    assert r.status_code == 200
+    data = r.json()
+    assert data["permissions"] == ["tabs"]
+    assert data["host_permissions"] == ["https://ok/*"]
+
+
+async def test_extension_out_tolerates_non_list_findings(client, test_db, admin_user):
+    """A `findings` that isn't a list at all must not raise while iterating (#150)."""
+    async with AsyncSession(test_db) as s:
+        ext = Extension(
+            user_id=admin_user.id,
+            store="chrome",
+            extension_id="b" * 32,
+            name="BadFindings",
+            publisher="Acme",
+            version="1.0",
+            store_url="https://example.com",
+            package_analysis=json.dumps({"findings": "not-a-list"}),
+        )
+        s.add(ext)
+        await s.commit()
+        await s.refresh(ext)
+        ext_id = ext.id
+
+    r = await client.get(f"/api/extensions/{ext_id}")
+    assert r.status_code == 200
+    assert r.json()["findings"] == []
+
+
 async def test_toggle_watchlist(client):
     with patch("app.fetchers.VSCodeFetcher") as MockFetcher:
         instance = MockFetcher.return_value
