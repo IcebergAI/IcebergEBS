@@ -1,10 +1,10 @@
 """Browser-level UI smoke (#100).
 
 The rest of the suite is API/unit level (httpx + respx) and can't see: a real login,
-Alpine components initialising, or — the live risk — the Caddy CSP (with its
-hand-maintained inline-script hash) blocking the app's own scripts. This drives a real
-browser against the running stack and fails on a CSP violation or an uncaught JS error,
-which is exactly what a hash drift or a broken component produces.
+Alpine components initialising, or — the live risk — the Caddy CSP blocking the app's
+own scripts. This drives a real browser against the running stack and fails on ANY CSP
+violation or uncaught JS error: since #106 the policy is a strict script-src 'self'
+(no inline scripts, @alpinejs/csp build) and there are no tolerated gaps.
 """
 
 import os
@@ -27,14 +27,9 @@ def collect_errors(page: Page):
     return console_errors, page_errors
 
 
-# Known, pre-existing CSP gap: the standard Alpine build evaluates x-data/x-on
-# expressions with eval(), which needs `unsafe-eval` in script-src — the policy doesn't
-# grant it, so Alpine's expression evaluation is CSP-blocked today. Adopting the
-# @alpinejs/csp build (Alpine.data registry) removes the eval and closes this — tracked
-# by #106. Filter it here so this smoke isn't blocked by a gap it isn't fixing, while
-# still catching *new* CSP breakage (most importantly the inline-script hash drifting →
-# "Refused to execute inline script"). Tighten this back to zero once #106 lands.
-_KNOWN_CSP_GAPS = ("unsafe-eval",)
+# #106 landed: the @alpinejs/csp build + Alpine.data registry removed the eval
+# dependency, so there are no tolerated CSP gaps — any violation fails the smoke.
+_KNOWN_CSP_GAPS: tuple[str, ...] = ()
 
 
 def _unexpected(errors):
@@ -63,11 +58,12 @@ def test_login_and_dashboard_render(page: Page, collect_errors):
     # The dashboard shell rendered (a known stat tile), proving auth + template + assets.
     expect(page.locator("text=Fetch health").first).to_be_visible()
     # Alpine must actually load — the interactive controls depend on it, and a plain
-    # resource error from a removed/broken Alpine CDN script would otherwise slip past the
-    # error filters. window.Alpine is defined once the library loads; its *expression eval*
-    # is separately CSP-blocked today (#106), so this asserts the script loaded, not that
-    # components fully initialise (that assertion can tighten once #106 lands).
+    # resource error from a broken vendored script would otherwise slip past the error
+    # filters. Since #106 (CSP build + registry) expressions evaluate for real, so the
+    # user-menu dropdown must be x-cloak-hidden until clicked — proof components
+    # initialised, not merely that the library loaded.
     page.wait_for_function("() => typeof window.Alpine !== 'undefined'")
+    expect(page.locator("text=Sign out")).not_to_be_visible()
     _assert_no_critical_errors(collect_errors)
 
 
@@ -81,4 +77,22 @@ def test_topbar_search_interaction(page: Page, collect_errors):
     search.fill("example")
     search.press("Enter")
     page.wait_for_url(f"{BASE_URL}/?q=example")
+    _assert_no_critical_errors(collect_errors)
+
+
+def test_theme_picker_roundtrip(page: Page, collect_errors):
+    """The system/light/dark picker (#106): drives the Alpine userMenu component —
+    the first CI proof that Alpine interactivity actually works behind the strict
+    CSP — and theme-boot.js's persistence across a reload."""
+    _login(page)
+    # Open the user menu (Alpine @click) and pick the dark theme.
+    page.click("header.topbar .avatar")
+    page.click("button:has-text('Dark')")
+    assert page.get_attribute("html", "data-theme") == "dark"
+    # The choice survives a reload via localStorage + the ebs_* cookies, stamped
+    # before first paint by the external theme-boot.js.
+    page.reload()
+    assert page.get_attribute("html", "data-theme") == "dark"
+    page.click("header.topbar .avatar")
+    page.click("button:has-text('System')")
     _assert_no_critical_errors(collect_errors)

@@ -3,7 +3,8 @@
 {% block nav_admin %}active{% endblock %}
 
 {% block content %}
-<div x-data="userAdmin()">
+<script id="users-data" type="application/json">{{ {'users': users, 'current_user_id': current_user_id} | tojson }}</script>
+<div x-data="userAdmin">
 
 <div class="flex items-end justify-between mb-5 flex-wrap gap-3">
   <div>
@@ -69,7 +70,7 @@
           <span x-show="u.is_admin" class="badge" style="background:var(--accent-bg);color:var(--accent);border-color:color-mix(in oklch, var(--accent) 25%, transparent)">admin</span>
           <span x-show="!u.is_admin" class="badge" style="background:var(--ink-1);color:var(--ink-7);border-color:var(--ink-3)">user</span>
         </td>
-        <td style="color:var(--ink-6)" x-text="new Date(u.created_at).toLocaleDateString()"></td>
+        <td style="color:var(--ink-6)" x-text="createdText(u)"></td>
         <td class="text-right">
           <button x-show="u.id !== currentUserId" class="btn btn-danger btn-sm" @click="deleteUser(u.id, u.username)">Delete</button>
           <span x-show="u.id === currentUserId" style="color:var(--ink-5);font-size:12px">—</span>
@@ -84,48 +85,9 @@
 
 </div>
 
-<script>
-function userAdmin() {
-  return {
-    users: {{ users | tojson }},
-    currentUserId: {{ current_user_id }},
-    showCreate: false,
-    creating: false,
-    createError: '',
-    deleteError: '',
-    form: { username: '', password: '', email: '', is_admin: false },
-    resetForm() {
-      this.form = { username: '', password: '', email: '', is_admin: false };
-      this.createError = '';
-    },
-    async createUser() {
-      this.createError = '';
-      if (!this.form.username.trim()) { this.createError = 'Username is required'; return; }
-      if (!this.form.password) { this.createError = 'Password is required'; return; }
-      this.creating = true;
-      try {
-        const body = { username: this.form.username.trim(), password: this.form.password, is_admin: this.form.is_admin };
-        if (this.form.email.trim()) body.email = this.form.email.trim();
-        const r = await fetch('/api/users', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body) });
-        const data = await r.json();
-        if (r.ok) {
-          this.users.push({ ...data, created_at: data.created_at || new Date().toISOString() });
-          this.showCreate = false;
-          this.resetForm();
-        } else this.createError = data.detail || 'Failed to create user';
-      } catch { this.createError = 'Network error'; }
-      finally { this.creating = false; }
-    },
-    async deleteUser(id, username) {
-      if (!confirm(`Delete user "${username}"? Their extensions and alert rules will also be removed.`)) return;
-      this.deleteError = '';
-      try {
-        const r = await fetch(`/api/users/${id}`, { method: 'DELETE' });
-        if (r.ok) this.users = this.users.filter(u => u.id !== id);
-        else { const data = await r.json(); this.deleteError = data.detail || 'Delete failed'; }
-      } catch { this.deleteError = 'Network error'; }
-    },
-  };
-}
-</script>
+
+{% endblock %}
+
+{% block page_js %}
+<script defer src="/static/js/pages/admin-users.js"></script>
 {% endblock %}

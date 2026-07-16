@@ -16,7 +16,16 @@
     'oklch(0.74 0.14 85)' if risk_level == 'medium' else
     'oklch(0.66 0.14 155)' %}
 
-<div x-data="extDetail()">
+{# Page state for the extDetail component (static/js/pages/extension-detail.js) —
+   a JSON island, never x-data attribute args (CSP build, #106). #}
+<script id="ext-data" type="application/json">{{ {
+  'id': ext.id,
+  'watchlist': ext.watchlist,
+  'findings_count': (package_analysis.grouped_findings | length) if (package_analysis and package_analysis.grouped_findings) else 0,
+  'intel_count': threat_intel_primary_indicators | length,
+  'history_count': fetch_logs | length,
+} | tojson }}</script>
+<div x-data="extDetail">
 
 {# ── Action row ──────────────────────────────────────────── #}
 <div class="flex items-center justify-between mb-4 flex-wrap gap-3">
@@ -31,7 +40,7 @@
       <span x-text="watchlist ? 'Watching' : 'Not watching'"></span>
     </button>
     <div class="w-px h-5 mx-1" style="background:var(--ink-3)"></div>
-    <button class="btn btn-secondary btn-sm" onclick="refreshNow({{ ext.id }}, event)">
+    <button class="btn btn-secondary btn-sm" @click="refreshNow">
       <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 15-6.7L21 8"/><path d="M21 3v5h-5"/></svg>
       Refresh now
     </button>
@@ -39,7 +48,7 @@
       <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 4h6v6"/><path d="M10 14L21 3"/><path d="M21 14v5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5"/></svg>
       Store page
     </a>
-    <button class="btn btn-danger btn-sm" onclick="deleteExt({{ ext.id }})">Delete</button>
+    <button class="btn btn-danger btn-sm" @click="deleteExt">Delete</button>
   </div>
 </div>
 
@@ -367,7 +376,7 @@
             <span class="badge badge-store">{{ indicator.label }}</span>
           </div>
           <div class="flex items-center justify-end gap-1.5 flex-wrap">
-            <button class="btn btn-ghost btn-sm" data-copy-value="{{ indicator.value|e }}" onclick="copyIndicator(this)">Copy</button>
+            <button class="btn btn-ghost btn-sm" data-copy-value="{{ indicator.value|e }}" @click="copyIndicator">Copy</button>
             {% for lookup in indicator.lookups %}
             <a class="btn btn-secondary btn-sm"
                href="{{ lookup.url }}"
@@ -406,7 +415,7 @@
                 <span class="badge badge-store">{{ indicator.label }}</span>
               </div>
               <div class="flex items-center justify-end gap-1.5 flex-wrap">
-                <button class="btn btn-ghost btn-sm" data-copy-value="{{ indicator.value|e }}" onclick="copyIndicator(this)">Copy</button>
+                <button class="btn btn-ghost btn-sm" data-copy-value="{{ indicator.value|e }}" @click="copyIndicator">Copy</button>
                 {% for lookup in indicator.lookups %}
                 <a class="btn btn-secondary btn-sm"
                    href="{{ lookup.url }}"
@@ -505,57 +514,7 @@
 
 {% endblock %}
 
-{% block scripts %}
-<script src="/static/js/trend-chart.js"></script>
-<script>
-function extDetail() {
-  return {
-    tab: 'overview',
-    sev: 'all',
-    watchlist: {{ ext.watchlist | tojson }},
-    findingsCount: {{ (package_analysis.grouped_findings | length) if (package_analysis and package_analysis.grouped_findings) else 0 }},
-    intelCount: {{ threat_intel_primary_indicators | length }},
-    historyCount: {{ fetch_logs | length }},
-    async toggleWatchlist() {
-      const r = await fetch('/api/extensions/{{ ext.id }}/watchlist', {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ watchlist: !this.watchlist }),
-      });
-      if (r.ok) this.watchlist = !this.watchlist;
-    },
-  };
-}
-
-async function refreshNow(id, event) {
-  const btn = event.currentTarget;
-  btn.disabled = true;
-  const orig = btn.innerHTML;
-  btn.textContent = 'Refreshing…';
-  try {
-    const r = await fetch('/api/extensions/' + id + '/refresh', { method: 'POST' });
-    if (r.ok) location.reload();
-    else { const d = await r.json(); alert(d.detail || 'Refresh failed'); btn.innerHTML = orig; }
-  } finally { btn.disabled = false; }
-}
-
-async function deleteExt(id) {
-  if (!confirm('Delete this extension from tracking?')) return;
-  const r = await fetch('/api/extensions/' + id, { method: 'DELETE' });
-  if (r.ok) window.location.href = '/';
-  else alert('Delete failed');
-}
-
-async function copyIndicator(btn) {
-  const value = btn.dataset.copyValue || '';
-  const original = btn.textContent;
-  try {
-    await navigator.clipboard.writeText(value);
-    btn.textContent = 'Copied';
-    setTimeout(() => { btn.textContent = original; }, 1400);
-  } catch {
-    window.prompt('Copy indicator', value);
-  }
-}
-</script>
+{% block page_js %}
+<script defer src="/static/js/trend-chart.js"></script>
+<script defer src="/static/js/pages/extension-detail.js"></script>
 {% endblock %}

@@ -19,11 +19,16 @@
 # `-Server` would silently reintroduce the duplicate headers. The explicit `defer` makes
 # the guarantee robust to future edits (#201).
 #
-# The script-src sha256 hash pins the one inline bootstrap script in base.html; if that
-# script changes, regenerate the hash (see .claude/rules/frontend.md) and update it here.
+# script-src is a strict 'self' — no hash, no unsafe-inline, no unsafe-eval (#106).
+# There are NO inline scripts anywhere: the app ships the @alpinejs/csp build, the
+# theme bootstrap is the external static/js/theme-boot.js, and every component is
+# registered from same-origin files (tests/test_csp_strict.py enforces all of this).
+# style-src keeps 'unsafe-inline' deliberately: the templates use inline style=
+# attributes (dynamic widths, token-var colours), and style injection is not a
+# script-execution vector.
 header {
 	defer
-	Content-Security-Policy "default-src 'self'; script-src 'self' 'sha256-+Eb7yRWu45ifRb64zPIDP0hvsT4OloSS8kNklIXpCO4='; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; object-src 'none'; form-action 'self'"
+	Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; object-src 'none'; form-action 'self'"
 	Strict-Transport-Security "max-age=63072000; includeSubDomains; preload"
 	X-Content-Type-Options "nosniff"
 	X-Frame-Options "DENY"

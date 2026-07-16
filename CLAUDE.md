@@ -121,7 +121,7 @@ ICEBERG_EBS_TEST_DATABASE_URL=postgresql+asyncpg://iceberg_ebs:iceberg_ebs@local
 - Scoring functions handle naive datetimes from external sources by attaching UTC tzinfo before comparison
 
 ## Styling, Theming and Design
-The design system (light/dark CSS custom properties, the self-hosted Tailwind v4 build + component classes, the CSP script hash in `caddy/headers.caddy`, Aperture branding, and the mandatory Alpine.js `x-data` function pattern) lives in the path-scoped rule `.claude/rules/frontend.md` (auto-loads when editing `static/**` or `app/templates/**`).
+The design system (system/light/dark theming via `theme-boot.js`, the self-hosted Tailwind v4 build + component classes, the strict `script-src 'self'` CSP in `caddy/headers.caddy` — no inline scripts, `@alpinejs/csp` build — and the `Alpine.data` registry + JSON-island pattern) lives in the path-scoped rule `.claude/rules/frontend.md` (auto-loads when editing `static/**` or `app/templates/**`).
 
 ## Deployment
 
@@ -131,7 +131,7 @@ Full production deployment instructions are in `DEPLOYMENT.md`. Two options are 
 
 **Docker Compose** — three-service stack (postgres, app, caddy). **Caddy** (config in `caddy/`, #188 — replaced nginx) terminates TLS and proxies everything — including `/static`, served by the app's StaticFiles, since the built `output.css` exists only inside the app image (#85) — to the app; it does **not** rate-limit (stock Caddy has no `rate_limit` directive), so edge throttling moved app-side (`app/ratelimit.py`, enabled via `ICEBERG_EBS_API_RATE_LIMIT_ENABLED` for `/api/*` and `ICEBERG_EBS_LOGIN_RATE_LIMIT_ENABLED` for `POST /login`, #196). Caddy sets `X-Forwarded-For` to a single canonical `{client_ip}`, discarding a client-supplied XFF at the edge (#77). Single uvicorn worker required (APScheduler is per-process; multiple workers produce duplicate watchlist refreshes and `AlertLog` rows).
 
-**Kubernetes (Helm)** — chart under `helm/iceberg-ebs/` with Bitnami postgresql subchart. `replicaCount: 1` is mandatory for the same reason. Topology is **cluster nginx-ingress-controller (TLS via cert-manager, edge rate limiting) → in-pod Caddy sidecar (:8080) → app (localhost:8000)** (#188): the sidecar owns the canonical security headers via the `caddy` ConfigMap (a test-guarded mirror of `caddy/Caddyfile.k8s` + `caddy/headers.caddy` — Helm can't read files above the chart), so the ingress no longer carries a duplicated CSP snippet. Editing the edge config means editing `caddy/` and re-mirroring the ConfigMap; `tests/test_helm_caddy.py` + `tests/test_csp_hash.py` fail on drift.
+**Kubernetes (Helm)** — chart under `helm/iceberg-ebs/` with Bitnami postgresql subchart. `replicaCount: 1` is mandatory for the same reason. Topology is **cluster nginx-ingress-controller (TLS via cert-manager, edge rate limiting) → in-pod Caddy sidecar (:8080) → app (localhost:8000)** (#188): the sidecar owns the canonical security headers via the `caddy` ConfigMap (a test-guarded mirror of `caddy/Caddyfile.k8s` + `caddy/headers.caddy` — Helm can't read files above the chart), so the ingress no longer carries a duplicated CSP snippet. Editing the edge config means editing `caddy/` and re-mirroring the ConfigMap; `tests/test_helm_caddy.py` + `tests/test_csp_strict.py` fail on drift.
 
 Quick start (Docker):
 ```bash

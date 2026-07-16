@@ -145,7 +145,9 @@ async def test_bulk_import_page_renders(client):
     r = await client.get("/extensions/bulk")
     assert r.status_code == 200
     assert "Bulk import" in r.text
-    assert "/api/extensions/bulk" in r.text
+    # The API wiring lives in the external page script since #106 (no inline
+    # scripts under the strict CSP) — the page must load it.
+    assert "/static/js/pages/bulk-import.js" in r.text
 
 
 async def test_bulk_import_page_requires_auth(anon_client):
