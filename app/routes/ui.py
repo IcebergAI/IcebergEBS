@@ -527,8 +527,7 @@ async def extension_detail(
         # chart colours its line/dots/shading from this payload and must never
         # re-inline the cut points in JS (#105 review).
         "bands": [
-            {"band": band, "from": low, "to": 100 if high is None else high}
-            for band, (low, high) in RISK_BANDS.items()
+            {"band": band, "from": low, "to": 100 if high is None else high} for band, (low, high) in RISK_BANDS.items()
         ],
     }
 
