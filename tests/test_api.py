@@ -3,12 +3,13 @@ import json
 import zipfile
 from unittest.mock import AsyncMock, patch
 
+import httpx
 import pytest
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.fetchers.base import ExtensionMetadata, FetchError
-from app.models import Extension
+from app.models import Extension, FetchLog
 
 
 def _fake_metadata():
@@ -482,6 +483,40 @@ async def test_refresh_extension(client):
 
     assert r2.status_code == 200
     assert r2.json()["last_fetched_at"] is not None
+
+
+async def test_refresh_transport_error_returns_502_and_logs_failure(client, test_db):
+    """#148: a raw httpx.TransportError (retries exhausted, store unreachable) on the
+    interactive refresh path must return 502 and write a success=False FetchLog — matching
+    the scheduler — not surface a raw 500 with no fetch-health record."""
+    with patch("app.fetchers.VSCodeFetcher") as MockFetcher:
+        MockFetcher.return_value.fetch = AsyncMock(return_value=(_fake_metadata(), _fake_vsix()))
+        r = await client.post("/api/extensions", json={"store": "vscode", "extension_id": "testpub.transport"})
+    ext_id = r.json()["id"]
+
+    with patch("app.fetchers.VSCodeFetcher") as MockFetcher2:
+        MockFetcher2.return_value.fetch = AsyncMock(side_effect=httpx.ConnectError("connection refused"))
+        r2 = await client.post(f"/api/extensions/{ext_id}/refresh")
+
+    assert r2.status_code == 502
+    async with AsyncSession(test_db) as s:
+        logs = (
+            await s.exec(select(FetchLog).where(FetchLog.extension_id == ext_id, FetchLog.success == False))  # noqa: E712
+        ).all()
+    assert len(logs) == 1
+    assert "connection refused" in (logs[0].error_message or "")
+
+
+async def test_add_transport_error_reports_error_not_500(client):
+    """The add path must map a TransportError to the intended 502 (and discard the
+    placeholder), not a raw 500 from the generic except (#148)."""
+    with patch("app.fetchers.VSCodeFetcher") as MockFetcher:
+        MockFetcher.return_value.fetch = AsyncMock(side_effect=httpx.ConnectError("connection refused"))
+        r = await client.post("/api/extensions", json={"store": "vscode", "extension_id": "testpub.transport-add"})
+
+    assert r.status_code == 502
+    r_list = await client.get("/api/extensions")
+    assert all(e["extension_id"] != "testpub.transport-add" for e in r_list.json()["items"])
 
 
 async def test_toggle_watchlist(client):

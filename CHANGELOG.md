@@ -100,6 +100,12 @@ release to diff against.
 
 ### Fixed
 
+- A store becoming unreachable during an **interactive** add or refresh
+  (`POST /api/extensions`, `…/{id}/refresh`) no longer surfaces a raw 500 with no record: a
+  raw `httpx.TransportError` (retries exhausted — connect refused / timeout) is now handled
+  like the scheduler already does, returning **502** and writing a `success=False` `FetchLog`
+  so the dashboard's per-extension status and Fetch-health tile see the failure. The two paths
+  previously disagreed on what a store outage looked like (#148).
 - The extension detail page and JSON API no longer 500 when a stored JSON column
   (`permissions`, `risk_detail`, `package_analysis`) holds **valid JSON of the wrong shape** —
   e.g. an array where an object is expected, from a partial write or manual DB edit. Reads now go

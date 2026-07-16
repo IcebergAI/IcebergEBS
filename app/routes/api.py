@@ -350,7 +350,14 @@ async def _fetch_and_score(
     score_before = ext.risk_score
     try:
         ext, events = await fetch_and_store(ext, session, client)
-    except FetchError as exc:
+    except (FetchError, httpx.TransportError) as exc:
+        # A store/network failure: the fetcher raised FetchError, or a raw
+        # httpx.TransportError propagated after RetryTransport exhausted its retries
+        # (connect refused, timeout). Both mean the store is unreachable — the fetch is
+        # the only step that raises these, before anything is staged, so no rollback is
+        # needed. Match the scheduler's _refresh_one so the interactive path also records
+        # a failure FetchLog (visible to the dashboard's fetch-health) and returns a 502
+        # rather than a raw 500 (#148).
         logger.warning("Fetch failed for extension %d: %s", ext.id, exc)
         session.add(
             FetchLog(
