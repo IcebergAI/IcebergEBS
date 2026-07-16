@@ -90,6 +90,43 @@ def _alert_text(event_type: str, name: str, old: object, new: object) -> str:
     return f"IcebergEBS: {name} — {event_type}"
 
 
+def build_alert_payload(
+    *,
+    text: str,
+    event: str,
+    ext_id: int | None,
+    name: str,
+    store: str,
+    store_url: str,
+    old: Any,
+    new: Any,
+    risk_score: int | None,
+) -> dict[str, Any]:
+    """Assemble the webhook payload for an alert.
+
+    The single source of the on-the-wire alert shape, so the destination-test
+    payload (``alerts.test_destination``) can't silently drift from what real
+    alerts send — the "test" webhook is the real webhook by construction (#168).
+    ``iceberg_ebs_url`` is included only when ``app_base_url`` is configured,
+    exactly as real alerts do.
+    """
+    ext_payload: dict[str, Any] = {
+        "id": ext_id,
+        "name": name,
+        "store": store,
+        "store_url": store_url,
+    }
+    if settings.app_base_url:
+        ext_payload["iceberg_ebs_url"] = f"{settings.app_base_url.rstrip('/')}/extensions/{ext_id}"
+    return {
+        "text": text,
+        "event": event,
+        "extension": ext_payload,
+        "change": {"old": old, "new": new},
+        "risk_score": risk_score,
+    }
+
+
 async def fire_alerts(
     events: list[ChangeEvent],
     extension: Extension,
@@ -127,15 +164,6 @@ async def fire_alerts(
         dests = (await session.exec(select(AlertDestination).where(AlertDestination.id.in_(dest_ids)))).all()
         dest_map = {d.id: d for d in dests}
 
-        ext_payload = {
-            "id": extension.id,
-            "name": extension.name,
-            "store": extension.store,
-            "store_url": extension.store_url,
-        }
-        if settings.app_base_url:
-            ext_payload["iceberg_ebs_url"] = f"{settings.app_base_url.rstrip('/')}/extensions/{extension.id}"
-
         for rule in rules:
             dest = dest_map.get(rule.destination_id)
             if not dest or not dest.enabled:
@@ -143,13 +171,17 @@ async def fire_alerts(
 
             event = event_map[rule.event_type]
             alert_text = _alert_text(event.event_type, extension.name, event.old_value, event.new_value)
-            payload = {
-                "text": alert_text,
-                "event": event.event_type,
-                "extension": ext_payload,
-                "change": {"old": event.old_value, "new": event.new_value},
-                "risk_score": extension.risk_score,
-            }
+            payload = build_alert_payload(
+                text=alert_text,
+                event=event.event_type,
+                ext_id=extension.id,
+                name=extension.name,
+                store=extension.store,
+                store_url=extension.store_url,
+                old=event.old_value,
+                new=event.new_value,
+                risk_score=extension.risk_score,
+            )
 
             success = True
             error: str | None = None
