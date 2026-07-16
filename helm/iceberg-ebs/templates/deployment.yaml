@@ -21,6 +21,13 @@ spec:
     metadata:
       labels:
         {{- include "iceberg-ebs.selectorLabels" . | nindent 8 }}
+      annotations:
+        # Roll the pod when the Caddy ConfigMap changes. A `helm upgrade` that only edits
+        # caddy/Caddyfile.k8s or caddy/headers.caddy updates the mounted files but does NOT
+        # restart the running Caddy process (its config is read once at start), so without
+        # this the pod keeps serving the old headers/proxy config indefinitely. Hashing the
+        # rendered ConfigMap into a pod-template annotation forces a rollout on any change.
+        checksum/caddy-config: {{ include (print $.Template.BasePath "/caddy-configmap.yaml") . | sha256sum }}
     spec:
       # Give the scheduler time to drain an in-flight watchlist refresh on shutdown before
       # SIGKILL, so a job isn't abandoned between committing a state change and firing its

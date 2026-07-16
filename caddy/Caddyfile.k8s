@@ -14,6 +14,11 @@
 		# the real external client, so {client_ip} below resolves to that client rather than
 		# the ingress pod IP. A direct (untrusted) peer's forged XFF is still discarded (#77).
 		trusted_proxies static private_ranges
+		# STRICT parsing (Caddy recommends it whenever trusted proxies *append* to XFF, which
+		# ingress-nginx can — e.g. behind another private-range LB). Without it, the right-to-left
+		# scan can skip a trusted private-range suffix and return an attacker-controlled leftmost
+		# value as {client_ip}, letting a forged XFF evade the app's per-IP rate limiters (#77).
+		trusted_proxies_strict
 	}
 }
 

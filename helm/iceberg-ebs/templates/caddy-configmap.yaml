@@ -7,7 +7,7 @@ metadata:
 # NOTE: the two entries below are an EXACT mirror of the canonical files at repo root —
 # caddy/Caddyfile.k8s and caddy/headers.caddy. Helm's .Files.Get cannot read files above
 # the chart directory, so the K8s edge config is embedded here rather than referenced.
-# tests/test_helm_caddy.py fails if this mirror drifts from the canonical files, and
+# tests/test_helm_caddy.py compares each block byte-for-byte with the canonical file, and
 # tests/test_csp_hash.py checks the CSP pin here too — so the "single source" guarantee
 # is enforced by CI, not by hand (#188). Edit caddy/ and re-mirror, never edit only here.
 data:
@@ -29,6 +29,11 @@ data:
     		# the real external client, so {client_ip} below resolves to that client rather than
     		# the ingress pod IP. A direct (untrusted) peer's forged XFF is still discarded (#77).
     		trusted_proxies static private_ranges
+    		# STRICT parsing (Caddy recommends it whenever trusted proxies *append* to XFF, which
+    		# ingress-nginx can — e.g. behind another private-range LB). Without it, the right-to-left
+    		# scan can skip a trusted private-range suffix and return an attacker-controlled leftmost
+    		# value as {client_ip}, letting a forged XFF evade the app's per-IP rate limiters (#77).
+    		trusted_proxies_strict
     	}
     }
 

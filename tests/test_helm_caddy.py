@@ -1,40 +1,59 @@
-"""The Helm Caddy ConfigMap must stay an exact mirror of the canonical caddy/ files (#188).
+"""The Helm Caddy ConfigMap must stay an exact byte-for-byte mirror of the canonical
+caddy/ files (#188).
 
 Helm's ``.Files.Get`` cannot read files above the chart directory, so the Kubernetes edge
 config is embedded in ``templates/caddy-configmap.yaml`` rather than referenced. That is a
 second physical copy of ``caddy/Caddyfile.k8s`` and ``caddy/headers.caddy`` — the exact
-kind of duplication #188 set out to kill. These tests make the copy safe: they fail if the
-ConfigMap drifts from the canonical files, so the "single logical source" holds even though
-Helm forces a second physical copy. Edit the caddy/ files and re-mirror; never edit only
-the ConfigMap.
+kind of duplication #188 set out to kill. These tests make the copy safe: they compare each
+embedded block scalar byte-for-byte with its canonical file, so any drift — a reordered,
+removed, duplicated, or stale-extra line — fails, not just a missing line. Edit the caddy/
+files and re-mirror; never edit only the ConfigMap.
 """
 
+import re
 from pathlib import Path
+
+import yaml
 
 _ROOT = Path(__file__).resolve().parent.parent
 _CONFIGMAP = _ROOT / "helm/iceberg-ebs/templates/caddy-configmap.yaml"
-_CANONICAL = {
-    "caddy/Caddyfile.k8s": _ROOT / "caddy/Caddyfile.k8s",
-    "caddy/headers.caddy": _ROOT / "caddy/headers.caddy",
+# ConfigMap data key -> canonical source file it must mirror.
+_MIRROR = {
+    "Caddyfile": _ROOT / "caddy/Caddyfile.k8s",
+    "headers.caddy": _ROOT / "caddy/headers.caddy",
 }
 
 
-def test_configmap_mirrors_canonical_caddy_files():
-    """Every non-blank line of each canonical file appears in the ConfigMap. The YAML block
-    scalar prefixes each line with a fixed space indent, so the original (tab-indented) line
-    remains a substring — a mismatch means the mirror drifted."""
-    cm = _CONFIGMAP.read_text()
-    for name, path in _CANONICAL.items():
-        for line in path.read_text().splitlines():
-            if line.strip():
-                assert line in cm, f"{name} line not mirrored in the Caddy ConfigMap: {line!r}"
+def _configmap_data() -> dict[str, str]:
+    """Parse the ConfigMap's ``data`` block. The metadata carries Helm ``{{ }}`` expressions
+    that break a raw YAML parse, so substitute the two known ones for placeholders first; the
+    ``data:`` block scalars are pure literal and untouched."""
+    text = _CONFIGMAP.read_text()
+    text = text.replace('{{ include "iceberg-ebs.fullname" . }}', "rel")
+    # The labels line is a whole templated map entry — replace it with a concrete one.
+    text = re.sub(r'\{\{-?\s*include "iceberg-ebs\.labels".*?\}\}', "app.kubernetes.io/name: rel", text)
+    doc = yaml.safe_load(text)
+    return doc["data"]
 
 
-def test_configmap_carries_the_canonical_csp():
-    """The security-critical invariant: the ConfigMap's CSP is byte-identical to the one in
-    caddy/headers.caddy (so K8s and Compose enforce the same policy)."""
-    import re
+def test_configmap_mirrors_canonical_caddy_files_byte_for_byte():
+    data = _configmap_data()
+    for key, path in _MIRROR.items():
+        assert key in data, f"ConfigMap data is missing the {key!r} key"
+        # YAML's `|` clip returns the block content with the leading indent stripped and a
+        # single trailing newline; the canonical file also ends with one newline.
+        assert data[key].rstrip("\n") == path.read_text().rstrip("\n"), (
+            f"ConfigMap {key!r} block drifted from {path.relative_to(_ROOT)} — edit the "
+            f"canonical file and re-mirror the ConfigMap (never edit only the ConfigMap)."
+        )
 
-    canonical = re.search(r'Content-Security-Policy "([^"]*)"', _CANONICAL["caddy/headers.caddy"].read_text())
-    assert canonical, "no CSP found in caddy/headers.caddy"
-    assert canonical.group(1) in _CONFIGMAP.read_text(), "ConfigMap CSP drifted from caddy/headers.caddy"
+
+def test_k8s_caddyfile_uses_strict_trusted_proxies():
+    """The K8s sidecar trusts the cluster ingress's X-Forwarded-For, so it MUST use strict
+    parsing — otherwise a forged leftmost XFF entry can become the client IP the app's
+    per-IP rate limiters key on (#77). Guard against the directive being dropped."""
+    k8s = (_ROOT / "caddy/Caddyfile.k8s").read_text()
+    assert "trusted_proxies static private_ranges" in k8s
+    assert "trusted_proxies_strict" in k8s
+    # And the mirror carries it too.
+    assert "trusted_proxies_strict" in _configmap_data()["Caddyfile"]
