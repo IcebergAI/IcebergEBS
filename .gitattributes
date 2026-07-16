@@ -1,2 +1,7 @@
 # Vendored third-party bundles (#85) — collapse in diffs/review.
 static/js/vendor/* linguist-generated=true
+
+# The Helm ConfigMap embeds the tab-indented canonical Caddy files inside YAML
+# 4-space block scalars, so space-before-tab is mandated by the byte-for-byte
+# mirror (tests/test_helm_caddy.py) — silence git's whitespace diagnostics there.
+helm/iceberg-ebs/templates/caddy-configmap.yaml -whitespace

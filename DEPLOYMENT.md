@@ -77,7 +77,7 @@ engine: AsyncEngine = create_async_engine(
 
 No third-party origin is contacted at runtime (`tests/test_no_third_party_origins.py` enforces it): the old Tailwind Play CDN, jsDelivr Alpine and Google Fonts dependencies are gone.
 
-- **Tailwind v4** is compiled by the standalone CLI (via `pytailwindcss`, a `dev`-group dependency) from `static/css/input.css` into `static/css/output.css`. `output.css` is a **gitignored build artifact**: images build it in the Dockerfile `tailwind-builder` stage; local checkouts build it with `make css` (`make dev` runs it automatically). **A bare source-checkout deploy (uvicorn straight from `git pull`) must run `make css` after every pull** or `/static/css/output.css` 404s. The CLI binary is pinned via `TAILWINDCSS_VERSION` in the Makefile, Dockerfile and ci.yml — bump together.
+- **Tailwind v4** is compiled by the standalone CLI from `static/css/input.css` into `static/css/output.css`. `output.css` is a **gitignored build artifact**: images build it in the Dockerfile `tailwind-builder` stage, which downloads the CLI straight from the tagged GitHub release and **verifies its sha256** before running it (nothing floating executes in the image build); local checkouts build it with `make css` (via `pytailwindcss`, a locked `dev`-group dependency; `make dev` runs it automatically). **A bare source-checkout deploy (uvicorn straight from `git pull`) must run `make css` after every pull** or `/static/css/output.css` 404s. The CLI version is pinned via `TAILWINDCSS_VERSION` in the Makefile and ci.yml and by the checksum table in the Dockerfile — bump together.
 - **Alpine.js** is vendored and version-pinned at `static/js/vendor/alpine-3.15.12.min.js`.
 - **Fonts** (IBM Plex Sans/Mono woff2) are served from `static/fonts/` via `static/css/fonts.css`.
 
@@ -110,16 +110,19 @@ COPY pyproject.toml uv.lock ./
 RUN uv sync --frozen --no-dev
 
 
-# Builds the gitignored static/css/output.css (#85) — see section 3.
+# Builds the gitignored static/css/output.css (#85) — see section 3. The standalone
+# CLI binary is fetched from the tagged GitHub release and sha256-verified before it
+# runs (no pip, nothing floating executes in the image build); see the real
+# Dockerfile for the per-arch checksum table.
 FROM python:3.14-slim AS tailwind-builder
 
-RUN pip install --no-cache-dir "pytailwindcss>=0.3"
+ARG TARGETARCH
+RUN <download tailwindcss v4.3.1 for ${TARGETARCH}; verify sha256; chmod +x>
 
 WORKDIR /build
 COPY static/ static/
 COPY app/templates/ app/templates/
 
-ENV TAILWINDCSS_VERSION=v4.3.1
 RUN tailwindcss -i static/css/input.css -o static/css/output.css --minify
 
 

@@ -17,6 +17,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
 TEMPLATE_DIR = REPO / "app" / "templates"
+CSS_DIR = REPO / "static" / "css"
 CSP_FILES = (
     REPO / "caddy" / "headers.caddy",
     REPO / "helm" / "iceberg-ebs" / "templates" / "caddy-configmap.yaml",
@@ -48,6 +49,19 @@ def test_templates_load_no_external_assets() -> None:
         "Templates must not load assets from third-party origins (#85) — "
         "vendor the asset under static/ instead:\n" + "\n".join(offenders)
     )
+
+
+def test_stylesheets_reference_no_external_origins() -> None:
+    """CSS can pull in third-party origins too — `url(...)` and `@import`."""
+    external = re.compile(r"(?:url\(\s*[\"']?|@import\s+[\"']?)(?://|https?://)", re.IGNORECASE)
+    offenders: list[str] = []
+    for path in sorted(CSS_DIR.glob("*.css")):
+        if path.name == "output.css":  # gitignored build artifact of the sources below
+            continue
+        for lineno, line in enumerate(path.read_text().splitlines(), start=1):
+            if external.search(line):
+                offenders.append(f"{path.name}:{lineno}: {line.strip()}")
+    assert not offenders, "Stylesheets must not reference third-party origins (#85):\n" + "\n".join(offenders)
 
 
 def test_csp_allowlists_no_external_origin() -> None:
