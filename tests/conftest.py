@@ -94,10 +94,19 @@ async def test_db():
     test_engine = create_async_engine(TEST_DATABASE_URL, echo=False)
     async with test_engine.begin() as conn:
         await conn.run_sync(SQLModel.metadata.drop_all)
+        # alembic_version is not a SQLModel table, so drop_all never touches it.
+        # Start from a truly clean DB so a stamp inherited from a prior app boot
+        # can't linger under the create_all'd schema (#113).
+        await conn.exec_driver_sql("DROP TABLE IF EXISTS alembic_version")
         await conn.run_sync(SQLModel.metadata.create_all)
     yield test_engine
     async with test_engine.begin() as conn:
         await conn.run_sync(SQLModel.metadata.drop_all)
+        # Leave the dev DB bootable for a subsequent `make dev`: dropping only the
+        # SQLModel tables would leave alembic_version stamped at head, so init_db
+        # would trust the stamp, run no migrations, and the app would meet an
+        # empty schema (#113). Dropping it makes the next boot migrate from scratch.
+        await conn.exec_driver_sql("DROP TABLE IF EXISTS alembic_version")
     await test_engine.dispose()
 
 

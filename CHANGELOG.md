@@ -104,6 +104,15 @@ release to diff against.
 
 ### Fixed
 
+- **Running the test suite no longer leaves the dev database unbootable** (#113). The suite
+  builds its schema with `create_all` and drops it at teardown, but `alembic_version` isn't a
+  SQLModel table so it survived — stamped at head over an empty schema. The next `make dev`
+  trusted the stamp, ran no migrations, and crashed on startup (`relation "user" does not
+  exist`). Two-part fix: the test fixture now drops `alembic_version` in both setup and
+  teardown (leaving a clean, bootable DB), and `init_db`'s migration runner now self-heals a
+  stamped-but-empty database by resetting to base and rebuilding from scratch — so the app
+  recovers regardless of how the stale stamp arose. The self-heal is inert in production, which
+  never drops tables. CI and production were never affected (CI gets a fresh container per run).
 - The dashboard no longer returns a raw JSON **422 on a non-numeric `page`** query param
   (e.g. a mangled or hand-edited `?page=abc`) — like the other filter params it now tolerates
   junk and falls back to page 1 instead of rejecting the browser navigation (#152).

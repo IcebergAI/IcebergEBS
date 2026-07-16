@@ -231,6 +231,46 @@ async def test_falsely_head_stamped_baseline_db_is_repaired(temp_db):
         sync.dispose()
 
 
+async def test_stamped_but_empty_db_is_rebuilt(temp_db):
+    """A database stamped at head but with no app tables is rebuilt from scratch (#113).
+
+    The old test-suite teardown dropped the SQLModel tables but left the
+    non-SQLModel ``alembic_version`` table stamped at head, so the next app boot
+    trusted the stamp, ran no migrations, and met an empty schema (``relation
+    "user" does not exist``). `_run_migrations` must now detect the lying stamp
+    and migrate from scratch.
+    """
+    # Bring the DB to head, then drop every app table but keep alembic_version
+    # stamped at head — exactly the state the old teardown left behind.
+    await _migrate(temp_db)
+    assert _version(temp_db) is not None  # stamped at head
+
+    sync = create_engine(_sync_url(temp_db))
+    with sync.begin() as conn:
+        for table in inspect(conn).get_table_names():
+            if table != "alembic_version":
+                conn.execute(text(f'DROP TABLE IF EXISTS "{table}" CASCADE'))
+    sync.dispose()
+
+    # The stamp survived but the schema is gone — the unbootable state from #113.
+    assert "user" not in _tables(temp_db)
+    assert _version(temp_db) is not None
+
+    await _migrate(temp_db)  # the app boot that used to crash on the empty schema
+
+    # Recovered: rebuilt to head with a schema that matches the models.
+    head = ScriptDirectory.from_config(_alembic_config()).get_current_head()
+    assert _version(temp_db) == (head,)
+    assert {"user", "extension", "installobservation"} <= _tables(temp_db)
+    sync = create_engine(_sync_url(temp_db))
+    try:
+        with sync.connect() as conn:
+            ctx = MigrationContext.configure(conn, opts={"compare_type": True})
+            assert compare_metadata(ctx, SQLModel.metadata) == []
+    finally:
+        sync.dispose()
+
+
 def test_head_matches_models(temp_db):
     """Autogenerate finds no diff between the migrations head and the models.
 

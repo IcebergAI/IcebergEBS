@@ -47,12 +47,17 @@ def _alembic_config() -> Config:
 def _run_migrations(sync_conn) -> None:
     """Bring the database to head, adopting pre-Alembic databases by stamping.
 
-    Runs on a sync connection handed in by ``run_sync``. Four cases:
-    - alembic_version present  → ``upgrade head`` applies any new revisions.
+    Runs on a sync connection handed in by ``run_sync``. Five cases:
+    - alembic_version present, core tables exist → ``upgrade head`` applies any
+      new revisions.
     - no alembic_version, core tables already exist (a database created by the
       old create_all/_migrate_* path) → stamp it at the *baseline* revision its
       schema actually matches (WITHOUT recreating anything), then upgrade to
       head like everyone else.
+    - alembic_version present but the schema is *gone* (stamped-but-empty — e.g.
+      a dev DB whose app tables were dropped out from under a surviving
+      alembic_version, #113) → reset the stamp to base so the upgrade rebuilds
+      from scratch instead of trusting the lying stamp and running nothing.
     - alembic_version present but the schema is still baseline-era (a database
       corrupted by the retired stamp-to-head adoption, #143) → re-stamp it at
       the baseline and upgrade, repairing the false stamp.
@@ -61,13 +66,25 @@ def _run_migrations(sync_conn) -> None:
     cfg = _alembic_config()
     cfg.attributes["connection"] = sync_conn
 
+    has_user = "user" in inspect(sync_conn).get_table_names()
     current = MigrationContext.configure(sync_conn).get_current_revision()
-    if current is None and "user" in inspect(sync_conn).get_table_names():
+    if current is None and has_user:
         # A pre-Alembic database matches the BASELINE schema, not head — stamping
         # head would mark every post-baseline migration as applied without running
         # it, with no recovery path (upgrade becomes a permanent no-op) (#143).
         logger.info("Adopting existing pre-Alembic database — stamping baseline, then upgrading")
         command.stamp(cfg, _PRE_ALEMBIC_BASELINE)
+    elif current is not None and not has_user:
+        # Stamped at a revision but the core schema is missing — the version table
+        # is lying (#113). Trusting it would run no migrations and leave the app to
+        # meet an empty schema. Reset to base so the upgrade below recreates
+        # everything from scratch. Only reachable in a broken dev DB: production
+        # never drops tables, so a real deployment can't hit this branch.
+        logger.warning(
+            "Database is stamped at %s but the core schema is missing — resetting to base and rebuilding (#113)",
+            current,
+        )
+        command.stamp(cfg, "base")
     elif current is not None and _is_falsely_stamped_baseline(sync_conn, current):
         # The retired adoption stamped pre-Alembic databases at whatever head was
         # at the time, without running any DDL — leaving the baseline schema
@@ -95,8 +112,9 @@ def _is_falsely_stamped_baseline(sync_conn, current: str) -> bool:
         return False
     insp = inspect(sync_conn)
     if "user" not in insp.get_table_names():
-        # Stamped but empty (see #113) — nothing to repair here; leave it to the
-        # normal upgrade path, which is a no-op exactly as before this check.
+        # Stamped but empty — `_run_migrations` handles this upstream now (#113),
+        # so this is unreachable from there; kept defensive so the column check
+        # below can never hit a missing table.
         return False
     for col in insp.get_columns("user"):
         if col["name"] == "created_at":
