@@ -1,12 +1,12 @@
 from datetime import datetime
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter
 from pydantic import BaseModel, Field
 from sqlmodel import select
 
 from app.auth import generate_api_key, hash_api_key
-from app.deps import CurrentUser, SessionDep
+from app.deps import CurrentUser, SessionDep, get_owned_or_404
 from app.models import ApiKey
 
 router = APIRouter(prefix="/api", tags=["api-keys"])
@@ -91,9 +91,7 @@ async def revoke_key(
     current_user: CurrentUser,
     session: SessionDep,
 ):
-    api_key = await session.get(ApiKey, key_id)
-    if not api_key or api_key.user_id != current_user.id:
-        raise HTTPException(status_code=404, detail="Not found")
+    api_key = await get_owned_or_404(session, ApiKey, key_id, current_user.id)
     await session.delete(api_key)
     await session.commit()
     return {"ok": True}
