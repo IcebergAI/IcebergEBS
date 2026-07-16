@@ -128,6 +128,53 @@ async def test_recover_refires_and_records_alertlog(test_db, admin_user):
         assert refreshed.pending_alert_events is None  # cleared after successful delivery
 
 
+@respx.mock
+async def test_concurrent_recover_delivers_each_pending_alert_once(test_db, admin_user):
+    """The backgrounded startup recovery (#155) can overlap the scheduler cycle's recovery when
+    a slow backlog outlives the fetch interval. The shared _recovery_lock must serialise them so
+    a pending alert is delivered exactly once — not duplicated by two scans reading the same
+    marker before either compare-and-clears it (#155 review)."""
+    respx.post(f"https://{_PINNED_IP}/hook").mock(return_value=httpx.Response(200))
+    async with AsyncSession(test_db) as session:
+        dest = AlertDestination(user_id=admin_user.id, label="D", target="https://hooks.example.com/hook", enabled=True)
+        session.add(dest)
+        await session.commit()
+        await session.refresh(dest)
+        dest_id = dest.id
+        ext = Extension(
+            user_id=admin_user.id,
+            store="vscode",
+            extension_id="pub.concurrent_recover",
+            name="R",
+            publisher="pub",
+            version="2.0.0",
+            store_url="https://example.com",
+            risk_score=60,
+            pending_alert_events=json.dumps(
+                [{"event_type": "risk_level_change", "old_value": "low", "new_value": "high"}]
+            ),
+        )
+        session.add(ext)
+        await session.commit()
+        await session.refresh(ext)
+        ext_id = ext.id
+        session.add(
+            AlertRule(user_id=admin_user.id, destination_id=dest_id, event_type="risk_level_change", enabled=True)
+        )
+        await session.commit()
+
+    with _patch_resolver():
+        async with httpx.AsyncClient() as http:
+            # Two recoveries racing — without the lock both scan the still-set marker and deliver.
+            await asyncio.gather(recover_pending_alerts(test_db, http), recover_pending_alerts(test_db, http))
+
+    assert respx.calls.call_count == 1  # delivered exactly once, not duplicated
+    async with AsyncSession(test_db) as session:
+        logs = (await session.exec(select(AlertLog))).all()
+        assert len(logs) == 1
+        assert (await session.get(Extension, ext_id)).pending_alert_events is None  # cleared
+
+
 async def test_fetch_and_store_merges_prior_pending_events(test_db, admin_user):
     """A prior failed delivery left events in the marker; a new refresh must MERGE them with
     the newly detected events, never overwrite or drop them (#109 review)."""

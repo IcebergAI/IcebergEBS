@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 from dataclasses import asdict, dataclass
@@ -18,6 +19,13 @@ from app.notifications import ChangeEvent, detect_changes, fire_alerts
 from app.scoring import RiskDetail, compute_risk_score
 
 logger = logging.getLogger(__name__)
+
+# Serialises the two recover_pending_alerts entry points — the background startup task
+# (main.lifespan) and the head of each scheduler cycle — within the single worker/event loop,
+# so a slow backlog that outlives the fetch interval can't have both scans read the same
+# pending marker and POST the same webhook before either compare-and-clears it (#155 review).
+# Cheap: recovery is rare, and compare-and-clear already protects the marker itself.
+_recovery_lock = asyncio.Lock()
 
 
 @dataclass
@@ -326,35 +334,45 @@ async def recover_pending_alerts(engine: AsyncEngine, client: httpx.AsyncClient)
 
     Scans for extensions whose ``pending_alert_events`` marker is still set — meaning the
     process died between committing a state change and delivering its alert — and fires
-    them. Called at startup and at the head of each refresh cycle. ``fire_pending_alerts``
-    clears the marker on success, so this is idempotent and self-healing.
-    """
-    async with AsyncSession(engine) as session:
-        ext_ids = (await session.exec(select(Extension.id).where(Extension.pending_alert_events.is_not(None)))).all()
+    them. Called as a background task at startup (main.lifespan) and at the head of each
+    refresh cycle. ``fire_pending_alerts`` clears the marker on success, so this is
+    idempotent and self-healing.
 
-    for ext_id in ext_ids:
+    Held under ``_recovery_lock`` so the two entry points never run concurrently: with the
+    startup scan now backgrounded (#155), a slow backlog could otherwise still be running
+    when the first scheduled cycle's recovery starts, and both would read the same marker and
+    deliver the same webhook before either compare-and-clears it. The lock serialises them so
+    the second scan sees the already-cleared marker and delivers nothing.
+    """
+    async with _recovery_lock:
         async with AsyncSession(engine) as session:
-            ext = await session.get(Extension, ext_id)
-            if ext is None or ext.pending_alert_events is None:
-                continue
-            raw = ext.pending_alert_events
-            try:
-                events = [ChangeEvent(**e) for e in json.loads(raw)]
-            except Exception:
-                logger.exception("Discarding unparsable pending_alert_events for %s", ext.extension_id)
-                # Compare-and-clear so a concurrent refresh that replaced the corrupt marker
-                # with real events isn't wiped along with it.
-                await _clear_pending_alerts(ext_id, engine, raw)
-                continue
-            if not events:
-                # An empty marker ("[]") has nothing to deliver — compare-and-clear it so it
-                # doesn't linger (and so a concurrent append isn't erased).
-                await _clear_pending_alerts(ext_id, engine, raw)
-                continue
-            logger.info("Recovering %d pending alert(s) for %s after restart", len(events), ext.extension_id)
-            # Mirror _refresh_one exactly: commit + refresh so ext is attached and fresh
-            # when fire_pending_alerts (which opens its own session) reads its attributes —
-            # firing off a detached/uncommitted object trips MissingGreenlet.
-            await session.commit()
-            await session.refresh(ext)
-            await fire_pending_alerts(events, ext, engine, client)
+            ext_ids = (
+                await session.exec(select(Extension.id).where(Extension.pending_alert_events.is_not(None)))
+            ).all()
+
+        for ext_id in ext_ids:
+            async with AsyncSession(engine) as session:
+                ext = await session.get(Extension, ext_id)
+                if ext is None or ext.pending_alert_events is None:
+                    continue
+                raw = ext.pending_alert_events
+                try:
+                    events = [ChangeEvent(**e) for e in json.loads(raw)]
+                except Exception:
+                    logger.exception("Discarding unparsable pending_alert_events for %s", ext.extension_id)
+                    # Compare-and-clear so a concurrent refresh that replaced the corrupt marker
+                    # with real events isn't wiped along with it.
+                    await _clear_pending_alerts(ext_id, engine, raw)
+                    continue
+                if not events:
+                    # An empty marker ("[]") has nothing to deliver — compare-and-clear it so it
+                    # doesn't linger (and so a concurrent append isn't erased).
+                    await _clear_pending_alerts(ext_id, engine, raw)
+                    continue
+                logger.info("Recovering %d pending alert(s) for %s after restart", len(events), ext.extension_id)
+                # Mirror _refresh_one exactly: commit + refresh so ext is attached and fresh
+                # when fire_pending_alerts (which opens its own session) reads its attributes —
+                # firing off a detached/uncommitted object trips MissingGreenlet.
+                await session.commit()
+                await session.refresh(ext)
+                await fire_pending_alerts(events, ext, engine, client)
