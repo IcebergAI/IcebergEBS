@@ -79,8 +79,9 @@ async def lifespan(app: FastAPI):
     # APScheduler 3.x's shutdown(wait=True) does NOT await running asyncio jobs — it cancels
     # them — so pausing + draining ourselves is what actually lets the cycle finish. The drain
     # is bounded by settings.shutdown_drain_seconds; past that (SIGKILL at the container grace
-    # period) the durable pending-alert marker is the backstop, re-fired by the next startup's
-    # recover_pending_alerts. Keep the container grace period above shutdown_drain_seconds.
+    # period) the durable pending-alert marker is the backstop, re-fired by recover_pending_alerts
+    # at the head of the next scheduler refresh cycle (≤ fetch_interval_minutes later — it runs
+    # there, not at startup, per #155). Keep the container grace period above shutdown_drain_seconds.
     scheduler.pause()
     await drain_inflight(settings.shutdown_drain_seconds)
     scheduler.shutdown(wait=False)

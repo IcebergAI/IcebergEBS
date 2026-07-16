@@ -16,6 +16,7 @@ from app.inspector import InspectorError, PackageAnalysis, inspect_package
 from app.models import Extension, FetchLog, InstallCountHistory
 from app.notifications import ChangeEvent, detect_changes, fire_alerts
 from app.scoring import RiskDetail, compute_risk_score
+from app.utils import json_list
 
 logger = logging.getLogger(__name__)
 
@@ -153,6 +154,38 @@ def _apply_fetch_results(
         ext.package_analysis = json.dumps(analysis.to_json_dict())
 
 
+def _parse_pending_events(raw: str | None, ext_id: int | None) -> list[ChangeEvent]:
+    """Best-effort decode of a pending-alert marker string into ``ChangeEvent``s.
+
+    The single defensive parse for the JSON-in-str ``pending_alert_events`` column (#167,
+    #197): a marker corrupted by a partial write or hand-edit must never crash the fetch
+    nor loop forever undelivered. Drops any non-dict entry (`utils.json_list` already
+    returns ``[]`` on unparsable / non-list JSON) and any dict that isn't a well-formed
+    event, logging what it discards. The remaining events are exactly what can be delivered.
+
+    Two shapes of malformed entry are rejected: wrong/missing keys (``ChangeEvent(**e)``
+    ``TypeError``), and — because ``ChangeEvent`` is a plain dataclass that does NOT validate
+    field *types* — a non-string ``event_type``. The latter matters because ``fire_alerts``
+    puts ``event_type`` in a ``set`` and uses it as a dict key; a list value would raise
+    ``TypeError: unhashable type`` deep in delivery, which ``fire_pending_alerts`` catches and
+    then retains the marker for — re-crashing every cycle forever (#197 review).
+    """
+    result: list[ChangeEvent] = []
+    for e in json_list(raw, "pending_alert_events", ext_id):
+        if not isinstance(e, dict):
+            continue
+        try:
+            event = ChangeEvent(**e)
+        except TypeError:
+            logger.warning("Dropping malformed pending alert event for extension %s", ext_id)
+            continue
+        if not isinstance(event.event_type, str):
+            logger.warning("Dropping pending alert event with non-string event_type for extension %s", ext_id)
+            continue
+        result.append(event)
+    return result
+
+
 async def _merge_pending_events(session: AsyncSession, ext: Extension, events: list[ChangeEvent]) -> list[ChangeEvent]:
     """Merge freshly-detected events into the durable pending-alert marker under a
     row lock, and return the full pending set the caller should fire.
@@ -184,10 +217,13 @@ async def _merge_pending_events(session: AsyncSession, ext: Extension, events: l
     locked_marker = (
         await session.exec(select(Extension.pending_alert_events).where(Extension.id == ext.id).with_for_update())
     ).one()
-    try:
-        prior = json.loads(locked_marker) if locked_marker else []
-    except (ValueError, TypeError):
-        prior = []  # a corrupt marker can't be delivered anyway; don't fail the fetch over it
+    # Decode the prior marker defensively via the shared parser: a corrupt marker
+    # (non-list, or holding non-dict / malformed entries) must not fail the fetch — the
+    # bare json.loads here previously let a valid-but-wrong-shape marker (e.g. "{}" or
+    # '["junk"]') raise TypeError at the `prior + new_events` / `ChangeEvent(**e)` lines
+    # below, 500-ing the refresh (#197). Round-tripping through _parse_pending_events also
+    # cleanses the junk out of the re-persisted marker so it can't accumulate.
+    prior = [asdict(e) for e in _parse_pending_events(locked_marker, ext.id)]
     pending = prior + new_events
     ext.pending_alert_events = json.dumps(pending) if pending else None
     return [ChangeEvent(**e) for e in pending]
@@ -273,6 +309,7 @@ async def fire_pending_alerts(
     ext: Extension,
     engine: AsyncEngine,
     client: httpx.AsyncClient,
+    expected_marker: str | None = None,
 ) -> None:
     """Fire alerts for events detected by ``fetch_and_store``.
 
@@ -281,12 +318,21 @@ async def fire_pending_alerts(
     Never raises — a delivery or logging failure must not break the fetch pipeline.
     The extension's attributes must be loaded (refresh after commit) before calling,
     since fire_alerts reads them to build the webhook payload.
+
+    ``expected_marker`` is the exact stored marker string these events were derived from,
+    used for the compare-and-clear. The normal pipeline (events == the full re-persisted
+    marker) omits it and we re-serialize ``events`` — an identical string. The recovery
+    path passes the raw marker explicitly because it may have delivered a *filtered subset*
+    of a corrupt marker (junk entries dropped); clearing must then match the whole raw
+    marker, not the filtered subset, or the marker never clears and re-fires every cycle
+    forever (#197).
     """
     if not events:
         return
-    # Snapshot exactly what we're about to fire; we clear the marker only if it still holds
-    # this same value (compare-and-clear below).
-    fired = json.dumps([asdict(e) for e in events])
+    # Snapshot exactly what we're about to clear against: the raw marker when given, else
+    # the serialization of what we fired (identical for the normal, unfiltered path). We
+    # clear the marker only if it still holds this same value (compare-and-clear below).
+    fired = expected_marker if expected_marker is not None else json.dumps([asdict(e) for e in events])
     try:
         await fire_alerts(events, ext, engine, client)
     except Exception:
@@ -339,20 +385,14 @@ async def recover_pending_alerts(engine: AsyncEngine, client: httpx.AsyncClient)
             if ext is None or ext.pending_alert_events is None:
                 continue
             raw = ext.pending_alert_events
-            # ext.pending_events() owns the JSON decode + list-shape parse (#167); the
-            # remaining guard is for a malformed *event* dict (wrong/missing keys) that
-            # ChangeEvent(**e) would reject.
-            try:
-                events = [ChangeEvent(**e) for e in ext.pending_events()]
-            except Exception:
-                logger.exception("Discarding unparsable pending_alert_events for %s", ext.extension_id)
-                # Compare-and-clear so a concurrent refresh that replaced the corrupt marker
-                # with real events isn't wiped along with it.
-                await _clear_pending_alerts(ext_id, engine, raw)
-                continue
+            # _parse_pending_events owns the full defensive decode (#167, #197): it drops
+            # both non-dict entries and malformed event dicts rather than raising, so one
+            # bad entry no longer discards the whole marker or crashes recovery.
+            events = _parse_pending_events(raw, ext.id)
             if not events:
-                # An empty marker ("[]") has nothing to deliver — compare-and-clear it so it
-                # doesn't linger (and so a concurrent append isn't erased).
+                # Nothing deliverable (empty "[]", or a wholly-corrupt marker) — compare-and-
+                # clear the raw marker so it doesn't linger (and so a concurrent append isn't
+                # erased).
                 await _clear_pending_alerts(ext_id, engine, raw)
                 continue
             logger.info("Recovering %d pending alert(s) for %s after restart", len(events), ext.extension_id)
@@ -361,4 +401,8 @@ async def recover_pending_alerts(engine: AsyncEngine, client: httpx.AsyncClient)
             # firing off a detached/uncommitted object trips MissingGreenlet.
             await session.commit()
             await session.refresh(ext)
-            await fire_pending_alerts(events, ext, engine, client)
+            # Clear against the RAW marker, not the (possibly filtered) fired subset: if the
+            # marker held junk alongside valid events, we deliver the valid ones and still
+            # clear the whole marker — otherwise the compare-and-clear never matches and the
+            # valid events re-fire every cycle forever (#197).
+            await fire_pending_alerts(events, ext, engine, client, expected_marker=raw)

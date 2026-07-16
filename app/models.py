@@ -85,10 +85,9 @@ class Extension(SQLModel, table=True):
         """Stored risk_detail breakdown as a dict, or None when absent/malformed/not an object."""
         return json_object(self.risk_detail, "risk_detail", self.id)
 
-    def pending_events(self) -> list[dict]:
-        """Staged undelivered alert-event dicts (#109); [] when missing/malformed, and
-        non-dict entries dropped."""
-        return [e for e in json_list(self.pending_alert_events, "pending_alert_events", self.id) if isinstance(e, dict)]
+    # The pending_alert_events marker is decoded by services._parse_pending_events, which
+    # returns typed ChangeEvents (defined in notifications.py, so it can't live here without
+    # a circular import) and drops non-dict *and* malformed-event entries in one place (#197).
 
 
 class FetchLog(SQLModel, table=True):

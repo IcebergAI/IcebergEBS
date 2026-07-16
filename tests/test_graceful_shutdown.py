@@ -19,7 +19,13 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.fetchers.base import ExtensionMetadata, FetchError
 from app.models import AlertDestination, AlertLog, AlertRule, Extension
-from app.services import _clear_pending_alerts, fetch_and_store, recover_pending_alerts
+from app.notifications import ChangeEvent
+from app.services import (
+    _clear_pending_alerts,
+    _parse_pending_events,
+    fetch_and_store,
+    recover_pending_alerts,
+)
 
 _PINNED_IP = "93.184.216.34"
 _ROOT = Path(__file__).resolve().parent.parent
@@ -347,3 +353,144 @@ def test_deploy_grace_periods_configured():
     assert "terminationGracePeriodSeconds:" in deploy
     values = (_ROOT / "helm" / "iceberg-ebs" / "values.yaml").read_text()
     assert "terminationGracePeriodSeconds:" in values
+
+
+# ---------------------------------------------------------------------------
+# Corrupt-marker robustness (#197)
+# ---------------------------------------------------------------------------
+
+
+def test_parse_pending_events_drops_non_dict_and_malformed_entries():
+    """The single defensive decode: non-dict entries and malformed event dicts are dropped,
+    never raised — a corrupt/partial marker must not crash the fetch or block recovery."""
+    raw = json.dumps(
+        [
+            {"event_type": "new_version", "old_value": "1", "new_value": "2"},  # valid
+            "junk",  # non-dict → dropped
+            5,  # non-dict → dropped
+            {"unexpected": "keys"},  # a dict, but not a well-formed event (wrong keys) → dropped
+            # A dict with the right keys but a non-string event_type. ChangeEvent is a plain
+            # dataclass and accepts it, but the unhashable list would crash fire_alerts' set/dict
+            # keying and re-loop forever — so it must be dropped here (#197 review).
+            {"event_type": [], "old_value": "low", "new_value": "high"},
+        ]
+    )
+    assert _parse_pending_events(raw, 1) == [ChangeEvent("new_version", "1", "2")]
+    assert _parse_pending_events("{}", 1) == []  # valid JSON, wrong shape (object not list)
+    assert _parse_pending_events('["junk"]', 1) == []  # list of non-dicts
+    assert _parse_pending_events('[{"event_type": 5, "old_value": "a", "new_value": "b"}]', 1) == []  # non-str type
+    assert _parse_pending_events("{bad", 1) == []  # unparsable
+    assert _parse_pending_events(None, 1) == []  # absent
+
+
+@respx.mock
+async def test_recover_delivers_valid_events_and_clears_corrupt_marker(test_db, admin_user):
+    """#197: a marker holding a valid event alongside junk (a partial write / hand edit) must
+    deliver the valid event exactly once and then CLEAR. The compare-and-clear runs against the
+    raw marker, not the filtered subset that was fired — otherwise it never matches and the valid
+    event re-fires on every scheduler cycle forever."""
+    respx.post(f"https://{_PINNED_IP}/hook").mock(return_value=httpx.Response(200))
+    async with AsyncSession(test_db) as session:
+        dest = AlertDestination(user_id=admin_user.id, label="D", target="https://hooks.example.com/hook", enabled=True)
+        session.add(dest)
+        await session.commit()
+        await session.refresh(dest)
+        dest_id = dest.id
+        ext = Extension(
+            user_id=admin_user.id,
+            store="vscode",
+            extension_id="pub.corrupt",
+            name="R",
+            publisher="pub",
+            version="2.0.0",
+            store_url="https://example.com",
+            risk_score=60,
+            # A valid event next to non-dict junk — the marker the infinite-loop bug needed.
+            pending_alert_events=json.dumps(
+                [{"event_type": "risk_level_change", "old_value": "low", "new_value": "high"}, "junk", 5]
+            ),
+        )
+        session.add(ext)
+        await session.commit()
+        await session.refresh(ext)
+        ext_id = ext.id
+        session.add(
+            AlertRule(user_id=admin_user.id, destination_id=dest_id, event_type="risk_level_change", enabled=True)
+        )
+        await session.commit()
+
+    with _patch_resolver():
+        async with httpx.AsyncClient() as http:
+            await recover_pending_alerts(test_db, http)
+            # Second cycle must be a no-op: before the fix the marker never cleared and re-fired.
+            await recover_pending_alerts(test_db, http)
+
+    assert respx.calls.call_count == 1  # delivered exactly once — no re-loop
+    async with AsyncSession(test_db) as session:
+        logs = (await session.exec(select(AlertLog))).all()
+        assert len(logs) == 1
+        refreshed = await session.get(Extension, ext_id)
+        assert refreshed.pending_alert_events is None  # corrupt marker cleared, not lingering
+
+
+async def test_recover_drops_non_string_event_type_without_looping(test_db, admin_user):
+    """#197 review: a marker whose ``event_type`` is a non-string (a list) is accepted by the
+    plain ``ChangeEvent`` dataclass but is unhashable, so ``fire_alerts`` would crash building
+    its event-type set — and ``fire_pending_alerts`` catches that and retains the marker, so it
+    re-crashes every cycle forever. ``_parse_pending_events`` must drop it; recovery then finds
+    nothing deliverable and clears the marker."""
+    async with AsyncSession(test_db) as session:
+        ext = Extension(
+            user_id=admin_user.id,
+            store="vscode",
+            extension_id="pub.badtype",
+            name="B",
+            publisher="pub",
+            version="2.0.0",
+            store_url="https://example.com",
+            risk_score=60,
+            pending_alert_events=json.dumps([{"event_type": [], "old_value": "low", "new_value": "high"}]),
+        )
+        session.add(ext)
+        await session.commit()
+        await session.refresh(ext)
+        ext_id = ext.id
+
+    async with httpx.AsyncClient() as http:
+        await recover_pending_alerts(test_db, http)  # must not raise
+
+    async with AsyncSession(test_db) as session:
+        # Nothing deliverable → the corrupt marker is cleared, not retried forever.
+        assert (await session.get(Extension, ext_id)).pending_alert_events is None
+
+
+async def test_fetch_and_store_tolerates_wrong_shape_pending_marker(test_db, admin_user):
+    """#197: a valid-JSON-but-wrong-shape marker ("{}" here) must not crash the fetch. The old
+    _merge_pending_events guarded only json.loads, so `prior + new_events` raised TypeError and
+    500'd the refresh — blocking every future refresh of that extension until it was hand-fixed."""
+    async with AsyncSession(test_db) as session:
+        ext = Extension(
+            user_id=admin_user.id,
+            store="vscode",
+            extension_id="pub.wrongshape",
+            name="W",
+            publisher="pub",
+            version="1.0.0",
+            store_url="https://example.com",
+            risk_score=10,
+            last_fetched_at=datetime(2024, 1, 1, tzinfo=timezone.utc),  # not first fetch
+            pending_alert_events="{}",  # wrong shape: an object, not a list of events
+        )
+        session.add(ext)
+        await session.commit()
+        await session.refresh(ext)
+
+        meta = ExtensionMetadata(name="W", publisher="pub", version="2.0.0", store_url="https://example.com")
+        with patch("app.fetchers.VSCodeFetcher") as MockFetcher:
+            MockFetcher.return_value.fetch = AsyncMock(return_value=(meta, None))
+            ext, events = await fetch_and_store(ext, session, httpx.AsyncClient())  # must not raise
+
+    # The junk was cleansed; only the freshly detected, well-formed event remains.
+    staged = json.loads(ext.pending_alert_events)
+    assert all(isinstance(e, dict) and "event_type" in e for e in staged)
+    assert any(e["event_type"] == "new_version" for e in staged)
