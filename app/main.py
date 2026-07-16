@@ -13,7 +13,7 @@ from app.deps import WebUser
 from app.fetchers.transport import RetryTransport
 from app.logging_config import setup_logging
 from app.middleware import CSRFOriginMiddleware
-from app.ratelimit import api_limiter
+from app.ratelimit import api_limiter, login_request_limiter
 from app.routes import alerts as alerts_routes
 from app.routes import api as api_routes
 from app.routes import keys as keys_routes
@@ -150,18 +150,28 @@ _BASELINE_CSP = "frame-ancestors 'none'; base-uri 'self'; object-src 'none'; for
 
 
 @app.middleware("http")
-async def api_rate_limit(request: Request, call_next) -> Response:
-    """Token-bucket per-IP rate limit on the JSON API (#188).
+async def edge_rate_limit(request: Request, call_next) -> Response:
+    """Token-bucket per-IP rate limits at the app edge (#188, #196).
 
-    The app-side replacement for the nginx ``api`` ``limit_req`` zone, added when the
-    edge proxy became Caddy (which has no built-in rate_limit). Off unless
-    ``api_rate_limit_enabled`` (the prod Compose/Helm env sets it); in production the
-    cluster ingress also limits at the true edge. Keyed on the client IP, which uvicorn
-    derives from the Caddy-set canonical X-Forwarded-For (spoof-proof per #77).
+    The app-side replacement for the nginx ``limit_req`` zones dropped when the edge
+    proxy became Caddy (which has no built-in rate_limit): the ``api`` zone over the JSON
+    API (``api_rate_limit_enabled``), and the tighter ``login`` zone over ``POST /login``
+    (``login_rate_limit_enabled`` — separate switch so disabling API limiting can't
+    silently drop login protection). ``POST /login`` alone pays the ~100ms bcrypt cost
+    even for unknown users, so an unthrottled flood is a CPU-DoS and a spray vector the
+    failure-keyed LoginRateLimiter can't stop. Both default off (so the test suite isn't
+    throttled) and are set on in the Compose/Helm prod env, where the cluster ingress also
+    limits at the true edge. Keyed on the client IP, which uvicorn derives from the
+    Caddy-set canonical X-Forwarded-For (spoof-proof per #77).
     """
-    if settings.api_rate_limit_enabled and request.url.path.startswith("/api/"):
+    limiter = None
+    if settings.login_rate_limit_enabled and request.method == "POST" and request.url.path == "/login":
+        limiter = login_request_limiter
+    elif settings.api_rate_limit_enabled and request.url.path.startswith("/api/"):
+        limiter = api_limiter
+    if limiter is not None:
         client_ip = request.client.host if request.client else "-"
-        retry_after = api_limiter.check(client_ip)
+        retry_after = limiter.check(client_ip)
         if retry_after is not None:
             return JSONResponse(
                 {"detail": "Rate limit exceeded. Slow down."},

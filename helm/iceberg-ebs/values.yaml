@@ -58,10 +58,13 @@ icebergEbs:
   httpxTimeout: 15.0       # outbound HTTP timeout in seconds
   secureCookies: true
   logJson: false          # emit single-line JSON logs for a collector (#89)
-  # App-side API rate limiting (#188): the edge equivalent of the old nginx `api` zone,
-  # since Caddy has no rate_limit directive. Belt-and-suspenders with the ingress
-  # limit-rps/limit-connections annotations, which throttle at the true cluster edge.
+  # App-side rate limiting (#188, #196): the edge equivalents of the old nginx `api` and
+  # `login` zones, since Caddy has no rate_limit directive. Belt-and-suspenders with the
+  # ingress limit-rps/limit-connections annotations, which throttle at the true cluster
+  # edge. Login has its own switch so disabling API limiting can't silently drop login
+  # brute-force/DoS protection.
   apiRateLimitEnabled: true
+  loginRateLimitEnabled: true
 
 postgresql:
   auth:

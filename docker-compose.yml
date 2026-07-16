@@ -47,10 +47,12 @@ services:
       ICEBERG_EBS_SECRET_KEY: ${ICEBERG_EBS_SECRET_KEY}
       ICEBERG_EBS_APP_BASE_URL: ${ICEBERG_EBS_APP_BASE_URL:-}
       ICEBERG_EBS_SECURE_COOKIES: "true"
-      # Enable the app-side API rate limiter (#188): the edge equivalent of the old
-      # nginx `api` limit_req zone, since Caddy has no built-in rate_limit. Keyed on the
-      # Caddy-set canonical X-Forwarded-For.
+      # Enable the app-side rate limiters (#188, #196): the edge equivalents of the old
+      # nginx `api` and `login` limit_req zones, since Caddy has no built-in rate_limit.
+      # Keyed on the Caddy-set canonical X-Forwarded-For. Login has its own switch so
+      # disabling API limiting can't silently drop login brute-force/DoS protection.
       ICEBERG_EBS_API_RATE_LIMIT_ENABLED: ${ICEBERG_EBS_API_RATE_LIMIT_ENABLED:-true}
+      ICEBERG_EBS_LOGIN_RATE_LIMIT_ENABLED: ${ICEBERG_EBS_LOGIN_RATE_LIMIT_ENABLED:-true}
       # Emit logs as single-line JSON for a log collector (#89); default text.
       ICEBERG_EBS_LOG_JSON: ${ICEBERG_EBS_LOG_JSON:-false}
       # Forwarded so an operator who sets these in .env actually gets them (#87):

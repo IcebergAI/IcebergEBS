@@ -116,6 +116,14 @@ release to diff against.
 
 ### Fixed
 
+- **Restored the per-IP rate limit on `POST /login`** that the nginx→Caddy migration dropped
+  (#196). The old nginx `login` `limit_req` zone capped login POSTs at 5/min per IP; the Caddy
+  migration replaced only the `api` zone app-side, leaving `POST /login` uncapped in the Compose
+  deployment. Because `POST /login` pays the ~100ms bcrypt cost even for unknown usernames, an
+  unthrottled flood was both a CPU-DoS on the single worker and a username-spray vector that the
+  failure-keyed `(IP, username)` lockout can't stop. A tighter token-bucket now caps login POSTs
+  per IP, gated by its own `ICEBERG_EBS_LOGIN_RATE_LIMIT_ENABLED` switch (on in the Compose/Helm
+  env) so disabling API limiting can't silently drop login protection.
 - **Alerts no longer drop an older same-type event when several are pending** (#144). The
   recoverable-alert marker (#109) can hold two events of one type — e.g. a `new_version`
   1.0→1.1 whose webhook delivery failed and was retained, then a 1.1→1.2 the next cycle.

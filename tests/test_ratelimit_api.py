@@ -68,10 +68,57 @@ async def test_api_rate_limit_off_by_default(client):
 
 
 async def test_non_api_paths_are_not_rate_limited(client, monkeypatch):
-    """Only /api/* is throttled — the dashboard/UI is never rate-limited app-side."""
+    """Ordinary UI paths (the dashboard, GET /login) are never rate-limited app-side —
+    only /api/* and POST /login are (see the login tests below)."""
     from app import main as main_module
 
     monkeypatch.setattr(main_module.settings, "api_rate_limit_enabled", True)
+    monkeypatch.setattr(main_module.settings, "login_rate_limit_enabled", True)
     monkeypatch.setattr(main_module, "api_limiter", RequestRateLimiter(per_minute=60, burst=1))
+    monkeypatch.setattr(main_module, "login_request_limiter", RequestRateLimiter(per_minute=5, burst=1))
     for _ in range(5):
         assert (await client.get("/")).status_code == 200
+    # GET /login renders the form and pays no bcrypt cost, so it is not throttled either
+    # (only POST /login is capped).
+    for _ in range(5):
+        assert (await client.get("/login")).status_code == 200
+
+
+async def test_login_post_is_rate_limited_when_enabled(anon_client, admin_user, monkeypatch):
+    """POST /login regained the per-IP request cap the nginx→Caddy migration dropped
+    (#196): with the limiter enabled and a tiny burst it 429s once the bucket drains —
+    before bcrypt runs — independent of the failure-keyed LoginRateLimiter. A JSON 429
+    with Retry-After is returned from the edge middleware."""
+    from app import main as main_module
+    from app.ratelimit import LoginRateLimiter
+
+    monkeypatch.setattr(main_module.settings, "login_rate_limit_enabled", True)
+    monkeypatch.setattr(main_module, "login_request_limiter", RequestRateLimiter(per_minute=5, burst=2))
+    # Fresh failure-limiter so the 429 under test comes from the request cap, not an
+    # accumulated (IP, username) lockout from earlier tests sharing the singleton.
+    monkeypatch.setattr(
+        "app.routes.ui.login_limiter",
+        LoginRateLimiter(max_attempts=5, window_seconds=300, lockout_seconds=300),
+    )
+
+    creds = {"username": "testadmin", "password": "wrong"}
+    assert (await anon_client.post("/login", data=creds)).status_code == 200  # re-render
+    assert (await anon_client.post("/login", data=creds)).status_code == 200
+    throttled = await anon_client.post("/login", data=creds)
+    assert throttled.status_code == 429
+    assert "Retry-After" in throttled.headers
+
+
+async def test_login_post_not_limited_when_disabled(anon_client, admin_user, monkeypatch):
+    """With the edge limiter off (the default), a burst of POST /login is not request-capped
+    — only the failure-keyed lockout (LoginRateLimiter, default 5 attempts) applies. A fresh
+    failure-limiter isolates this from any accumulated singleton state."""
+    from app.ratelimit import LoginRateLimiter
+
+    monkeypatch.setattr(
+        "app.routes.ui.login_limiter",
+        LoginRateLimiter(max_attempts=5, window_seconds=300, lockout_seconds=300),
+    )
+    for _ in range(4):
+        r = await anon_client.post("/login", data={"username": "nobody", "password": "wrong"})
+        assert r.status_code == 200  # invalid creds re-render, no 429

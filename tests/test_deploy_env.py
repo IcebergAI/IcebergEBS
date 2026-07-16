@@ -18,6 +18,10 @@ _FORWARDED_ENV = [
     "ICEBERG_EBS_FETCH_INTERVAL_MINUTES",
     "ICEBERG_EBS_SESSION_MAX_AGE",
     "ICEBERG_EBS_HTTPX_TIMEOUT",
+    # Rate-limit switches: the edge equivalents of the nginx api/login zones (#188, #196).
+    # Login has its own switch so disabling API limiting can't silently drop it.
+    "ICEBERG_EBS_API_RATE_LIMIT_ENABLED",
+    "ICEBERG_EBS_LOGIN_RATE_LIMIT_ENABLED",
 ]
 
 
@@ -38,5 +42,12 @@ def test_helm_configmap_forwards_expected_env():
 def test_helm_values_declare_forwarded_settings():
     values = yaml.safe_load((_ROOT / "helm/iceberg-ebs/values.yaml").read_text())
     ie = values["icebergEbs"]
-    for key in ("retentionDays", "fetchIntervalMinutes", "sessionMaxAge", "httpxTimeout"):
+    for key in (
+        "retentionDays",
+        "fetchIntervalMinutes",
+        "sessionMaxAge",
+        "httpxTimeout",
+        "apiRateLimitEnabled",
+        "loginRateLimitEnabled",
+    ):
         assert key in ie, f"helm values icebergEbs missing: {key}"
