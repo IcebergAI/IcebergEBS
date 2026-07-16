@@ -47,13 +47,19 @@ def _alembic_config() -> Config:
 def _run_migrations(sync_conn) -> None:
     """Bring the database to head, adopting pre-Alembic databases by stamping.
 
-    Runs on a sync connection handed in by ``run_sync``. Five cases:
+    Runs on a sync connection handed in by ``run_sync``. Six cases:
     - alembic_version present, core tables exist → ``upgrade head`` applies any
       new revisions.
-    - no alembic_version, core tables already exist (a database created by the
-      old create_all/_migrate_* path) → stamp it at the *baseline* revision its
-      schema actually matches (WITHOUT recreating anything), then upgrade to
-      head like everyone else.
+    - no alembic_version, core tables already exist AND the schema is post-baseline
+      (an unstamped ``create_all``'d head schema — the state an aborted test run
+      leaves a dev DB in, since conftest drops alembic_version and create_all builds
+      the head schema; #199) → stamp *head* and no-op the upgrade. Stamping the
+      baseline here (the next case) would re-run post-baseline migrations against
+      columns create_all already made → DuplicateColumn on the next boot.
+    - no alembic_version, core tables already exist with the *baseline* schema (a
+      database created by the old create_all/_migrate_* path) → stamp it at the
+      *baseline* revision its schema actually matches (WITHOUT recreating anything),
+      then upgrade to head like everyone else.
     - alembic_version present but the schema is *gone* (stamped-but-empty — e.g.
       a dev DB whose app tables were dropped out from under a surviving
       alembic_version, #113) → reset the stamp to base so the upgrade rebuilds
@@ -68,7 +74,19 @@ def _run_migrations(sync_conn) -> None:
 
     has_user = "user" in inspect(sync_conn).get_table_names()
     current = MigrationContext.configure(sync_conn).get_current_revision()
-    if current is None and has_user:
+    if current is None and has_user and _has_post_baseline_schema(sync_conn):
+        # An unstamped schema that already matches head — NOT a pre-Alembic database.
+        # This is the state an interrupted test run leaves a dev DB in: conftest drops
+        # alembic_version and create_all builds the current (head) schema, so an aborted
+        # suite leaves head-schema-with-no-stamp. Stamping the baseline (the branch below)
+        # would then run every post-baseline migration against columns create_all already
+        # made → DuplicateColumn, and the next `make dev` boot crashes (#199). Adopt it as
+        # head instead — create_all builds from models.py, which test_head_matches_models
+        # pins to the Alembic head, so the upgrade below is a no-op. Unreachable in
+        # production, which never runs create_all.
+        logger.info("Adopting an unstamped create_all'd head schema — stamping head (#199)")
+        command.stamp(cfg, "head")
+    elif current is None and has_user:
         # A pre-Alembic database matches the BASELINE schema, not head — stamping
         # head would mark every post-baseline migration as applied without running
         # it, with no recovery path (upgrade becomes a permanent no-op) (#143).
@@ -97,6 +115,24 @@ def _run_migrations(sync_conn) -> None:
         )
         command.stamp(cfg, _PRE_ALEMBIC_BASELINE)
     command.upgrade(cfg, "head")
+
+
+def _has_post_baseline_schema(sync_conn) -> bool:
+    """True if the ``user`` table's schema is post-baseline (matches head), not the
+    pre-Alembic baseline. Used to tell a genuine pre-Alembic database (stamp the baseline,
+    then upgrade) apart from an unstamped ``create_all``'d head schema left by an aborted
+    test run (stamp head; #199).
+
+    Discriminator: ``user.created_at`` is a naive timestamp in the baseline schema and was
+    converted to timestamptz by the first post-baseline migration (``a1b2c3d4e5f6``) — and
+    ``create_all`` (from models.py) produces timestamptz — so tz-aware ⟹ post-baseline,
+    naive ⟹ baseline. Defaults to False (baseline) if ``created_at`` is somehow absent, so a
+    genuine pre-Alembic production database still adopts via the baseline stamp.
+    """
+    for col in inspect(sync_conn).get_columns("user"):
+        if col["name"] == "created_at":
+            return bool(getattr(col["type"], "timezone", False))
+    return False
 
 
 def _is_falsely_stamped_baseline(sync_conn, current: str) -> bool:

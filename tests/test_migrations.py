@@ -271,6 +271,36 @@ async def test_stamped_but_empty_db_is_rebuilt(temp_db):
         sync.dispose()
 
 
+async def test_unstamped_create_all_head_schema_is_adopted_not_rebuilt(temp_db):
+    """An aborted test run leaves the dev DB with a create_all'd head schema and no
+    alembic_version (conftest drops it in setup; #199). The next boot must adopt that schema
+    as head — NOT misclassify it as a pre-Alembic baseline, stamp the baseline, and then
+    re-run post-baseline migrations against columns create_all already made (DuplicateColumn,
+    crashing `make dev`). Reproduces the exact interrupted-suite state and asserts recovery.
+    """
+    # Build the current (head) schema with create_all and NO alembic_version — precisely
+    # what tests/conftest.py leaves behind if the suite is aborted before teardown.
+    engine = create_async_engine(_async_url(temp_db))
+    async with engine.begin() as conn:
+        await conn.run_sync(SQLModel.metadata.create_all)
+    await engine.dispose()
+    assert "alembic_version" not in _tables(temp_db)  # unstamped
+    assert "installobservation" in _tables(temp_db)  # …but already at the head schema
+
+    await _migrate(temp_db)  # the `make dev` boot that used to crash with DuplicateColumn
+
+    # Adopted at head with the schema intact and matching the models — nothing rebuilt.
+    head = ScriptDirectory.from_config(_alembic_config()).get_current_head()
+    assert _version(temp_db) == (head,)
+    sync = create_engine(_sync_url(temp_db))
+    try:
+        with sync.connect() as conn:
+            ctx = MigrationContext.configure(conn, opts={"compare_type": True})
+            assert compare_metadata(ctx, SQLModel.metadata) == []
+    finally:
+        sync.dispose()
+
+
 def test_head_matches_models(temp_db):
     """Autogenerate finds no diff between the migrations head and the models.
 
