@@ -51,6 +51,10 @@ dev = [
     "mypy",
     "bandit[toml]",
     "pip-audit",
+    # Tailwind v4 standalone-CLI wrapper for `make css` / the Dockerfile
+    # tailwind-builder stage (#85). The CLI binary itself is pinned via the
+    # TAILWINDCSS_VERSION env var at each build site, not here.
+    "pytailwindcss>=0.3",
 ]
 
 [tool.uv]

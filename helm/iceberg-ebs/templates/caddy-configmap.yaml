@@ -77,8 +77,11 @@ data:
     #
     # The app emits a *baseline* copy of these too (app/main.py:security_headers, #66) —
     # deliberately without script-src/default-src so it can never intersect and break
-    # this fuller CDN-aware policy. Caddy SETs (replaces) each header here, so exactly one
+    # this fuller policy. Caddy SETs (replaces) each header here, so exactly one
     # canonical value reaches the client even though the upstream sent its baseline.
+    #
+    # Every asset is self-hosted (#85), so no third-party origin appears in any
+    # directive: script-src/style-src/font-src are same-origin only.
     #
     # `defer` is REQUIRED for that "exactly one" guarantee: it runs these header ops AFTER
     # reverse_proxy has copied the upstream (app baseline) response headers, so each SET
@@ -92,7 +95,7 @@ data:
     # script changes, regenerate the hash (see .claude/rules/frontend.md) and update it here.
     header {
     	defer
-    	Content-Security-Policy "default-src 'self'; script-src 'self' 'sha256-+Eb7yRWu45ifRb64zPIDP0hvsT4OloSS8kNklIXpCO4=' https://cdn.tailwindcss.com https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; object-src 'none'; form-action 'self'"
+    	Content-Security-Policy "default-src 'self'; script-src 'self' 'sha256-+Eb7yRWu45ifRb64zPIDP0hvsT4OloSS8kNklIXpCO4='; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; object-src 'none'; form-action 'self'"
     	Strict-Transport-Security "max-age=63072000; includeSubDomains; preload"
     	X-Content-Type-Options "nosniff"
     	X-Frame-Options "DENY"

@@ -10,14 +10,13 @@
   <link rel="icon" type="image/png" sizes="32x32" href="/static/img/favicon-32.png">
   <link rel="apple-touch-icon" href="/static/img/apple-touch-icon.png">
 
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
-
-  <script src="https://cdn.tailwindcss.com"></script>
-  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
-
-  <script src="/static/js/tailwind-config.js"></script>
+  {# All assets are self-hosted (#85) — no third-party CDN reaches the page.
+     output.css is the Tailwind v4 build (see static/css/input.css / `make css`);
+     it must come before app.css, which layers over the utility sheet. Alpine is
+     the pinned standard build, vendored under static/js/vendor/. #}
+  <link rel="stylesheet" href="/static/css/fonts.css">
+  <link rel="stylesheet" href="/static/css/output.css">
+  <script defer src="/static/js/vendor/alpine-3.15.12.min.js"></script>
 
   <link rel="stylesheet" href="/static/css/app.css">
 </head>

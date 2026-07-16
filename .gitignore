@@ -70,6 +70,10 @@ caddy/certs/
 # Stamped build version (deploy-time; runtime git is the default source)
 app/_version
 
+# Tailwind build artifact (#85) — built by `make css` / the Dockerfile
+# tailwind-builder stage from static/css/input.css; never commit it
+static/css/output.css
+
 # Skills
 .agents/
 # Ignore personal Claude config but track shared path-scoped rules

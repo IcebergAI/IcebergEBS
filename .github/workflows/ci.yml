@@ -67,6 +67,13 @@ jobs:
       # adding vulture to the group would need a uv.lock refresh, and — like zizmor —
       # it's a standalone linter. Config + whitelist live in pyproject.toml.
       - run: uvx vulture@2.16
+      # Tailwind build gate (#85): fail fast on an input.css/@source error instead of
+      # surfacing it as a slow, confusing `ui` job image-build failure. output.css is
+      # a gitignored artifact — this build is discarded. TAILWINDCSS_VERSION pins the
+      # standalone CLI binary; keep in lockstep with the Makefile and Dockerfile.
+      - run: uv run tailwindcss -i static/css/input.css -o static/css/output.css --minify
+        env:
+          TAILWINDCSS_VERSION: v4.3.1
 
   types:
     runs-on: ubuntu-latest

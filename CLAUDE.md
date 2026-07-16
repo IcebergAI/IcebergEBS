@@ -24,9 +24,9 @@ App will always run on Python 3.14 or later.
 `pyproject.toml` is the **only** dependency manifest — there is no `requirements.txt`. Runtime packages go in `[project.dependencies]`; test + static-analysis tooling goes in the **`[dependency-groups] dev`** group (PEP 735). After changing either, run **`uv lock`** and commit the updated `uv.lock`: CI installs with `uv sync --locked`, which fails on a stale lock, and the `lint` job runs an explicit `uv lock --check`. IcebergEBS is a **virtual project** (`[tool.uv] package = false`) — it is deployed as source + uvicorn, never built into a wheel, which is what lets the Dockerfile install the dependency layer from `pyproject.toml` + `uv.lock` alone. The production image builds its venv with `uv sync --frozen --no-dev`, so the `dev` group **cannot** reach the container: anything a runtime import needs must be a real runtime dependency, not a dev one.
 
 ### UI / Front end
-- AlpineJS (via CDN)
-- Tailwind CSS (via CDN in dev; build output at `static/css/app.css`)
-- IBM Plex Sans + IBM Plex Mono (Google Fonts)
+- AlpineJS (vendored + version-pinned at `static/js/vendor/`, #85 — no CDN)
+- Tailwind CSS v4 (standalone CLI via `pytailwindcss`; `static/css/input.css` → gitignored `static/css/output.css`, built by `make css` / the Dockerfile `tailwind-builder` stage)
+- IBM Plex Sans + IBM Plex Mono (self-hosted woff2 in `static/fonts/` + `static/css/fonts.css`)
 - Custom light/dark design system using CSS custom properties (`static/css/app.css`)
 
 
@@ -121,7 +121,7 @@ ICEBERG_EBS_TEST_DATABASE_URL=postgresql+asyncpg://iceberg_ebs:iceberg_ebs@local
 - Scoring functions handle naive datetimes from external sources by attaching UTC tzinfo before comparison
 
 ## Styling, Theming and Design
-The design system (light/dark CSS custom properties, Tailwind CDN + component classes, the CSP script hash in `caddy/headers.caddy`, Aperture branding, and the mandatory Alpine.js `x-data` function pattern) lives in the path-scoped rule `.claude/rules/frontend.md` (auto-loads when editing `static/**` or `app/templates/**`).
+The design system (light/dark CSS custom properties, the self-hosted Tailwind v4 build + component classes, the CSP script hash in `caddy/headers.caddy`, Aperture branding, and the mandatory Alpine.js `x-data` function pattern) lives in the path-scoped rule `.claude/rules/frontend.md` (auto-loads when editing `static/**` or `app/templates/**`).
 
 ## Deployment
 
@@ -129,7 +129,7 @@ The design system (light/dark CSS custom properties, Tailwind CDN + component cl
 
 Full production deployment instructions are in `DEPLOYMENT.md`. Two options are covered:
 
-**Docker Compose** — three-service stack (postgres, app, caddy). **Caddy** (config in `caddy/`, #188 — replaced nginx) terminates TLS and serves static assets directly; it does **not** rate-limit (stock Caddy has no `rate_limit` directive), so edge throttling moved app-side (`app/ratelimit.py`, enabled via `ICEBERG_EBS_API_RATE_LIMIT_ENABLED` for `/api/*` and `ICEBERG_EBS_LOGIN_RATE_LIMIT_ENABLED` for `POST /login`, #196). Caddy sets `X-Forwarded-For` to a single canonical `{client_ip}`, discarding a client-supplied XFF at the edge (#77). Single uvicorn worker required (APScheduler is per-process; multiple workers produce duplicate watchlist refreshes and `AlertLog` rows).
+**Docker Compose** — three-service stack (postgres, app, caddy). **Caddy** (config in `caddy/`, #188 — replaced nginx) terminates TLS and proxies everything — including `/static`, served by the app's StaticFiles, since the built `output.css` exists only inside the app image (#85) — to the app; it does **not** rate-limit (stock Caddy has no `rate_limit` directive), so edge throttling moved app-side (`app/ratelimit.py`, enabled via `ICEBERG_EBS_API_RATE_LIMIT_ENABLED` for `/api/*` and `ICEBERG_EBS_LOGIN_RATE_LIMIT_ENABLED` for `POST /login`, #196). Caddy sets `X-Forwarded-For` to a single canonical `{client_ip}`, discarding a client-supplied XFF at the edge (#77). Single uvicorn worker required (APScheduler is per-process; multiple workers produce duplicate watchlist refreshes and `AlertLog` rows).
 
 **Kubernetes (Helm)** — chart under `helm/iceberg-ebs/` with Bitnami postgresql subchart. `replicaCount: 1` is mandatory for the same reason. Topology is **cluster nginx-ingress-controller (TLS via cert-manager, edge rate limiting) → in-pod Caddy sidecar (:8080) → app (localhost:8000)** (#188): the sidecar owns the canonical security headers via the `caddy` ConfigMap (a test-guarded mirror of `caddy/Caddyfile.k8s` + `caddy/headers.caddy` — Helm can't read files above the chart), so the ingress no longer carries a duplicated CSP snippet. Editing the edge config means editing `caddy/` and re-mirroring the ConfigMap; `tests/test_helm_caddy.py` + `tests/test_csp_hash.py` fail on drift.
 

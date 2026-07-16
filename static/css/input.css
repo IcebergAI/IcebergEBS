@@ -1,0 +1,38 @@
+/* Tailwind v4 entry point (#85). Built into static/css/output.css by the standalone
+ * CLI (via pytailwindcss) — `make css` locally, the Dockerfile tailwind-builder
+ * stage for images, and the ci.yml lint job as an early syntax gate. output.css is
+ * a build artifact and is gitignored; never edit it.
+ *
+ * `source(none)` + the explicit @source list below pins the class-scan surface so
+ * the three build contexts (full local checkout, CI, the trimmed Docker builder
+ * stage) produce identical output. Never point @source at static/js/vendor/ —
+ * scanning a minified vendor bundle generates junk utilities.
+ */
+@import "tailwindcss" source(none);
+
+@source "../../app/templates";
+@source "../js/topbar-search.js";
+@source "../js/trend-chart.js";
+
+/* Font families formerly set by static/js/tailwind-config.js (the Play-CDN v3
+ * config shim, retired in #85). */
+@theme {
+  --font-sans: 'IBM Plex Sans', system-ui, sans-serif;
+  --font-mono: 'IBM Plex Mono', ui-monospace, monospace;
+}
+
+/* v3 (Play CDN) → v4 preflight compatibility, kept deliberately tiny:
+ * - v4 preflight leaves buttons at cursor:default (v3 set pointer), and the topbar
+ *   dropdown uses bare <button>s that app.css does not style.
+ * - v4 changed the placeholder default from gray-400 to currentColor/50%; the
+ *   topbar search input relies on the old default. */
+button:not(:disabled),
+[role="button"]:not(:disabled) {
+  cursor: pointer;
+}
+
+input::placeholder,
+textarea::placeholder {
+  color: #9ca3af; /* Tailwind v3 preflight default (gray-400) */
+  opacity: 1;
+}

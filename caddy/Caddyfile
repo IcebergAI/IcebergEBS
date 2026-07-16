@@ -1,7 +1,7 @@
 # Edge reverse proxy for the Docker Compose stack (#188 — replaces nginx).
-# Caddy terminates TLS, serves the static assets directly, sets the canonical
-# security headers (imported from headers.caddy — the single CSP home), and proxies
-# everything else to the app. Rate limiting is NOT done here: stock Caddy has no
+# Caddy terminates TLS, sets the canonical security headers (imported from
+# headers.caddy — the single CSP home), and proxies everything — including
+# /static, which the app serves via StaticFiles (#85) — to the app. Rate limiting is NOT done here: stock Caddy has no
 # rate_limit directive, so edge throttling moved app-side (app/ratelimit.py) with the
 # cluster ingress covering it in production (#188).
 {
@@ -39,18 +39,16 @@
 	}
 
 	# Canonical security headers (single source of truth) — applies to every response,
-	# including the static handler below, exactly as nginx included security_headers.conf
-	# in both the /static and proxied locations.
+	# exactly as nginx included security_headers.conf in every location.
 	import headers.caddy
 
-	# Static assets served directly by Caddy (mounted read-only), long-lived immutable cache.
-	handle_path /static/* {
-		root * /srv/static
-		file_server
-		header Cache-Control "public, immutable, max-age=31536000"
-	}
-
-	# Everything else → the app. header_up X-Forwarded-For {client_ip} forces a single
+	# Everything — including /static — → the app (same topology as Caddyfile.k8s).
+	# Caddy used to serve /static from a host bind-mount of the checkout, but since #85
+	# static/css/output.css is a gitignored build artifact that exists only inside the
+	# app image, so the app's StaticFiles is the one place that has the full static
+	# tree. (This also retires the old 1y-immutable cache on unhashed static filenames,
+	# which could pin a stale stylesheet for up to a year after a redesign.)
+	# header_up X-Forwarded-For {client_ip} forces a single
 	# canonical client IP: Caddy is the edge here (no trusted_proxies), so {client_ip} is
 	# the real peer and any client-supplied X-Forwarded-For is discarded — the anti-spoof
 	# the app-side login/API rate limiters depend on (#77).

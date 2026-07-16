@@ -122,7 +122,8 @@ services:
       - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
       - ./caddy/headers.caddy:/etc/caddy/headers.caddy:ro
       - ./caddy/certs:/etc/caddy/certs:ro
-      - ./static:/srv/static:ro
+      # No ./static mount: since #85 the built static tree (output.css) exists only
+      # inside the app image, so Caddy proxies /static to the app like the K8s sidecar.
     healthcheck:
       # Plain-HTTP Caddy-local liveness on :80 (returns 200 without redirecting to
       # HTTPS or proxying to the app — see the /caddy-health handler in the Caddyfile).

@@ -28,6 +28,38 @@ COPY pyproject.toml uv.lock ./
 RUN uv sync --frozen --no-dev
 
 
+# Tailwind build stage (#85): compiles static/css/output.css (a gitignored build
+# artifact) from static/css/input.css with the standalone CLI — no Node, and no
+# pip either: the binary is downloaded straight from the tagged GitHub release and
+# verified against its published sha256 before it ever runs, so rebuilding the same
+# commit can only ever execute the same bytes (unlike a floating `pip install`,
+# which could resolve a newer wrapper and fetch an unverified executable). Only the
+# files the class scanner needs are copied in, which also keeps the @source scan
+# surface identical to what input.css declares. The version must match the
+# TAILWINDCSS_VERSION pin in the Makefile `css` target and the ci.yml lint job;
+# bumping it means refreshing the checksums below from the release's sha256sums.txt.
+FROM python:3.14-slim AS tailwind-builder
+
+ARG TARGETARCH
+RUN set -eux; \
+    TAILWINDCSS_VERSION=v4.3.1; \
+    case "${TARGETARCH}" in \
+      amd64) asset=tailwindcss-linux-x64; sha256=2526d063ba03b71f9a3ea7d5cee14f0aec147f117f222d5adc97b1d736d45999 ;; \
+      arm64) asset=tailwindcss-linux-arm64; sha256=3d662377a86d71c43b549dc06b90db4586b4acd412bf827a3268e951661e5adf ;; \
+      *) echo "unsupported TARGETARCH: ${TARGETARCH}" >&2; exit 1 ;; \
+    esac; \
+    python -c "import sys, urllib.request; urllib.request.urlretrieve(sys.argv[1], '/usr/local/bin/tailwindcss')" \
+      "https://github.com/tailwindlabs/tailwindcss/releases/download/${TAILWINDCSS_VERSION}/${asset}"; \
+    echo "${sha256}  /usr/local/bin/tailwindcss" | sha256sum -c -; \
+    chmod +x /usr/local/bin/tailwindcss
+
+WORKDIR /build
+COPY static/ static/
+COPY app/templates/ app/templates/
+
+RUN tailwindcss -i static/css/input.css -o static/css/output.css --minify
+
+
 FROM python:3.14-slim
 
 WORKDIR /app
@@ -38,6 +70,9 @@ COPY --from=builder --chown=appuser:appuser /opt/venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 
 COPY --chown=appuser:appuser . .
+# The checkout has no output.css (gitignored); take the built one from the
+# tailwind-builder stage.
+COPY --from=tailwind-builder --chown=appuser:appuser /build/static/css/output.css static/css/output.css
 
 # Build version is stamped in (the image has no .git for runtime resolution).
 # Pass with: docker build --build-arg ICEBERG_EBS_VERSION="build 142 · 8ebe5f8" .
