@@ -11,6 +11,7 @@ from sqlalchemy import and_, func
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
+from app.alert_queries import get_alert_log
 from app.auth import authenticate_session, clear_session, get_current_user, set_session, verify_credentials
 from app.config import settings
 from app.deps import AdminUserUI, SessionDep, WebUser
@@ -26,7 +27,6 @@ from app.findings_view import group_detection_findings
 from app.inspector import PackageAnalysis
 from app.models import AlertDestination, AlertRule, ApiKey, Extension, FetchLog, InstallObservation, User
 from app.ratelimit import login_limiter
-from app.routes.alerts import get_alert_log
 from app.threat_intel import build_threat_intel_indicators
 from app.version import get_version
 

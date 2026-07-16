@@ -103,6 +103,7 @@ warn_unused_ignores = false
 [[tool.mypy.overrides]]
 module = [
     "app.routes.*",
+    "app.alert_queries",
     "app.extension_queries",
     "app.services",
     "app.scheduler",
