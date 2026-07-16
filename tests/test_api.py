@@ -563,6 +563,33 @@ async def test_extension_out_tolerates_wrong_shaped_findings(client, test_db, ad
     assert partial["source"] == "package"
 
 
+async def test_extension_out_sanitizes_non_string_list_members(client, test_db, admin_user):
+    """#150 review: a permissions / host_permissions list whose members aren't all strings
+    must not 500 the list[str] DTO — non-string members are dropped, not rejected."""
+    async with AsyncSession(test_db) as s:
+        ext = Extension(
+            user_id=admin_user.id,
+            store="chrome",
+            extension_id="d" * 32,
+            name="Members",
+            publisher="Acme",
+            version="1.0",
+            store_url="https://example.com",
+            permissions='["tabs", 5, null, {"x": 1}]',
+            package_analysis=json.dumps({"host_permissions": ["https://ok/*", 123, True, {"bad": "x"}]}),
+        )
+        s.add(ext)
+        await s.commit()
+        await s.refresh(ext)
+        ext_id = ext.id
+
+    r = await client.get(f"/api/extensions/{ext_id}")
+    assert r.status_code == 200
+    data = r.json()
+    assert data["permissions"] == ["tabs"]
+    assert data["host_permissions"] == ["https://ok/*"]
+
+
 async def test_extension_out_tolerates_non_list_findings(client, test_db, admin_user):
     """A `findings` that isn't a list at all must not raise while iterating (#150)."""
     async with AsyncSession(test_db) as s:
