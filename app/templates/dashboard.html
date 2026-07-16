@@ -177,11 +177,11 @@
             </td>
             <td>
               <div class="flex items-center gap-3" style="min-width:200px">
-                <div class="mono text-[14px] font-semibold tabular-nums" :style="'color:' + scoreColor(ext.risk_score) + ';min-width:24px'" x-text="scoreText(ext)"></div>
+                <div class="mono text-[14px] font-semibold tabular-nums" style="min-width:24px" :class="'risk-' + ext.risk_band" x-text="scoreText(ext)"></div>
                 <div class="score-bar-track flex-1">
-                  <div class="score-bar-fill" :style="'width:' + (ext.risk_score || 0) + '%;background:' + scoreColor(ext.risk_score)"></div>
+                  <div class="score-bar-fill" :class="'fill-' + ext.risk_band" :style="barStyle(ext)"></div>
                 </div>
-                <span class="badge" :class="'badge-' + riskLevel(ext.risk_score)" x-text="riskLevel(ext.risk_score)"></span>
+                <span class="badge" :class="'badge-' + ext.risk_band" x-text="ext.risk_band"></span>
               </div>
             </td>
             <td style="color:var(--ink-7)" x-text="ext.publisher || '—'"></td>

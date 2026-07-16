@@ -1,12 +1,16 @@
-/* Tailwind v4 entry point (#85). Built into static/css/output.css by the standalone
- * CLI (via pytailwindcss) — `make css` locally, the Dockerfile tailwind-builder
- * stage for images, and the ci.yml lint job as an early syntax gate. output.css is
- * a build artifact and is gitignored; never edit it.
+/* Tailwind v4 entry point (#85, #105). Built into static/css/output.css by the
+ * standalone CLI (via pytailwindcss) — `make css` locally, the Dockerfile
+ * tailwind-builder stage for images, and the ci.yml lint job as an early syntax
+ * gate. output.css is a build artifact and is gitignored; never edit it.
  *
- * `source(none)` + the explicit @source list below pins the class-scan surface so
- * the three build contexts (full local checkout, CI, the trimmed Docker builder
- * stage) produce identical output. Never point @source at static/js/vendor/ —
- * scanning a minified vendor bundle generates junk utilities.
+ * deep_thought structure: the shared house token/component sheet (iceberg.css)
+ * and the app-specific layer (app.css) are imported THROUGH this file, so
+ * output.css is the single stylesheet the pages load (plus fonts.css).
+ *
+ * `source(none)` + the explicit @source list pins the class-scan surface so all
+ * build contexts produce identical output. Never point @source at
+ * static/js/vendor/ — scanning a minified vendor bundle generates junk
+ * utilities.
  */
 @import "tailwindcss" source(none);
 
@@ -16,25 +20,40 @@
 @source "../js/topbar-search.js";
 @source "../js/trend-chart.js";
 
-/* Font families formerly set by static/js/tailwind-config.js (the Play-CDN v3
- * config shim, retired in #85). */
-@theme {
-  --font-sans: 'IBM Plex Sans', system-ui, sans-serif;
-  --font-mono: 'IBM Plex Mono', ui-monospace, monospace;
+@import "./iceberg.css";
+@import "./app.css";
+
+/* Map Tailwind's colour/font utilities onto the shared Iceberg tokens defined in
+ * iceberg.css. `inline` makes utilities reference the CSS variables directly
+ * (e.g. `bg-surface` → var(--surface)) so light/dark switch with the tokens. */
+@theme inline {
+  --color-paper:        var(--paper);
+  --color-surface:      var(--surface);
+  --color-surface-2:    var(--surface-2);
+  --color-surface-ink:  var(--surface-ink);
+  --color-ink:          var(--ink);
+  --color-ink-soft:     var(--ink-soft);
+  --color-muted:        var(--muted);
+  --color-faint:        var(--faint);
+  --color-line:         var(--line);
+  --color-line-strong:  var(--line-strong);
+  --color-accent:       var(--accent);
+  --color-accent-ink:   var(--accent-ink);
+  --color-accent-deep:  var(--accent-deep);
+  --color-accent-soft:  var(--accent-soft);
+  --color-accent-line:  var(--accent-line);
+  --color-rail:         var(--rail);
+  --color-rail-2:       var(--rail-2);
+
+  --font-sans:  var(--fs-sans);
+  --font-mono:  var(--fs-mono);
+  --font-serif: var(--fs-serif);
 }
 
 /* v3 (Play CDN) → v4 preflight compatibility, kept deliberately tiny:
- * - v4 preflight leaves buttons at cursor:default (v3 set pointer), and the topbar
- *   dropdown uses bare <button>s that app.css does not style.
- * - v4 changed the placeholder default from gray-400 to currentColor/50%; the
- *   topbar search input relies on the old default. */
+ * v4 preflight leaves buttons at cursor:default (v3 set pointer). The
+ * placeholder colour now comes from iceberg.css (::placeholder → --faint). */
 button:not(:disabled),
 [role="button"]:not(:disabled) {
   cursor: pointer;
-}
-
-input::placeholder,
-textarea::placeholder {
-  color: #9ca3af; /* Tailwind v3 preflight default (gray-400) */
-  opacity: 1;
 }

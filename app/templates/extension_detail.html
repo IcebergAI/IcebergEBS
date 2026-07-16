@@ -2,19 +2,9 @@
 {% block title %}IcebergEBS — {{ ext.name }}{% endblock %}
 
 {% block content %}
-{% set risk_level = 'low' %}
-{% if ext.risk_score is not none %}
-  {% if ext.risk_score >= 75 %}{% set risk_level = 'critical' %}
-  {% elif ext.risk_score >= 50 %}{% set risk_level = 'high' %}
-  {% elif ext.risk_score >= 25 %}{% set risk_level = 'medium' %}
-  {% else %}{% set risk_level = 'low' %}{% endif %}
-{% endif %}
-
-{% set gauge_color =
-    'oklch(0.60 0.18 22)' if risk_level == 'critical' else
-    'oklch(0.68 0.16 50)' if risk_level == 'high' else
-    'oklch(0.74 0.14 85)' if risk_level == 'medium' else
-    'oklch(0.66 0.14 155)' %}
+{# risk_band comes from the route (app/scoring.risk_level — the single home of
+   the 75/50/25 thresholds); colours come from app.css's --risk-* tokens via the
+   .stroke-*/.fill-*/.badge-* classes, so they follow the theme (#105). #}
 
 {# Page state for the extDetail component (static/js/pages/extension-detail.js) —
    a JSON island, never x-data attribute args (CSP build, #106). #}
@@ -59,13 +49,13 @@
       {% if ext.risk_score is not none %}
       <svg width="130" height="130" viewBox="0 0 130 130">
         <circle cx="65" cy="65" r="56" class="track" stroke-width="10" fill="none"/>
-        <circle cx="65" cy="65" r="56" stroke="{{ gauge_color }}" stroke-width="10" fill="none"
+        <circle cx="65" cy="65" r="56" class="stroke-{{ risk_band }}" stroke-width="10" fill="none"
                 stroke-linecap="round" stroke-dasharray="351.86"
                 stroke-dashoffset="{{ (351.86 * (100 - ext.risk_score) / 100)|round(2) }}"/>
       </svg>
       <div class="absolute inset-0 flex flex-col items-center justify-center">
         <div class="num mono">{{ ext.risk_score }}</div>
-        <span class="badge badge-{{ risk_level }}">{{ risk_level }}</span>
+        <span class="badge badge-{{ risk_band }}">{{ risk_band }}</span>
       </div>
       {% else %}
       <svg width="130" height="130" viewBox="0 0 130 130">
@@ -158,23 +148,18 @@
         {% for label, value, max, note in rows %}
         {% set pct = (value / max * 100)|round(1) %}
         {% set band = 'low' if pct < 25 else ('medium' if pct < 50 else ('high' if pct < 75 else 'critical')) %}
-        {% set band_color =
-            'oklch(0.60 0.18 22)' if band == 'critical' else
-            'oklch(0.68 0.16 50)' if band == 'high' else
-            'oklch(0.74 0.14 85)' if band == 'medium' else
-            'oklch(0.66 0.14 155)' %}
         <div class="flex items-center gap-3 py-2.5" style="border-bottom: 1px solid var(--ink-2)">
           <div class="w-32 text-[13px]" style="color:var(--ink-7)">{{ label }}</div>
-          <div class="flex-1 score-bar-track"><div class="score-bar-fill" style="width: {{ pct }}%; background: {{ band_color }}"></div></div>
+          <div class="flex-1 score-bar-track"><div class="score-bar-fill fill-{{ band }}" style="width: {{ pct }}%"></div></div>
           <div class="mono text-[12.5px] tabular-nums w-16 text-right"><span style="color:var(--ink-8);font-weight:500">{{ value }}</span><span style="color:var(--ink-5)"> / {{ max }}</span></div>
           <div class="hidden md:block w-52 text-[11.5px]" style="color:var(--ink-5)">{{ note }}</div>
         </div>
         {% endfor %}
         <div class="flex items-center gap-3 pt-3 mt-1" style="border-top: 1px solid var(--ink-3)">
           <div class="w-32 text-[13px] font-semibold" style="color:var(--ink-8)">Total</div>
-          <div class="flex-1 score-bar-track"><div class="score-bar-fill" style="width: {{ risk_detail.total }}%; background: {{ gauge_color }}"></div></div>
+          <div class="flex-1 score-bar-track"><div class="score-bar-fill fill-{{ risk_band }}" style="width: {{ risk_detail.total }}%"></div></div>
           <div class="mono text-[13px] font-semibold tabular-nums w-16 text-right" style="color:var(--ink-8)">{{ risk_detail.total }} / 100</div>
-          <div class="hidden md:block w-52"><span class="badge badge-{{ risk_level }}">{{ risk_level }} risk</span></div>
+          <div class="hidden md:block w-52"><span class="badge badge-{{ risk_band }}">{{ risk_band }} risk</span></div>
         </div>
       </div>
     </div>

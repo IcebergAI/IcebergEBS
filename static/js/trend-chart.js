@@ -23,11 +23,16 @@
    ───────────────────────────────────────────────────────────── */
 
 (function () {
+  // Band colours come from app.css's --risk-* tokens (#105) so the SVG follows
+  // the light/dark theme — never hard-code an oklch literal here. The 25/50/75
+  // cut points mirror app/scoring.risk_level (the single home of the score
+  // thresholds); the chart re-renders on theme change via the observer below.
+  function riskToken(band) {
+    return getComputedStyle(document.documentElement).getPropertyValue('--risk-' + band).trim();
+  }
+
   function bandColor(pct) {
-    return pct >= 75 ? 'oklch(0.60 0.18 22)'
-      : pct >= 50 ? 'oklch(0.68 0.16 50)'
-      : pct >= 25 ? 'oklch(0.74 0.14 85)'
-      : 'oklch(0.66 0.14 155)';
+    return riskToken(pct >= 75 ? 'critical' : pct >= 50 ? 'high' : pct >= 25 ? 'medium' : 'low');
   }
 
   function renderTrend(container, data, opts) {
@@ -47,10 +52,10 @@
     const stroke = bandColor(cur);
 
     const bands = [
-      { from: 0, to: 25, c: 'oklch(0.66 0.14 155)' },
-      { from: 25, to: 50, c: 'oklch(0.74 0.14 85)' },
-      { from: 50, to: 75, c: 'oklch(0.68 0.16 50)' },
-      { from: 75, to: 100, c: 'oklch(0.60 0.18 22)' },
+      { from: 0, to: 25, c: riskToken('low') },
+      { from: 25, to: 50, c: riskToken('medium') },
+      { from: 50, to: 75, c: riskToken('high') },
+      { from: 75, to: 100, c: riskToken('critical') },
     ].map(b => {
       const y1 = y(b.to), y2 = y(b.from);
       return '<rect class="band" x="' + padL + '" y="' + y1.toFixed(1) + '" width="' + plotW + '" height="' + (y2 - y1).toFixed(1) + '" fill="' + b.c + '"></rect>';
@@ -86,7 +91,16 @@
     try { data = JSON.parse(island.textContent || '[]'); } catch (e) { return; }
     const full = document.getElementById('risk-trend');
     const mini = document.getElementById('risk-trend-mini');
-    if (full) renderTrend(full, data, { height: 220, axis: true });
-    if (mini) renderTrend(mini, data, { height: 90, axis: false });
+    function render() {
+      if (full) renderTrend(full, data, { height: 220, axis: true });
+      if (mini) renderTrend(mini, data, { height: 90, axis: false });
+    }
+    render();
+    // The SVG bakes resolved token values into fill/stroke attributes, so
+    // re-render when the theme picker flips html[data-theme].
+    new MutationObserver(render).observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ['data-theme'],
+    });
   });
 })();

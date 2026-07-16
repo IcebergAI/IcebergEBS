@@ -40,7 +40,7 @@ function ebsResolveTheme(theme) {
 /* exported ebsApplyTheme */
 function ebsApplyTheme(theme) {
   const resolved = ebsResolveTheme(theme);
-  const bg = resolved === 'dark' ? 'oklch(0.13 0.008 240)' : 'oklch(0.99 0.003 240)';
+  const bg = resolved === 'dark' ? 'oklch(0.185 0.02 256)' : 'oklch(0.984 0.006 240)';
   document.documentElement.setAttribute('data-theme', resolved);
   document.documentElement.style.backgroundColor = bg;
   document.documentElement.style.colorScheme = resolved;
