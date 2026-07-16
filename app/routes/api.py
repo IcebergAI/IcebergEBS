@@ -563,6 +563,23 @@ EXPORT_FIELDS = [
 ]
 
 
+# Leading characters a spreadsheet (Excel/LibreOffice/Sheets) treats as the start of a
+# formula. Extension name/publisher are attacker-controlled (scraped from the store, and
+# this tool exists to track *suspicious* extensions), and the analyst opens the export in
+# Excel — so a cell like `=HYPERLINK(...)` or `=cmd|'/c ...'!A1` would execute on open.
+_CSV_FORMULA_PREFIXES = ("=", "+", "-", "@", "\t", "\r")
+
+
+def _csv_safe(value):
+    """Prefix a formula-triggering leading character with a single quote so the cell is
+    treated as text, not a formula — the OWASP CSV-injection mitigation (#147). Applied on
+    the CSV path only (JSON export is not opened as a spreadsheet); non-str cells pass
+    through untouched."""
+    if isinstance(value, str) and value.startswith(_CSV_FORMULA_PREFIXES):
+        return "'" + value
+    return value
+
+
 def _export_row(ext: Extension) -> dict:
     perms = ext.permissions_list()
     return {
@@ -607,7 +624,7 @@ async def export_extensions(
     buf = io.StringIO()
     writer = csv.DictWriter(buf, fieldnames=EXPORT_FIELDS, extrasaction="ignore")
     writer.writeheader()
-    writer.writerows(rows)
+    writer.writerows({k: _csv_safe(v) for k, v in row.items()} for row in rows)
     return Response(
         content=buf.getvalue(),
         media_type="text/csv",
