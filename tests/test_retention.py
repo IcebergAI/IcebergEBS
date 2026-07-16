@@ -80,3 +80,25 @@ async def test_scheduler_registers_prune_job_only_when_enabled(monkeypatch):
         assert sched.get_job("retention_prune") is not None
     finally:
         await client.aclose()
+
+
+async def test_scheduler_prune_first_fire_is_at_startup_not_in_24h(monkeypatch):
+    """#145: the prune job's first fire must be at startup, not +24h — otherwise a
+    deployment that restarts more often than daily would never prune despite retention
+    being enabled."""
+    import httpx
+
+    from app import scheduler as scheduler_mod
+    from app.config import settings
+
+    client = httpx.AsyncClient()
+    try:
+        monkeypatch.setattr(settings, "retention_days", 30)
+        sched = scheduler_mod.create_scheduler(client)
+        job = sched.get_job("retention_prune")
+        assert job is not None
+        # next_run_time is set (not the interval trigger's default start+24h) and is at/near now.
+        assert isinstance(job.next_run_time, datetime)
+        assert job.next_run_time <= datetime.now(timezone.utc) + timedelta(minutes=1)
+    finally:
+        await client.aclose()

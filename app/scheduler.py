@@ -1,6 +1,7 @@
 import asyncio
 import enum
 import logging
+from datetime import datetime, timezone
 
 import httpx
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -204,5 +205,11 @@ def create_scheduler(client: httpx.AsyncClient) -> AsyncIOScheduler:
             hours=24,
             id="retention_prune",
             replace_existing=True,
+            # Run once at startup, then daily. An interval trigger's first fire is otherwise
+            # start+24h with no next_run_time, so a deployment that restarts more often than
+            # daily (crash / OOM / redeploy) would never prune despite retention being enabled
+            # (#145). This fires on the scheduler executor after startup, so it does not block
+            # the server from binding / answering probes (cf. #155).
+            next_run_time=datetime.now(timezone.utc),
         )
     return scheduler

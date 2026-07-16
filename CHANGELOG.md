@@ -100,6 +100,12 @@ release to diff against.
 
 ### Fixed
 
+- **Retention pruning now runs at startup**, then daily — previously the job's first fire was
+  scheduled at process-start + 24h, so a deployment that restarts more often than daily
+  (crash / OOM / redeploy) would **never** prune despite `ICEBERG_EBS_RETENTION_DAYS` being set,
+  and `FetchLog` / `InstallCountHistory` / `AlertLog` grew unboundedly. The interval job now
+  carries `next_run_time=now`; it fires on the scheduler executor after startup, so it doesn't
+  delay the server binding (#145).
 - A store becoming unreachable during an **interactive** add or refresh
   (`POST /api/extensions`, `…/{id}/refresh`) no longer surfaces a raw 500 with no record: a
   raw `httpx.TransportError` (retries exhausted — connect refused / timeout) is now handled
