@@ -97,6 +97,10 @@ release to diff against.
   extension's entire history — the sudden-drop scoring check only needs the previous reading, so the
   old full-table scan grew unboundedly (retention is disabled by default) on every refresh of every
   watchlist extension (#146).
+- The shared **`get_alert_log`** query/serialization helper moved out of the `routes/alerts.py`
+  HTTP-route module into a neutral `app/alert_queries.py`, so the dashboard (`routes/ui.py`) no
+  longer reaches cross-module into a route module for it. Pure code motion, no behaviour change —
+  mirrors how the extension-query layer was pulled into `app/extension_queries.py` (#149).
 
 ### Fixed
 

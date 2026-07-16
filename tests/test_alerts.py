@@ -8,12 +8,12 @@ import respx
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
+from app.alert_queries import get_alert_log
 from app.config import settings
 from app.fetchers.base import ExtensionMetadata
 from app.main import app as fastapi_app
 from app.models import AlertDestination, AlertLog, AlertRule, Extension
 from app.notifications import ChangeEvent, build_alert_payload, detect_changes, fire_alerts
-from app.routes.alerts import get_alert_log
 from app.services import fetch_and_store, fire_pending_alerts
 from app.webhooks import WebhookValidationError, send_webhook
 
