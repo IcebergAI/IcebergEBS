@@ -173,7 +173,7 @@
             <td class="mono text-[12px]" style="color:var(--ink-5);max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" x-text="d.target"></td>
             <td>
               <button class="badge" @click="toggleDest(d)"
-                      :style="d.enabled ? 'background:var(--risk-low-bg);color:oklch(0.32 0.10 155);border-color:color-mix(in oklch, var(--risk-low) 25%, transparent)' : 'background:var(--ink-1);color:var(--ink-5);border-color:var(--ink-3)'"
+                      :style="d.enabled ? 'background:var(--risk-low-bg);color:var(--badge-low-color);border-color:color-mix(in oklch, var(--risk-low) 25%, transparent)' : 'background:var(--ink-1);color:var(--ink-5);border-color:var(--ink-3)'"
                       x-text="d.enabled ? '● enabled' : '○ disabled'"></button>
             </td>
             <td>

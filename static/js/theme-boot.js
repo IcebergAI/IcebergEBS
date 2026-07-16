@@ -32,9 +32,9 @@
   const theme = VALID.includes(stored) ? stored : (VALID.includes(cookie) ? cookie : 'system');
   const prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
   const resolved = theme === 'system' ? (prefersDark ? 'dark' : 'light') : theme;
-  // Page background (--ink-0) inlined so the pre-stylesheet frame is already the
-  // right colour — keep in sync with static/css/app.css.
-  const bg = resolved === 'dark' ? 'oklch(0.13 0.008 240)' : 'oklch(0.99 0.003 240)';
+  // Page background (--paper) inlined so the pre-stylesheet frame is already the
+  // right colour — keep in sync with the house tokens in static/css/iceberg.css.
+  const bg = resolved === 'dark' ? 'oklch(0.185 0.02 256)' : 'oklch(0.984 0.006 240)';
 
   document.documentElement.setAttribute('data-theme', resolved);
   document.documentElement.style.backgroundColor = bg;

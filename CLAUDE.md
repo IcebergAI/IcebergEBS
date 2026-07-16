@@ -24,10 +24,10 @@ App will always run on Python 3.14 or later.
 `pyproject.toml` is the **only** dependency manifest — there is no `requirements.txt`. Runtime packages go in `[project.dependencies]`; test + static-analysis tooling goes in the **`[dependency-groups] dev`** group (PEP 735). After changing either, run **`uv lock`** and commit the updated `uv.lock`: CI installs with `uv sync --locked`, which fails on a stale lock, and the `lint` job runs an explicit `uv lock --check`. IcebergEBS is a **virtual project** (`[tool.uv] package = false`) — it is deployed as source + uvicorn, never built into a wheel, which is what lets the Dockerfile install the dependency layer from `pyproject.toml` + `uv.lock` alone. The production image builds its venv with `uv sync --frozen --no-dev`, so the `dev` group **cannot** reach the container: anything a runtime import needs must be a real runtime dependency, not a dev one.
 
 ### UI / Front end
-- AlpineJS (vendored + version-pinned at `static/js/vendor/`, #85 — no CDN)
+- AlpineJS (vendored + version-pinned `@alpinejs/csp` build at `static/js/vendor/`, #85/#106 — no CDN, no eval)
 - Tailwind CSS v4 (standalone CLI via `pytailwindcss`; `static/css/input.css` → gitignored `static/css/output.css`, built by `make css` / the Dockerfile `tailwind-builder` stage)
-- IBM Plex Sans + IBM Plex Mono (self-hosted woff2 in `static/fonts/` + `static/css/fonts.css`)
-- Custom light/dark design system using CSS custom properties (`static/css/app.css`)
+- **IcebergAI house design system** (#105): shared oklch token/component sheet `static/css/iceberg.css` (fixed glacial-cyan accent, dark `.rail` / light `.workspace` shell, `html[data-theme]` light/dark) + the app-specific layer `static/css/app.css` (risk palette + components)
+- Archivo / JetBrains Mono / Spectral (self-hosted woff2 in `static/fonts/` + `static/css/fonts.css` — the family font set)
 
 
 ## Architecture
@@ -121,7 +121,7 @@ ICEBERG_EBS_TEST_DATABASE_URL=postgresql+asyncpg://iceberg_ebs:iceberg_ebs@local
 - Scoring functions handle naive datetimes from external sources by attaching UTC tzinfo before comparison
 
 ## Styling, Theming and Design
-The design system (system/light/dark theming via `theme-boot.js`, the self-hosted Tailwind v4 build + component classes, the strict `script-src 'self'` CSP in `caddy/headers.caddy` — no inline scripts, `@alpinejs/csp` build — and the `Alpine.data` registry + JSON-island pattern) lives in the path-scoped rule `.claude/rules/frontend.md` (auto-loads when editing `static/**` or `app/templates/**`).
+The **IcebergAI house design system** (#105 — `iceberg.css` tokens/shell + `app.css` risk layer, system/light/dark theming via `theme-boot.js`, Archivo/JetBrains Mono/Spectral, IcebergAI branding, the strict `script-src 'self'` CSP in `caddy/headers.caddy` — no inline scripts, `@alpinejs/csp` build — and the `Alpine.data` registry + JSON-island pattern) lives in the path-scoped rule `.claude/rules/frontend.md` (auto-loads when editing `static/**` or `app/templates/**`). Risk-band thresholds live only in `app/scoring.py:risk_level`; band colours live only in `app.css`'s `--risk-*` tokens.
 
 ## Deployment
 

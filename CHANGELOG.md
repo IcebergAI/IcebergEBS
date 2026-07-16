@@ -58,6 +58,18 @@ release to diff against.
 
 ### Changed
 
+- **Adopted the IcebergAI house design system** (#105): the shared family token sheet
+  (`static/css/iceberg.css` — cool blue-grey oklch palette, fixed glacial-cyan accent, dark
+  `.rail` / light `.workspace` / `.brandbar` shell) replaces the bespoke "Refined Operator"
+  theme; `app.css` shrank to the app-specific layer (risk palette + components) with the old
+  `--ink-N` scale aliased onto house tokens. Fonts moved from IBM Plex to the family set —
+  **Archivo** (UI), **JetBrains Mono** (data/labels), **Spectral** (prose), self-hosted. The
+  Aperture mark is retired for the **IcebergAI** brand mark (rail lockup, login, favicons),
+  and the login page became the house centered auth-card. **Risk-band colours are
+  consolidated**: the 75/50/25 thresholds live only in `app/scoring.py:risk_level` (the
+  server passes `risk_band` to the UI) and the severity colours live only in `app.css`'s
+  `--risk-*` tokens — the duplicated oklch literals in the dashboard JS, detail-page Jinja
+  and `trend-chart.js` are deleted, and the trend chart now follows the light/dark theme.
 - **Strict same-origin Content-Security-Policy** (#106): `script-src` is now exactly `'self'` —
   no CDN hosts, no `unsafe-eval`, and **no inline scripts anywhere**. Alpine moved to the
   **`@alpinejs/csp` build** with every component registered via `Alpine.data()` from

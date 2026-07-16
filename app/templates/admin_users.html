@@ -57,7 +57,7 @@
       <tr>
         <td>
           <div class="flex items-center gap-2.5">
-            <div class="avatar" :style="u.is_admin ? '' : 'background: oklch(0.6 0.12 200)'" x-text="u.username[0].toUpperCase()"></div>
+            <div class="avatar" :style="u.is_admin ? '' : 'background: var(--muted)'" x-text="u.username[0].toUpperCase()"></div>
             <div>
               <div class="font-medium" style="color:var(--ink-8)"><span x-text="u.username"></span>
                 <span x-show="u.id === currentUserId" class="text-[11px] font-normal" style="color:var(--ink-5)">(you)</span>

@@ -11,16 +11,17 @@
      re-resolves a 'system' preference against the current OS setting. #}
   <script src="/static/js/theme-boot.js"></script>
 
-  <link rel="icon" type="image/svg+xml" href="/static/img/favicon.svg">
+  <link rel="icon" type="image/svg+xml" href="/static/img/icebergai-icon.svg">
   <link rel="icon" type="image/png" sizes="32x32" href="/static/img/favicon-32.png">
   <link rel="apple-touch-icon" href="/static/img/apple-touch-icon.png">
 
   {# All assets are self-hosted (#85) — no third-party CDN reaches the page.
      output.css is the Tailwind v4 build (see static/css/input.css / `make css`);
-     it must come before app.css, which layers over the utility sheet. #}
+     since #105 it bundles the house token sheet (iceberg.css) and the
+     app-specific layer (app.css) via @import, so it is the only stylesheet
+     besides the fonts. #}
   <link rel="stylesheet" href="/static/css/fonts.css">
   <link rel="stylesheet" href="/static/css/output.css">
-  <link rel="stylesheet" href="/static/css/app.css">
 
   {# Alpine (@alpinejs/csp build) MUST be the last defer script: deferred scripts
      execute in document order, and every Alpine.data registry — app.js and the
@@ -34,27 +35,22 @@
 <body class="font-sans">
 
 {% block shell %}
-<div class="page-shell">
+<div class="brandbar"></div>
+<div class="app">
 
-  {# ── SIDEBAR ─────────────────────────────────────────── #}
+  {# ── RAIL (dark chrome in both themes — --rail* tokens only) ── #}
   <aside class="rail">
-    <a href="/" class="flex flex-col items-center gap-2 px-1 pt-1 text-center" style="text-decoration:none">
-      <span class="brand-tile brand-tile--rail">
-        <svg width="51" height="51" viewBox="0 0 240 240" fill="none" aria-hidden="true">
-          <g stroke="currentColor" stroke-width="13" stroke-linecap="round">
-            <circle cx="120" cy="120" r="60" stroke-dasharray="300 77" transform="rotate(-38 120 120)"/>
-            <circle cx="120" cy="120" r="38" stroke-dasharray="150 89" transform="rotate(132 120 120)"/>
-          </g>
-          <circle cx="120" cy="120" r="13" fill="currentColor"/>
-        </svg>
-      </span>
-      <span>
-        <span class="block text-[14.5px] font-semibold tracking-tight" style="color:var(--ink-8)">IcebergEBS</span>
-        <span class="block text-[10.5px]" style="color:var(--ink-5)">Paranoid about extensions</span>
-      </span>
+    <a href="/" class="rail-brand">
+      <img src="/static/img/icebergai-mark.svg" class="rail-mark" width="30" height="30" alt="IcebergAI">
+      <div>
+        <div class="rail-wordmark">Iceberg<b>EBS</b></div>
+        <div class="rail-kicker">Paranoid about extensions</div>
+      </div>
     </a>
 
-    <nav class="flex flex-col gap-0.5">
+    <nav class="rail-nav">
+      <div class="rail-group">
+      <div class="rail-group-label">Workspace</div>
       <a href="/" class="rail-link {% block nav_dashboard %}{% endblock %}">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/></svg>
         Dashboard
@@ -63,11 +59,11 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 8v8M8 12h8"/></svg>
         Add extension
       </a>
-    </nav>
+      </div>
 
-    {% if username %}
-    <div class="label-cap px-1 mt-1">Account</div>
-    <nav class="flex flex-col gap-0.5 -mt-3">
+      {% if username %}
+      <div class="rail-group">
+      <div class="rail-group-label">Account</div>
       <a href="/account" class="rail-link {% block nav_account %}{% endblock %}">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12a8 8 0 1 0 16 0 8 8 0 0 0-16 0Z"/><path d="M12 7v5l3 2"/></svg>
         Alerts &amp; webhooks
@@ -86,16 +82,19 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 1 1 3.5 2.3c-.8.4-1 .9-1 1.7M12 17h.01"/></svg>
         Help
       </a>
+      </div>
+      {% endif %}
     </nav>
-    {% endif %}
 
-    {% block rail_footer %}
-      <div class="rail-version" title="Running build">{{ app_version | default('', true) }}</div>
-    {% endblock %}
+    <div class="rail-foot">
+      {% block rail_footer %}
+        <div class="rail-version" title="Running build">{{ app_version | default('', true) }}</div>
+      {% endblock %}
+    </div>
   </aside>
 
   {# ── MAIN COLUMN ────────────────────────────────────── #}
-  <div class="flex flex-col min-w-0">
+  <div class="flex-1 flex flex-col min-w-0">
 
     {% if username %}
     <header class="topbar">
@@ -115,7 +114,7 @@
         </button>
         <div x-show="open" @click.outside="open=false" x-cloak
              class="absolute right-7 top-12 surface py-1.5"
-             style="min-width:200px;box-shadow:0 8px 24px oklch(0.05 0.01 240 / 0.25);z-index:20">
+             style="min-width:200px;box-shadow:var(--shadow-lift);z-index:20">
           <a href="/account" class="block px-3 py-2 text-[13px] hover:bg-[var(--ink-1)]" style="color:var(--ink-7)" @click="open=false">Alerts &amp; webhooks</a>
           <a href="/account/keys" class="block px-3 py-2 text-[13px] hover:bg-[var(--ink-1)]" style="color:var(--ink-7)" @click="open=false">API keys</a>
           <a href="/account/password" class="block px-3 py-2 text-[13px] hover:bg-[var(--ink-1)]" style="color:var(--ink-7)" @click="open=false">Change password</a>
@@ -137,11 +136,13 @@
     </header>
     {% endif %}
 
-    <main class="content flex-1">
-      {% if flash %}
-        <div class="flash">{{ flash }}</div>
-      {% endif %}
-      {% block content %}{% endblock %}
+    <main class="canvas flex-1 min-w-0">
+      <div class="workspace">
+        {% if flash %}
+          <div class="flash">{{ flash }}</div>
+        {% endif %}
+        {% block content %}{% endblock %}
+      </div>
     </main>
   </div>
 </div>

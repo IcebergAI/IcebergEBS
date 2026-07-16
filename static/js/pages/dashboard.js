@@ -1,27 +1,12 @@
 // Dashboard page component (#106). Extensions come from the #dashboard-data JSON
-// island; formatting that used to live in directive expressions (`??`, `new
-// Date(...)`) is methods here because the Alpine CSP build's expression parser
-// doesn't support those forms.
+// island. Each row's `risk_band` is computed SERVER-side from scoring.risk_level
+// (the single home of the 75/50/25 thresholds) and maps to the .risk-*/.fill-*/
+// .badge-* classes here — the colours live only in app.css's --risk-* tokens
+// (#105), so they follow the light/dark theme.
 
 document.addEventListener('alpine:init', () => {
   Alpine.data('dashboardData', () => ({
     extensions: readJSON('dashboard-data') || [],
-    riskLevel(score) {
-      if (score == null) return 'unknown';
-      if (score >= 75) return 'critical';
-      if (score >= 50) return 'high';
-      if (score >= 25) return 'medium';
-      return 'low';
-    },
-    scoreColor(score) {
-      return {
-        critical: 'oklch(0.60 0.18 22)',
-        high:     'oklch(0.68 0.16 50)',
-        medium:   'oklch(0.74 0.14 85)',
-        low:      'oklch(0.66 0.14 155)',
-        unknown:  'oklch(0.58 0.012 245)',
-      }[this.riskLevel(score)];
-    },
     scoreText(ext) {
       return ext.risk_score == null ? '—' : String(ext.risk_score);
     },
@@ -30,6 +15,9 @@ document.addEventListener('alpine:init', () => {
     },
     updatedText(ext) {
       return ext.last_updated ? new Date(ext.last_updated).toLocaleDateString() : '—';
+    },
+    barStyle(ext) {
+      return 'width:' + (ext.risk_score || 0) + '%';
     },
     openExt(ext) {
       window.location = '/extensions/' + ext.id;

@@ -27,6 +27,7 @@ from app.findings_view import group_detection_findings
 from app.inspector import PackageAnalysis
 from app.models import AlertDestination, AlertRule, ApiKey, Extension, FetchLog, InstallObservation, User
 from app.ratelimit import login_limiter
+from app.scoring import risk_level
 from app.threat_intel import build_threat_intel_indicators
 from app.version import get_version
 
@@ -169,6 +170,10 @@ def _ext_to_dict(e: Extension) -> dict:
         "install_count": e.install_count,
         "last_updated": e.last_updated.isoformat() if e.last_updated else None,
         "risk_score": e.risk_score,
+        # Band computed server-side from scoring.risk_level — the single home of
+        # the 75/50/25 thresholds. The dashboard JS maps band → CSS class; the
+        # colours live only in app.css's --risk-* tokens (#105).
+        "risk_band": risk_level(e.risk_score) or "unknown",
         "watchlist": e.watchlist,
     }
 
@@ -511,11 +516,20 @@ async def extension_detail(
     threat_intel_referenced_indicators = [
         indicator for indicator in threat_intel_indicators if indicator.get("section") == "referenced"
     ]
-    score_history = [
-        {"d": log.fetched_at.strftime("%b %d"), "s": log.risk_score_after}
-        for log in reversed(fetch_logs)
-        if log.success and log.risk_score_after is not None
-    ]
+    score_history = {
+        "points": [
+            {"d": log.fetched_at.strftime("%b %d"), "s": log.risk_score_after}
+            for log in reversed(fetch_logs)
+            if log.success and log.risk_score_after is not None
+        ],
+        # Band geometry for the trend chart, derived from RISK_BANDS (which
+        # mirrors scoring.risk_level — the single home of the thresholds). The
+        # chart colours its line/dots/shading from this payload and must never
+        # re-inline the cut points in JS (#105 review).
+        "bands": [
+            {"band": band, "from": low, "to": 100 if high is None else high} for band, (low, high) in RISK_BANDS.items()
+        ],
+    }
 
     # Org footprint (#29): SOAR-reported installs grouped by department. The
     # headline count reuses the cached install_footprint (distinct assets); the
@@ -540,6 +554,9 @@ async def extension_detail(
         "extension_detail.html",
         {
             "ext": ext,
+            # Band from scoring.risk_level (the single home of the thresholds);
+            # the template maps it to --risk-* token classes (#105).
+            "risk_band": risk_level(ext.risk_score) or "unknown",
             "footprint_assets": footprint_assets,
             "footprint_departments": footprint_departments,
             "exposure": exposure,

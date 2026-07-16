@@ -1,219 +1,134 @@
 /* ─────────────────────────────────────────────────────────────
-   IcebergEBS · Refined Operator theme
-   Modern, light/dark, professional. Designed to pair with Tailwind
-   utilities, so this file only carries tokens + components that
-   are awkward to express as utility classes.
+   IcebergEBS · app-specific component layer (#105)
+
+   The shared house design system (tokens, shell, core components) lives in
+   static/css/iceberg.css; this file carries only what is specific to
+   IcebergEBS — the risk palette and its components (badges, gauge, score bar,
+   findings, permission tags), the topbar search, and re-implementations of the
+   app's existing component classes on the house tokens (deep_thought's
+   "compatibility layer" approach), so templates keep their class names.
+
+   Everything here MUST be built from iceberg.css tokens — never hard-code a
+   neutral colour. The only non-neutral literals allowed are the --risk-*
+   definitions below (the app's severity palette, harmonised with the house
+   --c-* semantics).
    ───────────────────────────────────────────────────────────── */
 
+/* ── Legacy token bridge ──────────────────────────────────────
+   The templates still carry inline style="…var(--ink-N)…" attributes from the
+   pre-house design (~230 sites). Alias the old scale onto house tokens so every
+   one of them resolves to the house palette; the long-tail sweep to real token
+   names (and this bridge's removal) is tracked as a follow-up issue. */
+:root, html[data-theme="dark"] {
+  --ink-0: var(--paper);
+  --ink-1: var(--surface-2);
+  --ink-2: var(--line);
+  --ink-3: var(--line);
+  --ink-4: var(--line-strong);
+  --ink-5: var(--muted);
+  --ink-6: var(--ink-soft);
+  --ink-7: var(--ink-soft);
+  --ink-8: var(--ink);
+  --accent-bg: var(--accent-soft);
+}
+
+/* ── Risk palette (app-specific; house-harmonised) ────────────
+   critical/high anchor on --c-crit's hue range, medium on --c-warn, low on
+   --c-ok. The 75/50/25 score→band thresholds live ONLY in app/scoring.py —
+   consumers get a band name from the server and map it to these tokens. */
 :root {
-  color-scheme: light;
+  --risk-low:         oklch(0.60 0.13 155);
+  --risk-low-bg:      oklch(0.955 0.035 155);
+  --risk-medium:      oklch(0.70 0.15 70);
+  --risk-medium-bg:   oklch(0.96 0.04 70);
+  --risk-high:        oklch(0.62 0.17 50);
+  --risk-high-bg:     oklch(0.955 0.04 50);
+  --risk-critical:    oklch(0.55 0.20 25);
+  --risk-critical-bg: oklch(0.955 0.035 25);
+  --risk-unknown:     var(--faint);
 
-  /* Neutrals — cool slate */
-  --ink-0:   oklch(0.99  0.003 240);   /* page                  */
-  --ink-1:   oklch(0.975 0.004 240);   /* soft surface          */
-  --ink-2:   oklch(0.955 0.006 240);   /* hover, rail bg        */
-  --ink-3:   oklch(0.92  0.008 240);   /* border                */
-  --ink-4:   oklch(0.84  0.010 240);   /* strong divider        */
-  --ink-5:   oklch(0.58  0.012 245);   /* meta text             */
-  --ink-6:   oklch(0.42  0.014 245);   /* body                  */
-  --ink-7:   oklch(0.28  0.016 245);   /* heading               */
-  --ink-8:   oklch(0.18  0.020 245);   /* ink                   */
+  --badge-low-color:      oklch(0.36 0.10 155);
+  --badge-medium-color:   oklch(0.42 0.11 70);
+  --badge-high-color:     oklch(0.40 0.13 50);
+  --badge-critical-color: oklch(0.38 0.15 25);
+  --perm-critical-color:  oklch(0.38 0.15 25);
+  --perm-high-color:      oklch(0.40 0.13 50);
+  --perm-medium-color:    oklch(0.42 0.11 70);
+}
+html[data-theme="dark"] {
+  --risk-low:         oklch(0.74 0.13 158);
+  --risk-low-bg:      oklch(0.29 0.05 155);
+  --risk-medium:      oklch(0.79 0.14 72);
+  --risk-medium-bg:   oklch(0.30 0.05 70);
+  --risk-high:        oklch(0.74 0.16 50);
+  --risk-high-bg:     oklch(0.30 0.05 50);
+  --risk-critical:    oklch(0.70 0.18 25);
+  --risk-critical-bg: oklch(0.30 0.06 25);
 
-  /* Flat surface (replaces hardcoded `white`) */
-  --surface: white;
-
-  /* Accent — cobalt indigo */
-  --accent:    oklch(0.55 0.18 265);
-  --accent-2:  oklch(0.62 0.16 265);
-  --accent-bg: oklch(0.965 0.025 265);
-
-  /* Semantic risk — equal chroma, varying hue */
-  --risk-low:         oklch(0.66 0.14 155);
-  --risk-low-bg:      oklch(0.965 0.04 155);
-  --risk-medium:      oklch(0.74 0.14 85);
-  --risk-medium-bg:   oklch(0.97  0.05 85);
-  --risk-high:        oklch(0.68 0.16 50);
-  --risk-high-bg:     oklch(0.97  0.05 50);
-  --risk-critical:    oklch(0.60 0.18 22);
-  --risk-critical-bg: oklch(0.97  0.04 22);
-
-  /* Badge / perm text colours (need inverting in dark mode) */
-  --badge-low-color:      oklch(0.32 0.10 155);
-  --badge-medium-color:   oklch(0.38 0.10 85);
-  --badge-high-color:     oklch(0.36 0.13 50);
-  --badge-critical-color: oklch(0.36 0.14 22);
-  --perm-critical-color:  oklch(0.32 0.14 22);
-  --perm-high-color:      oklch(0.32 0.13 50);
-  --perm-medium-color:    oklch(0.34 0.10 85);
+  --badge-low-color:      oklch(0.82 0.11 158);
+  --badge-medium-color:   oklch(0.86 0.11 75);
+  --badge-high-color:     oklch(0.83 0.13 52);
+  --badge-critical-color: oklch(0.80 0.14 28);
+  --perm-critical-color:  oklch(0.80 0.14 28);
+  --perm-high-color:      oklch(0.83 0.13 52);
+  --perm-medium-color:    oklch(0.86 0.11 75);
 }
 
-/* ── Dark theme ────────────────────────────────────────────── */
-[data-theme="dark"] {
-  color-scheme: dark;
+/* Risk text / fill / stroke maps — the single home for band → colour. The JS
+   consumers (dashboard rows, trend chart) use these classes / read these
+   custom properties instead of hard-coding oklch literals. */
+.risk-low      { color: var(--risk-low); }
+.risk-medium   { color: var(--risk-medium); }
+.risk-high     { color: var(--risk-high); }
+.risk-critical { color: var(--risk-critical); }
+.risk-unknown  { color: var(--risk-unknown); }
+.fill-low      { background: var(--risk-low); }
+.fill-medium   { background: var(--risk-medium); }
+.fill-high     { background: var(--risk-high); }
+.fill-critical { background: var(--risk-critical); }
+.fill-unknown  { background: var(--risk-unknown); }
+.stroke-low      { stroke: var(--risk-low); }
+.stroke-medium   { stroke: var(--risk-medium); }
+.stroke-high     { stroke: var(--risk-high); }
+.stroke-critical { stroke: var(--risk-critical); }
 
-  --ink-0:   oklch(0.13 0.008 240);
-  --ink-1:   oklch(0.17 0.008 240);
-  --ink-2:   oklch(0.21 0.010 240);
-  --ink-3:   oklch(0.28 0.012 240);
-  --ink-4:   oklch(0.35 0.012 240);
-  --ink-5:   oklch(0.55 0.012 245);
-  --ink-6:   oklch(0.72 0.010 245);
-  --ink-7:   oklch(0.86 0.008 245);
-  --ink-8:   oklch(0.95 0.005 245);
-
-  --surface: oklch(0.20 0.009 240);
-
-  --accent:    oklch(0.68 0.18 265);
-  --accent-2:  oklch(0.75 0.16 265);
-  --accent-bg: oklch(0.22 0.05  265);
-
-  --risk-low-bg:      oklch(0.20 0.06 155);
-  --risk-medium-bg:   oklch(0.20 0.06 85);
-  --risk-high-bg:     oklch(0.20 0.06 50);
-  --risk-critical-bg: oklch(0.20 0.06 22);
-
-  --badge-low-color:      oklch(0.76 0.14 155);
-  --badge-medium-color:   oklch(0.80 0.14 85);
-  --badge-high-color:     oklch(0.76 0.16 50);
-  --badge-critical-color: oklch(0.74 0.18 22);
-  --perm-critical-color:  oklch(0.74 0.18 22);
-  --perm-high-color:      oklch(0.76 0.16 50);
-  --perm-medium-color:    oklch(0.80 0.14 85);
-}
-
-*, *::before, *::after { box-sizing: border-box; }
-
-html, body {
-  font-family: 'IBM Plex Sans', system-ui, sans-serif;
-  background: var(--ink-0);
-  color: var(--ink-7);
-  margin: 0;
-  padding: 0;
-  min-height: 100vh;
-  -webkit-font-smoothing: antialiased;
-}
-
-a { color: var(--accent); text-decoration: none; }
-a:hover { text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 2px; }
-
-[x-cloak] { display: none !important; }
-
-.mono { font-family: 'IBM Plex Mono', ui-monospace, monospace; }
-
-/* Bedrock typography helpers ----------------------------------- */
-.text-meta { font-size: 11.5px; color: var(--ink-5); }
+/* ── Typography helpers (compat names on house type) ──────── */
+.text-meta { font-size: 11.5px; color: var(--muted); }
 .label-cap {
+  font-family: var(--fs-mono);
   font-size: 10.5px;
-  font-weight: 500;
-  letter-spacing: 0.08em;
+  font-weight: 600;
+  letter-spacing: 0.12em;
   text-transform: uppercase;
-  color: var(--ink-5);
+  color: var(--muted);
 }
-.page-title    { font-size: 20px; font-weight: 600; color: var(--ink-8); letter-spacing: -0.01em; margin: 0; }
-.page-sub      { font-size: 13px; color: var(--ink-5); margin-top: 3px; }
-.section-title { font-size: 14px; font-weight: 600; color: var(--ink-8); margin: 0 0 12px; }
+.page-sub { font-size: 13px; color: var(--muted); margin-top: 3px; }
 
-/* ── Layout shell ─────────────────────────────────────────── */
-.page-shell { display: grid; grid-template-columns: 232px 1fr; min-height: 100vh; }
-.rail {
-  background: var(--ink-1);
-  border-right: 1px solid var(--ink-3);
-  padding: 18px 16px;
-  display: flex; flex-direction: column; gap: 18px;
-  position: sticky; top: 0;
-  height: 100vh;
-}
-.topbar {
-  height: 56px;
-  display: flex; align-items: center; justify-content: space-between;
-  padding: 0 28px;
-  border-bottom: 1px solid var(--ink-3);
-  background: var(--surface);
-  gap: 14px;
-  position: sticky; top: 0; z-index: 10;
-}
-.content    { padding: 28px; max-width: 1280px; }
+/* ── Surfaces (compat: .surface/.surface-soft ≙ house .card/.well) ── */
+.surface      { background: var(--surface);   border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); }
+.surface-soft { background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--radius); }
 
-/* Running build, pinned to the bottom of the flex rail */
-.rail-version {
-  margin-top: auto;
-  padding-top: 12px;
-  border-top: 1px solid var(--ink-3);
-  font-family: "IBM Plex Mono", ui-monospace, monospace;
-  font-size: 10.5px;
-  letter-spacing: 0.02em;
-  color: var(--ink-5);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-/* ── Sidebar nav links ────────────────────────────────────── */
-.rail-link {
-  display: flex; align-items: center; gap: 10px;
-  padding: 7px 10px;
-  border-radius: 7px;
-  font-size: 13.5px;
-  color: var(--ink-6);
-  font-weight: 500;
-  transition: background 0.12s, color 0.12s;
-}
-.rail-link:hover { background: var(--ink-2); color: var(--ink-8); text-decoration: none; }
-.rail-link.active {
-  background: var(--surface);
-  color: var(--ink-8);
-  box-shadow: 0 1px 0 var(--ink-3), 0 0 0 1px var(--ink-3) inset;
-}
-.rail-link svg { width: 16px; height: 16px; flex: none; opacity: 0.75; }
-.rail-link.active svg { opacity: 1; color: var(--accent); }
-
-/* ── Surfaces ─────────────────────────────────────────────── */
-.surface      { background: var(--surface); border: 1px solid var(--ink-3); border-radius: 10px; }
-.surface-soft { background: var(--ink-1);   border: 1px solid var(--ink-3); border-radius: 10px; }
-
-/* ── Buttons ──────────────────────────────────────────────── */
-.btn {
-  display: inline-flex; align-items: center; gap: 6px;
-  font-family: inherit;
-  font-size: 13px;
-  font-weight: 500;
-  line-height: 1;
-  padding: 8px 12px;
-  border-radius: 7px;
-  border: 1px solid transparent;
-  cursor: pointer;
-  transition: background 0.12s, border-color 0.12s, color 0.12s;
-  white-space: nowrap;
-}
+/* ── Buttons (compat variants on the house .btn base) ─────── */
 .btn:disabled { opacity: 0.5; cursor: not-allowed; }
-.btn-primary   { background: var(--ink-8); color: var(--ink-0); border-color: var(--ink-8); }
-.btn-primary:hover:not(:disabled)   { background: var(--ink-7); border-color: var(--ink-7); }
-.btn-secondary { background: var(--surface); color: var(--ink-7); border-color: var(--ink-3); }
-.btn-secondary:hover:not(:disabled) { background: var(--ink-1); border-color: var(--ink-4); }
-.btn-ghost     { background: transparent; color: var(--ink-6); border-color: transparent; }
-.btn-ghost:hover:not(:disabled)     { background: var(--ink-2); color: var(--ink-8); }
-.btn-danger    { background: var(--surface); color: var(--risk-critical); border-color: var(--ink-3); }
-.btn-danger:hover:not(:disabled)    { background: var(--risk-critical-bg); border-color: var(--risk-critical); }
-.btn-sm { font-size: 12px; padding: 5px 9px; }
+.btn-secondary { background: var(--surface); color: var(--ink); border-color: var(--line-strong); }
+.btn-secondary:hover:not(:disabled) { border-color: var(--accent-line); color: var(--accent-deep); }
+.btn-danger { background: var(--surface); color: var(--risk-critical); border-color: var(--line-strong); }
+.btn-danger:hover:not(:disabled) { background: var(--risk-critical-bg); border-color: var(--risk-critical); }
+
+/* ── Rail additions (rail-scoped — --rail* tokens only) ───── */
+/* Nav blocks in the page templates emit the class "active". */
+.rail-link.active { background: var(--rail-2); color: #fff; box-shadow: inset 2px 0 0 var(--accent); }
+.rail-link.active svg { color: var(--accent); }
 
 /* ── Inputs ───────────────────────────────────────────────── */
 .field, input[type="text"], input[type="password"], input[type="email"], select, textarea {
   width: 100%;
-  background: var(--surface);
-  border: 1px solid var(--ink-3);
-  color: var(--ink-8);
-  font-family: inherit;
+  border: 1px solid var(--line-strong);
   font-size: 13.5px;
   padding: 8px 11px;
-  border-radius: 7px;
-  outline: none;
-  transition: border-color 0.12s, box-shadow 0.12s;
+  border-radius: var(--radius-sm);
 }
-.field:focus, input:focus, select:focus, textarea:focus {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 3px color-mix(in oklch, var(--accent) 18%, transparent);
-}
-.field-mono { font-family: 'IBM Plex Mono', ui-monospace, monospace; font-size: 13px; }
+.field-mono { font-family: var(--fs-mono); font-size: 13px; }
 
 /* ── Badges ───────────────────────────────────────────────── */
 .badge {
@@ -227,39 +142,33 @@ a:hover { text-decoration: underline; text-decoration-thickness: 1px; text-under
   white-space: nowrap;
 }
 .badge-store {
-  background: var(--ink-1);
-  color: var(--ink-7);
-  border-color: var(--ink-3);
-  font-family: 'IBM Plex Mono', ui-monospace, monospace;
+  background: var(--surface-2);
+  color: var(--ink-soft);
+  border-color: var(--line);
+  font-family: var(--fs-mono);
   font-size: 10.5px;
   text-transform: lowercase;
 }
 .badge-store .dot { width: 6px; height: 6px; border-radius: 999px; }
-.badge-chrome .dot { background: oklch(0.65 0.18 260); }
-.badge-vscode .dot { background: oklch(0.65 0.18 220); }
-.badge-edge   .dot { background: oklch(0.65 0.18 195); }
+.badge-chrome .dot { background: var(--accent); }
+.badge-vscode .dot { background: var(--accent-ink); }
+.badge-edge   .dot { background: var(--accent-deep); }
 
 .badge-low      { background: var(--risk-low-bg);      color: var(--badge-low-color);      border-color: color-mix(in oklch, var(--risk-low) 25%, transparent); }
 .badge-medium   { background: var(--risk-medium-bg);   color: var(--badge-medium-color);   border-color: color-mix(in oklch, var(--risk-medium) 30%, transparent); }
 .badge-high     { background: var(--risk-high-bg);     color: var(--badge-high-color);     border-color: color-mix(in oklch, var(--risk-high) 30%, transparent); }
 .badge-critical { background: var(--risk-critical-bg); color: var(--badge-critical-color); border-color: color-mix(in oklch, var(--risk-critical) 35%, transparent); }
 
-/* Legacy risk text colours (kept for templates that use them) */
-.risk-low      { color: var(--risk-low); }
-.risk-medium   { color: var(--risk-medium); }
-.risk-high     { color: var(--risk-high); }
-.risk-critical { color: var(--risk-critical); }
-
 /* ── Permission tags ──────────────────────────────────────── */
 .perm-tag {
   display: inline-flex;
   padding: 3px 8px;
-  font-family: 'IBM Plex Mono', ui-monospace, monospace;
+  font-family: var(--fs-mono);
   font-size: 11.5px;
   border-radius: 5px;
-  background: var(--ink-1);
-  color: var(--ink-7);
-  border: 1px solid var(--ink-3);
+  background: var(--surface-2);
+  color: var(--ink-soft);
+  border: 1px solid var(--line);
   margin: 2px;
 }
 .perm-critical { background: var(--risk-critical-bg); color: var(--perm-critical-color); border-color: color-mix(in oklch, var(--risk-critical) 35%, transparent); }
@@ -267,38 +176,38 @@ a:hover { text-decoration: underline; text-decoration-thickness: 1px; text-under
 .perm-medium   { background: var(--risk-medium-bg);   color: var(--perm-medium-color);   border-color: color-mix(in oklch, var(--risk-medium) 30%, transparent); }
 .perm-low      { /* default */ }
 
-/* ── Score bar ────────────────────────────────────────────── */
-.score-bar-track { background: var(--ink-2); height: 5px; border-radius: 999px; overflow: hidden; }
+/* ── Score bar + gauge ────────────────────────────────────── */
+.score-bar-track { background: var(--line); height: 5px; border-radius: 999px; overflow: hidden; }
 .score-bar-fill  { height: 100%; border-radius: 999px; transition: width 0.3s ease; }
 
-/* ── Gauge ────────────────────────────────────────────────── */
 .gauge { position: relative; width: 130px; height: 130px; }
 .gauge svg { transform: rotate(-90deg); }
-.gauge .track { stroke: var(--ink-3); }
-.gauge .num   { font-size: 38px; font-weight: 600; letter-spacing: -0.02em; color: var(--ink-8); }
+.gauge .track { stroke: var(--line); }
+.gauge .num   { font-family: var(--fs-mono); font-size: 38px; font-weight: 600; letter-spacing: -0.02em; color: var(--ink); }
 
 /* ── Tables ───────────────────────────────────────────────── */
 table { width: 100%; border-collapse: separate; border-spacing: 0; }
 thead th {
   text-align: left;
-  font-weight: 500;
-  font-size: 11px;
-  letter-spacing: 0.06em;
+  font-family: var(--fs-mono);
+  font-weight: 600;
+  font-size: 10.5px;
+  letter-spacing: 0.08em;
   text-transform: uppercase;
-  color: var(--ink-5);
+  color: var(--muted);
   padding: 11px 14px;
-  background: var(--ink-1);
-  border-bottom: 1px solid var(--ink-3);
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--line);
 }
 tbody td {
   padding: 13px 14px;
-  border-bottom: 1px solid var(--ink-2);
+  border-bottom: 1px solid var(--line);
   vertical-align: middle;
   font-size: 13.5px;
-  color: var(--ink-7);
+  color: var(--ink-soft);
 }
 tbody tr:last-child td { border-bottom: none; }
-tbody tr:hover td { background: var(--ink-1); }
+tbody tr:hover td { background: var(--surface-2); }
 .sortable { cursor: pointer; user-select: none; }
 
 /* ── Flash ────────────────────────────────────────────────── */
@@ -307,85 +216,60 @@ tbody tr:hover td { background: var(--ink-1); }
   gap: 10px;
   align-items: flex-start;
   background: var(--surface);
-  border: 1px solid var(--ink-3);
+  border: 1px solid var(--line);
   border-left: 3px solid var(--accent);
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   padding: 10px 14px;
   font-size: 13px;
-  color: var(--ink-7);
+  color: var(--ink-soft);
   margin-bottom: 16px;
 }
 
-/* ── Avatar ───────────────────────────────────────────────── */
+/* ── Avatar (topbar user menu) ────────────────────────────── */
 .avatar {
   width: 28px; height: 28px;
   border-radius: 999px;
-  background: var(--accent);
-  color: white;
+  background: linear-gradient(135deg, oklch(0.6 0.11 226), oklch(0.45 0.11 240));
+  color: #fff;
   display: flex; align-items: center; justify-content: center;
   font-size: 12px; font-weight: 600;
 }
 
-/* ── Search input in topbar ───────────────────────────────── */
+/* ── Topbar search ────────────────────────────────────────── */
 .search { position: relative; width: 360px; max-width: 50vw; }
 .search svg {
   position: absolute; left: 10px; top: 50%; transform: translateY(-50%);
-  width: 14px; height: 14px; color: var(--ink-5);
+  width: 14px; height: 14px; color: var(--muted);
 }
 .search input {
-  background: var(--ink-1);
-  border: 1px solid var(--ink-3);
+  background: var(--surface-2);
+  border: 1px solid var(--line);
   padding: 7px 11px 7px 30px;
-  border-radius: 7px;
+  border-radius: var(--radius-sm);
   font-size: 13px;
 }
 .search input:focus { background: var(--surface); }
 .search kbd {
   position: absolute; right: 8px; top: 50%; transform: translateY(-50%);
-  font-family: 'IBM Plex Mono', monospace;
+  font-family: var(--fs-mono);
   font-size: 10px;
   padding: 2px 5px;
-  border: 1px solid var(--ink-3);
+  border: 1px solid var(--line);
   border-radius: 4px;
   background: var(--surface);
-  color: var(--ink-5);
+  color: var(--muted);
 }
-
-/* ── Login layout ─────────────────────────────────────────── */
-.login-wrap {
-  display: flex; align-items: center; justify-content: center;
-  min-height: 100vh;
-  padding: 32px;
-  background: linear-gradient(180deg, var(--ink-0), var(--ink-1));
-}
-.login-card { width: 100%; max-width: 400px; }
 
 /* ── Sparkline ────────────────────────────────────────────── */
 .spark path.line { fill: none; stroke: var(--accent); stroke-width: 1.5; }
 .spark path.area { fill: color-mix(in oklch, var(--accent) 10%, transparent); stroke: none; }
-
-/* ── Responsive ───────────────────────────────────────────── */
-@media (max-width: 860px) {
-  .page-shell { grid-template-columns: 1fr; }
-  .rail { display: none; }
-  .content { padding: 20px; }
-  .topbar { padding: 0 16px; }
-  .search { width: 100%; }
-}
-
-/* ─────────────────────────────────────────────────────────────
-   IcebergEBS · Redesign additions
-   New patterns introduced by the UI review — built on the existing
-   token system (app.css). Tabs, sub-nav, trend chart, switches,
-   review-document helpers. Nothing here overrides base tokens.
-   ───────────────────────────────────────────────────────────── */
 
 /* ── Tabbed sub-navigation (extension detail) ─────────────── */
 .tabbar {
   display: flex;
   align-items: center;
   gap: 2px;
-  border-bottom: 1px solid var(--ink-3);
+  border-bottom: 1px solid var(--line);
   margin-bottom: 20px;
   overflow-x: auto;
 }
@@ -396,7 +280,7 @@ tbody tr:hover td { background: var(--ink-1); }
   padding: 9px 13px 11px;
   font-size: 13px;
   font-weight: 500;
-  color: var(--ink-5);
+  color: var(--muted);
   border: none;
   background: none;
   cursor: pointer;
@@ -405,17 +289,17 @@ tbody tr:hover td { background: var(--ink-1); }
   margin-bottom: -1px;
   transition: color 0.12s, border-color 0.12s;
 }
-.tab:hover { color: var(--ink-7); }
-.tab.active { color: var(--ink-8); border-bottom-color: var(--accent); }
+.tab:hover { color: var(--ink-soft); }
+.tab.active { color: var(--ink); border-bottom-color: var(--accent); }
 .tab .count {
-  font-family: 'IBM Plex Mono', ui-monospace, monospace;
+  font-family: var(--fs-mono);
   font-size: 10.5px;
   padding: 1px 6px;
   border-radius: 999px;
-  background: var(--ink-2);
-  color: var(--ink-6);
+  background: var(--line);
+  color: var(--ink-soft);
 }
-.tab.active .count { background: var(--accent-bg); color: var(--accent); }
+.tab.active .count { background: var(--accent-soft); color: var(--accent-ink); }
 .tab .count.alert { background: var(--risk-critical-bg); color: var(--badge-critical-color); }
 
 /* ── Switch (watchlist, etc.) ─────────────────────────────── */
@@ -426,7 +310,7 @@ tbody tr:hover td { background: var(--ink-1); }
   gap: 9px;
   cursor: pointer;
   font-size: 13px;
-  color: var(--ink-7);
+  color: var(--ink-soft);
   background: none;
   border: none;
   padding: 0;
@@ -436,7 +320,7 @@ tbody tr:hover td { background: var(--ink-1); }
   position: relative;
   width: 34px; height: 19px;
   border-radius: 999px;
-  background: var(--ink-3);
+  background: var(--line-strong);
   transition: background 0.15s;
   flex: none;
 }
@@ -445,44 +329,44 @@ tbody tr:hover td { background: var(--ink-1); }
   top: 2px; left: 2px;
   width: 15px; height: 15px;
   border-radius: 999px;
-  background: white;
-  box-shadow: 0 1px 2px rgba(0,0,0,0.25);
+  background: var(--surface);
+  box-shadow: 0 1px 2px oklch(0 0 0 / 0.25);
   transition: transform 0.15s;
 }
 .switch.on .track { background: var(--accent); }
-.switch.on .thumb { transform: translateX(15px); }
+.switch.on .thumb { transform: translateX(15px); background: #fff; }
 
 /* ── Trend chart ──────────────────────────────────────────── */
 .trend { width: 100%; }
-.trend .grid-line { stroke: var(--ink-2); stroke-width: 1; }
+.trend .grid-line { stroke: var(--line); stroke-width: 1; }
 .trend .band { opacity: 0.10; }
 .trend path.area { stroke: none; }
 .trend path.line { fill: none; stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
 .trend .dot { stroke: var(--surface); stroke-width: 2; }
-.trend .axis-label { font-family: 'IBM Plex Mono', ui-monospace, monospace; font-size: 10px; fill: var(--ink-5); }
+.trend .axis-label { font-family: var(--fs-mono); font-size: 10px; fill: var(--muted); }
 
 /* ── Mini KPI inline stat ─────────────────────────────────── */
 .kpi-row { display: flex; flex-wrap: wrap; gap: 28px; }
-.kpi .v { font-size: 19px; font-weight: 600; color: var(--ink-8); letter-spacing: -0.01em; font-variant-numeric: tabular-nums; }
-.kpi .v.mono { font-family: 'IBM Plex Mono', ui-monospace, monospace; }
+.kpi .v { font-size: 19px; font-weight: 600; color: var(--ink); letter-spacing: -0.01em; font-variant-numeric: tabular-nums; }
+.kpi .v.mono { font-family: var(--fs-mono); }
 
 /* ── Delta pill (score change) ────────────────────────────── */
 .delta {
   display: inline-flex; align-items: center; gap: 3px;
-  font-family: 'IBM Plex Mono', ui-monospace, monospace;
+  font-family: var(--fs-mono);
   font-size: 11px; font-weight: 500;
   padding: 1px 6px; border-radius: 999px;
 }
 .delta.up   { background: var(--risk-critical-bg); color: var(--badge-critical-color); }
 .delta.down { background: var(--risk-low-bg);      color: var(--badge-low-color); }
-.delta.flat { background: var(--ink-1);            color: var(--ink-5); }
+.delta.flat { background: var(--surface-2);        color: var(--muted); }
 
 /* ── Segmented filter control ─────────────────────────────── */
 .seg {
   display: inline-flex;
-  background: var(--ink-1);
-  border: 1px solid var(--ink-3);
-  border-radius: 8px;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
   padding: 2px;
   gap: 2px;
 }
@@ -490,23 +374,23 @@ tbody tr:hover td { background: var(--ink-1); }
   font-family: inherit;
   font-size: 12px;
   font-weight: 500;
-  color: var(--ink-6);
+  color: var(--ink-soft);
   background: none;
   border: none;
   padding: 5px 11px;
-  border-radius: 6px;
+  border-radius: 5px;
   cursor: pointer;
   white-space: nowrap;
   transition: background 0.12s, color 0.12s;
 }
-.seg button:hover { color: var(--ink-8); }
-.seg button.active { background: var(--surface); color: var(--ink-8); box-shadow: 0 1px 2px rgba(0,0,0,0.08), 0 0 0 1px var(--ink-3); }
+.seg button:hover { color: var(--ink); }
+.seg button.active { background: var(--surface); color: var(--ink); box-shadow: var(--shadow), 0 0 0 1px var(--line); }
 
-/* ── Severity rail (left accent on finding cards) ─────────── */
+/* ── Findings (severity rail) ─────────────────────────────── */
 .finding {
-  background: var(--ink-1);
-  border: 1px solid var(--ink-3);
-  border-radius: 9px;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
   padding: 11px 13px;
   position: relative;
   overflow: hidden;
@@ -521,17 +405,17 @@ tbody tr:hover td { background: var(--ink-1); }
 .finding.sev-medium::before   { background: var(--risk-medium); }
 .finding.sev-low::before      { background: var(--risk-low); }
 
-/* ── Chip (sentence-rule label) ───────────────────────────── */
+/* ── Chip ─────────────────────────────────────────────────── */
 .chip {
   display: inline-flex; align-items: center; gap: 5px;
   font-size: 11.5px; font-weight: 500;
   padding: 3px 9px; border-radius: 999px;
-  background: var(--ink-1); color: var(--ink-6); border: 1px solid var(--ink-3);
+  background: var(--surface-2); color: var(--ink-soft); border: 1px solid var(--line);
 }
 
-/* ── Callout / annotation (review doc) ────────────────────── */
+/* ── Callout / annotation (help + review pages) ───────────── */
 .callout {
-  border-radius: 10px;
+  border-radius: var(--radius);
   padding: 14px 16px;
   font-size: 13.5px;
   line-height: 1.55;
@@ -543,111 +427,32 @@ tbody tr:hover td { background: var(--ink-1); }
   display: inline-flex; align-items: center; justify-content: center;
   width: 22px; height: 22px; flex: none;
   border-radius: 999px;
-  background: var(--ink-8); color: var(--ink-0);
+  background: var(--ink); color: var(--paper);
   font-size: 11px; font-weight: 600;
-  font-family: 'IBM Plex Mono', ui-monospace, monospace;
+  font-family: var(--fs-mono);
 }
 
-/* ── Review doc layout ────────────────────────────────────── */
-.review-prose p { font-size: 14px; line-height: 1.65; color: var(--ink-6); }
-.review-prose strong { color: var(--ink-8); font-weight: 600; }
+/* ── Review doc helpers ───────────────────────────────────── */
+.review-prose p { font-size: 14px; line-height: 1.65; color: var(--ink-soft); }
+.review-prose strong { color: var(--ink); font-weight: 600; }
 
 .before-after { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 @media (max-width: 720px) { .before-after { grid-template-columns: 1fr; } }
-.ba-col { border-radius: 10px; padding: 13px 15px; font-size: 13px; line-height: 1.5; }
-.ba-col .ba-label { font-size: 10.5px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; margin-bottom: 6px; }
-.ba-col.before { background: var(--ink-1); border: 1px solid var(--ink-3); }
-.ba-col.before .ba-label { color: var(--ink-5); }
-.ba-col.after { background: var(--accent-bg); border: 1px solid color-mix(in oklch, var(--accent) 22%, transparent); }
-.ba-col.after .ba-label { color: var(--accent); }
-.ba-col ul { margin: 0; padding-left: 16px; color: var(--ink-6); }
+.ba-col { border-radius: var(--radius); padding: 13px 15px; font-size: 13px; line-height: 1.5; }
+.ba-col .ba-label { font-family: var(--fs-mono); font-size: 10.5px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; margin-bottom: 6px; }
+.ba-col.before { background: var(--surface-2); border: 1px solid var(--line); }
+.ba-col.before .ba-label { color: var(--muted); }
+.ba-col.after { background: var(--accent-soft); border: 1px solid var(--accent-line); }
+.ba-col.after .ba-label { color: var(--accent-ink); }
+.ba-col ul { margin: 0; padding-left: 16px; color: var(--ink-soft); }
 .ba-col li { margin-bottom: 3px; }
 
-/* card grid for review nav */
 .screen-link {
   display: block;
   background: var(--surface);
-  border: 1px solid var(--ink-3);
-  border-radius: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
   padding: 16px;
   transition: border-color 0.12s, transform 0.12s, box-shadow 0.12s;
 }
-.screen-link:hover { border-color: var(--accent); transform: translateY(-2px); box-shadow: 0 8px 24px oklch(0.05 0.01 240 / 0.10); text-decoration: none; }
-
-/* ─────────────────────────────────────────────────────────────
-   IcebergEBS · Branding additions  →  append to static/css/app.css
-   Login "Branded split" (Option B) + the aperture watermark.
-   All colors are existing tokens; nothing here overrides base.
-   ───────────────────────────────────────────────────────────── */
-
-/* Two-column split login. Left = branded indigo panel, right = form. */
-.login-split {
-  min-height: 100vh;
-  min-height: 100dvh;
-  display: grid;
-  grid-template-columns: minmax(0, 46%) 1fr;
-}
-
-/* Left brand panel */
-.login-brand {
-  position: relative;
-  overflow: hidden;
-  display: flex;
-  flex-direction: column;
-  justify-content: space-between;
-  padding: 44px;
-  color: #fff;
-  background: linear-gradient(165deg, var(--accent-2, oklch(0.42 0.17 266)), oklch(0.145 0.01 264));
-}
-.login-brand__watermark {
-  position: absolute;
-  right: -60px;
-  top: -50px;
-  color: #fff;
-  opacity: 0.07;
-  pointer-events: none;
-}
-.login-brand__headline {
-  position: relative;
-  font-size: 28px;
-  font-weight: 600;
-  letter-spacing: -0.02em;
-  line-height: 1.2;
-}
-.login-brand__sub {
-  position: relative;
-  font-size: 14px;
-  line-height: 1.55;
-  opacity: 0.72;
-  margin-top: 12px;
-  max-width: 38ch;
-}
-.login-brand__lockup { position: relative; display: flex; align-items: center; gap: 13px; }
-.login-brand__lockup .name { font-size: 18px; font-weight: 600; letter-spacing: -0.015em; }
-
-/* Right form column */
-.login-form-col {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 40px 24px;
-  background: var(--surface);
-}
-.login-form-col .form-inner { width: 100%; max-width: 320px; }
-
-/* Mark tiles used in the lockups (rail + login) */
-.brand-tile {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  flex: none;
-  border-radius: 26%;
-}
-.brand-tile--rail   { width: 78px; height: 78px; color: var(--accent); background: var(--ink-1); border: 1px solid var(--ink-3); }
-.brand-tile--ondark { width: 40px; height: 40px; color: oklch(0.68 0.18 264); background: oklch(0.205 0.012 264 / 0.6); border: 1px solid oklch(1 0 0 / 0.12); }
-
-/* Collapse to single column on narrow screens — hide the brand panel */
-@media (max-width: 720px) {
-  .login-split { grid-template-columns: 1fr; }
-  .login-brand { display: none; }
-}
+.screen-link:hover { border-color: var(--accent-line); transform: translateY(-2px); box-shadow: var(--shadow-lift); text-decoration: none; }

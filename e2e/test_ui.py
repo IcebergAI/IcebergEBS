@@ -57,6 +57,9 @@ def test_login_and_dashboard_render(page: Page, collect_errors):
     _login(page)
     # The dashboard shell rendered (a known stat tile), proving auth + template + assets.
     expect(page.locator("text=Fetch health").first).to_be_visible()
+    # House shell present (#105): the brand strip and the dark rail.
+    expect(page.locator(".brandbar")).to_be_visible()
+    expect(page.locator("aside.rail")).to_be_visible()
     # Alpine must actually load — the interactive controls depend on it, and a plain
     # resource error from a broken vendored script would otherwise slip past the error
     # filters. Since #106 (CSP build + registry) expressions evaluate for real, so the
