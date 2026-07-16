@@ -116,6 +116,14 @@ release to diff against.
 
 ### Fixed
 
+- **The Helm Caddy sidecar pin no longer silently drifts from the Compose one** (#200). The Helm
+  `values.yaml` Caddy image was pinned at `2.8-alpine` while Dependabot had already moved the
+  Compose image to `2.11-alpine`, and a comment falsely claimed "Dependabot's docker ecosystem
+  keeps it current" — but Dependabot doesn't parse Helm values, so the two production edge proxies
+  ran different (CVE-accumulating) versions with no update path. The Helm tag is realigned to
+  `2.11-alpine`, and a new `tests/test_helm_caddy.py::test_helm_caddy_tag_matches_compose` fails
+  whenever the Helm and Compose Caddy tags diverge, so a Dependabot Compose bump now forces the
+  Helm bump in the same PR.
 - **An aborted test run no longer leaves the dev database unbootable** (#199). The #113 fix drops
   `alembic_version` in the test setup, so during a run the dev DB holds a `create_all`'d head
   schema with no stamp. If the suite was aborted before teardown, the next `make dev` boot

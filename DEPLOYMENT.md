@@ -248,7 +248,7 @@ services:
   caddy:
     # Pinned to a minor: `caddy:alpine` floats, so the TLS-terminating edge proxy
     # would silently change version on every `docker compose pull`.
-    image: caddy:2.8-alpine
+    image: caddy:2.11-alpine
     security_opt:
       - no-new-privileges:true
     # Fewer caps than nginx: NET_BIND_SERVICE to bind :80/:443, and DAC_OVERRIDE so root
@@ -611,7 +611,9 @@ icebergEbs:
 caddy:
   image:
     repository: caddy
-    tag: "2.8-alpine"
+    # Kept in lockstep with the Compose Caddy image by tests/test_helm_caddy.py (Dependabot
+    # doesn't parse Helm values, so a Compose bump fails that test until this matches; #200).
+    tag: "2.11-alpine"
     pullPolicy: IfNotPresent
   resources:
     requests: { cpu: 50m, memory: 64Mi }

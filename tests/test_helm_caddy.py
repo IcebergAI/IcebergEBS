@@ -57,3 +57,22 @@ def test_k8s_caddyfile_uses_strict_trusted_proxies():
     assert "trusted_proxies_strict" in k8s
     # And the mirror carries it too.
     assert "trusted_proxies_strict" in _configmap_data()["Caddyfile"]
+
+
+def test_helm_caddy_tag_matches_compose():
+    """The Helm Caddy sidecar image must stay pinned to the same version as the Compose Caddy
+    image (#200). Dependabot's `docker-compose` ecosystem bumps the Compose image but cannot
+    see Helm `values.yaml`, so without this guard the two documented production paths silently
+    drift onto different (CVE-accumulating) edge-proxy versions. When Dependabot bumps Compose,
+    this fails until the Helm tag is bumped to match in the same PR."""
+    compose = yaml.safe_load((_ROOT / "docker-compose.yml").read_text())
+    compose_image = compose["services"]["caddy"]["image"]  # e.g. "caddy:2.11-alpine"
+
+    values = yaml.safe_load((_ROOT / "helm/iceberg-ebs/values.yaml").read_text())
+    helm_img = values["caddy"]["image"]
+    helm_image = f"{helm_img['repository']}:{helm_img['tag']}"
+
+    assert helm_image == compose_image, (
+        f"Helm Caddy image {helm_image!r} drifted from the Compose Caddy image {compose_image!r} "
+        f"— bump helm/iceberg-ebs/values.yaml caddy.image.tag to match (#200)."
+    )
