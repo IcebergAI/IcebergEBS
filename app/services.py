@@ -161,17 +161,28 @@ def _parse_pending_events(raw: str | None, ext_id: int | None) -> list[ChangeEve
     #197): a marker corrupted by a partial write or hand-edit must never crash the fetch
     nor loop forever undelivered. Drops any non-dict entry (`utils.json_list` already
     returns ``[]`` on unparsable / non-list JSON) and any dict that isn't a well-formed
-    event (wrong / missing keys → ``ChangeEvent(**e)`` ``TypeError``), logging what it
-    discards. The remaining events are exactly what can be delivered.
+    event, logging what it discards. The remaining events are exactly what can be delivered.
+
+    Two shapes of malformed entry are rejected: wrong/missing keys (``ChangeEvent(**e)``
+    ``TypeError``), and — because ``ChangeEvent`` is a plain dataclass that does NOT validate
+    field *types* — a non-string ``event_type``. The latter matters because ``fire_alerts``
+    puts ``event_type`` in a ``set`` and uses it as a dict key; a list value would raise
+    ``TypeError: unhashable type`` deep in delivery, which ``fire_pending_alerts`` catches and
+    then retains the marker for — re-crashing every cycle forever (#197 review).
     """
     result: list[ChangeEvent] = []
     for e in json_list(raw, "pending_alert_events", ext_id):
         if not isinstance(e, dict):
             continue
         try:
-            result.append(ChangeEvent(**e))
+            event = ChangeEvent(**e)
         except TypeError:
             logger.warning("Dropping malformed pending alert event for extension %s", ext_id)
+            continue
+        if not isinstance(event.event_type, str):
+            logger.warning("Dropping pending alert event with non-string event_type for extension %s", ext_id)
+            continue
+        result.append(event)
     return result
 
 

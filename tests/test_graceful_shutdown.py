@@ -368,12 +368,17 @@ def test_parse_pending_events_drops_non_dict_and_malformed_entries():
             {"event_type": "new_version", "old_value": "1", "new_value": "2"},  # valid
             "junk",  # non-dict → dropped
             5,  # non-dict → dropped
-            {"unexpected": "keys"},  # a dict, but not a well-formed event → dropped
+            {"unexpected": "keys"},  # a dict, but not a well-formed event (wrong keys) → dropped
+            # A dict with the right keys but a non-string event_type. ChangeEvent is a plain
+            # dataclass and accepts it, but the unhashable list would crash fire_alerts' set/dict
+            # keying and re-loop forever — so it must be dropped here (#197 review).
+            {"event_type": [], "old_value": "low", "new_value": "high"},
         ]
     )
     assert _parse_pending_events(raw, 1) == [ChangeEvent("new_version", "1", "2")]
     assert _parse_pending_events("{}", 1) == []  # valid JSON, wrong shape (object not list)
     assert _parse_pending_events('["junk"]', 1) == []  # list of non-dicts
+    assert _parse_pending_events('[{"event_type": 5, "old_value": "a", "new_value": "b"}]', 1) == []  # non-str type
     assert _parse_pending_events("{bad", 1) == []  # unparsable
     assert _parse_pending_events(None, 1) == []  # absent
 
@@ -426,6 +431,37 @@ async def test_recover_delivers_valid_events_and_clears_corrupt_marker(test_db, 
         assert len(logs) == 1
         refreshed = await session.get(Extension, ext_id)
         assert refreshed.pending_alert_events is None  # corrupt marker cleared, not lingering
+
+
+async def test_recover_drops_non_string_event_type_without_looping(test_db, admin_user):
+    """#197 review: a marker whose ``event_type`` is a non-string (a list) is accepted by the
+    plain ``ChangeEvent`` dataclass but is unhashable, so ``fire_alerts`` would crash building
+    its event-type set — and ``fire_pending_alerts`` catches that and retains the marker, so it
+    re-crashes every cycle forever. ``_parse_pending_events`` must drop it; recovery then finds
+    nothing deliverable and clears the marker."""
+    async with AsyncSession(test_db) as session:
+        ext = Extension(
+            user_id=admin_user.id,
+            store="vscode",
+            extension_id="pub.badtype",
+            name="B",
+            publisher="pub",
+            version="2.0.0",
+            store_url="https://example.com",
+            risk_score=60,
+            pending_alert_events=json.dumps([{"event_type": [], "old_value": "low", "new_value": "high"}]),
+        )
+        session.add(ext)
+        await session.commit()
+        await session.refresh(ext)
+        ext_id = ext.id
+
+    async with httpx.AsyncClient() as http:
+        await recover_pending_alerts(test_db, http)  # must not raise
+
+    async with AsyncSession(test_db) as session:
+        # Nothing deliverable → the corrupt marker is cleared, not retried forever.
+        assert (await session.get(Extension, ext_id)).pending_alert_events is None
 
 
 async def test_fetch_and_store_tolerates_wrong_shape_pending_marker(test_db, admin_user):
