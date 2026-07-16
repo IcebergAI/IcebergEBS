@@ -100,6 +100,9 @@ release to diff against.
 
 ### Fixed
 
+- The dashboard no longer returns a raw JSON **422 on a non-numeric `page`** query param
+  (e.g. a mangled or hand-edited `?page=abc`) — like the other filter params it now tolerates
+  junk and falls back to page 1 instead of rejecting the browser navigation (#152).
 - **Input validation for identity-like fields** (#154): `POST /api/users` now rejects a blank /
   whitespace-only or multi-KB `username` (422) and strips surrounding whitespace, and stores a
   blank `email` as `NULL`; and `POST /api/inventory` rejects a blank `asset_id` **per row**
