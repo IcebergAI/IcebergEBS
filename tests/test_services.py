@@ -16,8 +16,10 @@ from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.fetchers.base import ExtensionMetadata
+from app.inspector import PackageAnalysis
 from app.models import Extension, InstallCountHistory
-from app.services import fetch_and_store
+from app.scoring import compute_risk_score
+from app.services import _apply_fetch_results, _effective_values, fetch_and_store
 from tests.conftest import make_fake_crx
 
 RECENT = datetime.now(timezone.utc) - timedelta(days=5)
@@ -200,3 +202,96 @@ async def test_no_drop_bonus_when_recent_readings_are_steady(test_db, admin_user
     ext, _ = await _fetch(test_db, ext_id, _meta(install_count=600))
 
     assert json.loads(ext.risk_detail)["popularity"] == 8  # base only, no bonus
+
+
+# ---------------------------------------------------------------------------
+# Unit tests for the pure helpers extracted from fetch_and_store (#166).
+# These exercise the keep-stale fallback rules and the row mutation directly,
+# without the fetch pipeline or a DB.
+# ---------------------------------------------------------------------------
+
+
+def _plain_ext(**overrides) -> Extension:
+    values = dict(
+        user_id=1,
+        store="chrome",
+        extension_id="abcdefghijklmnopabcdefghijklmnop",
+        name="Test Ext",
+        publisher="",
+        version="",
+        store_url="https://example.com/ext",
+        permissions="[]",
+    )
+    values.update(overrides)
+    return Extension(**values)
+
+
+def _risk():
+    return compute_risk_score(
+        permissions=[],
+        host_permissions=[],
+        install_count=1000,
+        install_history=[],
+        publisher="x",
+        publisher_changed=False,
+        publisher_verified=None,
+        last_updated=None,
+        analysis=None,
+    )
+
+
+def test_effective_values_uses_analysis_when_present():
+    ext = _plain_ext()
+    analysis = PackageAnalysis(permissions=["tabs"], host_permissions=["<all_urls>"], author="Manifest Guy")
+    eff = _effective_values(ext, _meta(**_PARTIAL), analysis)
+    assert eff.permissions == ["tabs"]
+    assert eff.host_permissions == ["<all_urls>"]
+    # Author fills the publisher gap only when nothing store-sourced/stored exists.
+    assert eff.publisher == "Manifest Guy"
+
+
+def test_effective_values_falls_back_to_stored_on_failed_inspection():
+    ext = _plain_ext(
+        publisher="Store Pub",
+        install_count=50_000,
+        last_updated=RECENT,
+        permissions='["storage"]',
+        package_analysis='{"host_permissions": ["https://stored.example/*"]}',
+    )
+    # analysis=None (download/inspection failed) + partial scrape → keep stored.
+    eff = _effective_values(ext, _meta(**_PARTIAL), None)
+    assert eff.permissions == ["storage"]
+    assert eff.host_permissions == ["https://stored.example/*"]
+    assert eff.publisher == "Store Pub"
+    assert eff.install_count == 50_000
+    assert eff.last_updated == RECENT
+
+
+def test_effective_values_publisher_changed_requires_nonempty_store_publisher():
+    ext = _plain_ext(publisher="Old Pub", last_fetched_at=RECENT)
+    assert _effective_values(ext, _meta(publisher="New Pub"), None).publisher_changed is True
+    # A partial parse (empty store publisher) is not a change signal.
+    assert _effective_values(ext, _meta(publisher=""), None).publisher_changed is False
+
+
+def test_apply_fetch_results_keeps_version_and_permissions_on_failed_inspection():
+    ext = _plain_ext(version="1.2.3", permissions='["storage"]', package_analysis='{"host_permissions": []}')
+    eff = _effective_values(ext, _meta(**_PARTIAL), None)
+    _apply_fetch_results(ext, _meta(**_PARTIAL), None, eff, _risk())
+    # Empty store version must not clobber the stored one.
+    assert ext.version == "1.2.3"
+    # analysis=None → permissions / package_analysis are left untouched.
+    assert ext.permissions == '["storage"]'
+    assert ext.package_analysis == '{"host_permissions": []}'
+
+
+def test_apply_fetch_results_writes_fresh_values():
+    ext = _plain_ext(version="1.0.0")
+    analysis = PackageAnalysis(permissions=["tabs"], host_permissions=["<all_urls>"])
+    eff = _effective_values(ext, _meta(version="2.0.0"), analysis)
+    _apply_fetch_results(ext, _meta(version="2.0.0"), analysis, eff, _risk())
+    assert ext.version == "2.0.0"
+    assert json.loads(ext.permissions) == ["tabs"]
+    assert json.loads(ext.package_analysis)["host_permissions"] == ["<all_urls>"]
+    assert ext.risk_score == _risk().total
+    assert ext.last_fetched_at is not None
