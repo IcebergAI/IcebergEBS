@@ -183,6 +183,15 @@ release to diff against.
 
 ### Fixed
 
+- **Variable fonts are shipped as one file per family+subset instead of byte-identical
+  per-weight copies** (#236). `static/fonts/archivo-*` and `jetbrains-mono-*` were 10 and 8
+  byte-identical copies of a single wght-axis *variable* woff2 each — every weight fetched the
+  same bytes over a distinct URL (~130KB+ of duplicate transfer per family). Each family now
+  ships one file per subset (`archivo-normal-{latin,latin-ext}.woff2`,
+  `jetbrains-mono-normal-{latin,latin-ext}.woff2`) declared by a single `@font-face` per subset
+  with a `font-weight` *range* descriptor (Archivo `100 900`, JetBrains Mono `400 800`), halving
+  both `static/css/fonts.css` and the font downloads. Spectral ships as static per-weight
+  instances and is unchanged.
 - **The API/login rate-limit tuning knobs are now forwarded and documented** (#202). The
   `*_RATE_LIMIT_PER_MINUTE` / `*_RATE_LIMIT_BURST` settings existed in `app/config.py` but were
   not forwarded by the Compose stack or the Helm ConfigMap and were absent from `.env.example`, so
