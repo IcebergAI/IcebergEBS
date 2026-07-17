@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 from typing import Any, Optional
 
-from sqlalchemy import CheckConstraint, Column, DateTime, Index, desc
+from sqlalchemy import CheckConstraint, Column, DateTime, Index, desc, text
 from sqlmodel import Field, SQLModel, UniqueConstraint
 
 from app.utils import json_list, json_object
@@ -23,20 +23,38 @@ def _tz_column(*, nullable: bool) -> Column[Any]:
 
 
 class User(SQLModel, table=True):
-    # SSO identity (#32): an OIDC account is keyed on the immutable
-    # (auth_provider, oidc_subject) pair — never on the mutable email claim.
-    # Postgres treats NULL oidc_subject values as distinct, so local rows
-    # ("local", NULL) never collide with each other.
+    # SSO identity (#32): an OIDC account is keyed on the immutable, validated
+    # (oidc_issuer, oidc_subject) pair — never the mutable email claim, and never
+    # the admin-configurable adapter key (which could be re-pointed at a different
+    # issuer, letting a colliding `sub` inherit an account). A `sub` is unique only
+    # within its issuer (OIDC spec). Postgres treats NULL values as distinct, so
+    # local rows (issuer/subject both NULL) never collide with each other.
     __table_args__ = (
-        UniqueConstraint("auth_provider", "oidc_subject", name="uq_user_provider_subject"),
-        # Schema backstop for the identity invariant the provisioning code relies
-        # on (the #217 pattern): a row is EITHER local-with-no-subject OR
-        # SSO-with-a-subject. A "local" row carrying a subject (or an SSO row with a
-        # NULL subject) is unresolvable by the (provider, subject) match and would
-        # let a duplicate be JIT-created — make it unrepresentable, not just avoided.
+        UniqueConstraint("oidc_issuer", "oidc_subject", name="uq_user_issuer_subject"),
+        # SSO accounts must not share a (already-lowercased) email: JIT provisioning
+        # denies email collisions, but two concurrent first-time callbacks with
+        # different subjects could otherwise both pass the app-level check and create
+        # duplicate rows for the same address — this closes that race at the DB layer
+        # (the #217 "strongest enforcement" rule). Partial so local accounts, whose
+        # emails are free-form and may repeat/be NULL, are unaffected.
+        Index(
+            "uq_user_sso_email",
+            "email",
+            unique=True,
+            postgresql_where=text("oidc_subject IS NOT NULL"),
+        ),
+        # Schema backstop for the identity invariant the provisioning code relies on
+        # (the #217 pattern): a row is EITHER local (issuer+subject NULL) OR SSO
+        # (both set). A "local" row carrying a subject, or an SSO row missing its
+        # issuer, is unresolvable by the (issuer, subject) match — make the ambiguous
+        # states unrepresentable, not just avoided.
         CheckConstraint(
             "(auth_provider = 'local') = (oidc_subject IS NULL)",
             name="ck_user_local_xor_subject",
+        ),
+        CheckConstraint(
+            "(oidc_issuer IS NULL) = (oidc_subject IS NULL)",
+            name="ck_user_issuer_subject_together",
         ),
     )
 
@@ -47,8 +65,11 @@ class User(SQLModel, table=True):
     password_hash: Optional[str] = None
     email: Optional[str] = None
     is_admin: bool = False
-    # "local" for password accounts, else the OIDC provider key (#32).
+    # "local" for password accounts, else the OIDC adapter key (#32) — used to pick
+    # the adapter + for the admin-UI badge, NOT as the identity key (see __table_args__).
     auth_provider: str = Field(default="local", index=True)
+    # The validated token issuer (`iss`); with oidc_subject it is the account key.
+    oidc_issuer: Optional[str] = None
     oidc_subject: Optional[str] = None
     # IdP tenant provenance (Entra `tid`). Immutable once set — a returning login
     # from a different tenant is an identity conflict, not the same account.

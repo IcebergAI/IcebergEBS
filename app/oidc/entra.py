@@ -22,6 +22,7 @@ class EntraAdapter:
     key = "entra"
 
     def extract_identity(self, claims: dict[str, Any], role_claim: str) -> OIDCIdentity:
+        issuer = _require(claims, "iss")
         subject = _require(claims, "sub")
         tenant_id = _require(claims, "tid")
         email = _require(claims, "email", "preferred_username")
@@ -36,6 +37,7 @@ class EntraAdapter:
         email_verified = has_email_claim and email_verified
         display_name = str(claims.get("name") or email)
         return OIDCIdentity(
+            issuer=issuer,
             subject=subject,
             email=email,
             email_verified=email_verified,

@@ -37,6 +37,7 @@ def _cfg(role_map: dict[str, str] | None = None) -> OIDCProviderConfig:
 
 def _identity(**overrides) -> OIDCIdentity:
     base = {
+        "issuer": "https://idp.test/",
         "subject": "sub-1",
         "email": "new@sso.test",
         "email_verified": True,
@@ -84,6 +85,7 @@ def patch_oidc_fixture(monkeypatch):
 
 def _claims(**overrides) -> dict:
     base = {
+        "iss": "https://idp.test/",
         "sub": "sub-route-1",
         "email": "route@sso.test",
         "email_verified": True,
@@ -170,6 +172,7 @@ async def test_locally_managed_user_never_synced(session):
         email=None,
         is_admin=True,
         auth_provider="authentik",
+        oidc_issuer="https://idp.test/",
         oidc_subject="sub-breakglass",
         role_managed_by_idp=False,
     )
@@ -196,10 +199,56 @@ async def test_cross_provider_takeover_refused(session):
     okta_cfg = replace(_cfg(), key="okta", display_name="Okta")
     await provision_oidc_user(session, cfg=okta_cfg, identity=_identity())
 
-    # Same email arriving from a different provider must not resolve to the okta account.
+    # Same email arriving with a different subject must not resolve to the okta account.
     with pytest.raises(oidc_service.OIDCProvisionError) as exc:
         await provision_oidc_user(session, cfg=_cfg(), identity=_identity(subject="other-sub"))
     assert exc.value.reason == "account linking required"
+
+
+async def test_identity_keyed_on_issuer_not_adapter_key(session):
+    # A colliding `sub` from a DIFFERENT issuer must NOT inherit the account — the
+    # key is the validated (issuer, subject), not the admin-configurable adapter key.
+    first, _ = await provision_oidc_user(
+        session, cfg=_cfg(), identity=_identity(issuer="https://idp-a.test/", subject="shared-sub", email="a@sso.test")
+    )
+    first_id = first.id  # capture before the next commit expires the instance
+    second, created = await provision_oidc_user(
+        session, cfg=_cfg(), identity=_identity(issuer="https://idp-b.test/", subject="shared-sub", email="b@sso.test")
+    )
+    assert created is True
+    assert second.id != first_id
+    assert second.oidc_issuer == "https://idp-b.test/"
+
+
+async def test_sso_email_unique_index_blocks_duplicate(session):
+    # DB backstop for the concurrent-first-login race: two SSO rows (distinct
+    # identities) can't share an email even if the app-level check is bypassed.
+    from sqlalchemy.exc import IntegrityError
+
+    session.add(
+        User(
+            username="dup-a",
+            password_hash=None,
+            email="dup@sso.test",
+            auth_provider="authentik",
+            oidc_issuer="https://idp.test/",
+            oidc_subject="sub-a",
+        )
+    )
+    await session.commit()
+    session.add(
+        User(
+            username="dup-b",
+            password_hash=None,
+            email="dup@sso.test",
+            auth_provider="okta",
+            oidc_issuer="https://idp2.test/",
+            oidc_subject="sub-b",
+        )
+    )
+    with pytest.raises(IntegrityError):
+        await session.commit()
+    await session.rollback()
 
 
 async def test_username_collision_gets_deterministic_suffix(session):
@@ -213,7 +262,7 @@ async def test_username_collision_gets_deterministic_suffix(session):
     assert user.username.startswith("new@sso.test-")
     assert len(user.username.split("-")[-1]) == 8
 
-    # Re-login resolves by (provider, subject), not username.
+    # Re-login resolves by (issuer, subject), not username.
     again, created_again = await provision_oidc_user(session, cfg=_cfg(), identity=_identity())
     assert created_again is False
     assert again.id == user.id
@@ -242,6 +291,7 @@ async def test_sso_account_cannot_password_login(session):
             password_hash=None,
             email="ssoonly@sso.test",
             auth_provider="authentik",
+            oidc_issuer="https://idp.test/",
             oidc_subject="sub-ssoonly",
         )
     )
@@ -271,22 +321,38 @@ async def test_returning_user_not_reverified(session):
 
 def test_entra_requires_tenant():
     with pytest.raises(ValueError):
-        EntraAdapter().extract_identity({"sub": "s", "email": "e@x.test"}, "")
+        EntraAdapter().extract_identity({"iss": "https://i.test", "sub": "s", "email": "e@x.test"}, "")
+
+
+def test_adapters_require_issuer():
+    # (issuer, subject) is the identity key, so a missing iss must fail closed.
+    with pytest.raises(ValueError, match="iss"):
+        get_adapter("authentik").extract_identity({"sub": "s", "email": "e@x.test"}, "")
+    with pytest.raises(ValueError, match="iss"):
+        EntraAdapter().extract_identity({"sub": "s", "tid": "t", "email": "e@x.test"}, "")
 
 
 def test_entra_falls_back_to_preferred_username_unverified():
     identity = EntraAdapter().extract_identity(
-        {"sub": "s", "tid": "t", "preferred_username": "user@corp.test", "email_verified": True}, ""
+        {
+            "iss": "https://i.test",
+            "sub": "s",
+            "tid": "t",
+            "preferred_username": "user@corp.test",
+            "email_verified": True,
+        },
+        "",
     )
     assert identity.email == "user@corp.test"
     # Verification claims apply to an asserted email claim, not the fallback.
     assert identity.email_verified is False
     assert identity.tenant_id == "t"
+    assert identity.issuer == "https://i.test"
 
 
 def test_entra_email_verified_honours_xms_edov():
     adapter = EntraAdapter()
-    claims = {"sub": "s", "tid": "t", "email": "e@x.test"}
+    claims = {"iss": "https://i.test", "sub": "s", "tid": "t", "email": "e@x.test"}
     assert adapter.extract_identity({**claims, "xms_edov": True}, "").email_verified is True
     assert adapter.extract_identity({**claims, "xms_edov": False, "email_verified": True}, "").email_verified is False
     assert adapter.extract_identity({**claims, "email_verified": True}, "").email_verified is True
@@ -297,9 +363,17 @@ def test_entra_email_verified_honours_xms_edov():
 def test_standard_adapters_share_claim_mapping(key):
     adapter = get_adapter(key)
     identity = adapter.extract_identity(
-        {"sub": "s", "email": "e@x.test", "email_verified": True, "name": "N", "groups": ["g1", "g2"]},
+        {
+            "iss": "https://i.test",
+            "sub": "s",
+            "email": "e@x.test",
+            "email_verified": True,
+            "name": "N",
+            "groups": ["g1", "g2"],
+        },
         "groups",
     )
+    assert identity.issuer == "https://i.test"
     assert identity.subject == "s"
     assert identity.email == "e@x.test"
     assert identity.email_verified is True
@@ -309,12 +383,12 @@ def test_standard_adapters_share_claim_mapping(key):
 
 def test_standard_adapter_missing_email_raises():
     with pytest.raises(ValueError):
-        get_adapter("authentik").extract_identity({"sub": "s"}, "")
+        get_adapter("authentik").extract_identity({"iss": "https://i.test", "sub": "s"}, "")
 
 
 def test_group_claim_shapes():
     adapter = get_adapter("authentik")
-    base = {"sub": "s", "email": "e@x.test"}
+    base = {"iss": "https://i.test", "sub": "s", "email": "e@x.test"}
     assert adapter.extract_identity({**base, "groups": "solo"}, "groups").groups == ["solo"]
     assert adapter.extract_identity(base, "groups").groups == []
     assert adapter.extract_identity({**base, "groups": ["a"]}, "").groups == []

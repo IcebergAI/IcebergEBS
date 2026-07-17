@@ -175,8 +175,8 @@ def map_is_admin(cfg: OIDCProviderConfig, identity: OIDCIdentity) -> bool:
 
 
 def _subject_hash(cfg: OIDCProviderConfig, identity: OIDCIdentity) -> str:
-    """Full hex digest of the immutable (provider, subject) pair."""
-    return hashlib.sha256(f"{cfg.key}:{identity.subject}".encode()).hexdigest()
+    """Full hex digest of the immutable (issuer, subject) identity."""
+    return hashlib.sha256(f"{identity.issuer}:{identity.subject}".encode()).hexdigest()
 
 
 def _derive_username(email: str, cfg: OIDCProviderConfig, identity: OIDCIdentity, width: int = 8) -> str:
@@ -234,6 +234,18 @@ async def _sync_returning_user(
         await session.refresh(user)
 
 
+async def _match_identity(session: AsyncSession, identity: OIDCIdentity, *, lock: bool) -> User | None:
+    """Look up the account keyed on the validated (issuer, subject) pair."""
+    stmt = select(User).where(User.oidc_issuer == identity.issuer, User.oidc_subject == identity.subject)
+    if lock:
+        stmt = stmt.with_for_update()
+    return (await session.exec(stmt)).first()
+
+
+async def _email_owner(session: AsyncSession, normalized_email: str) -> User | None:
+    return (await session.exec(select(User).where(func.lower(User.email) == normalized_email))).first()
+
+
 async def provision_oidc_user(
     session: AsyncSession, *, cfg: OIDCProviderConfig, identity: OIDCIdentity
 ) -> tuple[User, bool]:
@@ -243,26 +255,23 @@ async def provision_oidc_user(
     and email collisions that require an explicit link flow.
 
     Match order:
-      1. (auth_provider, stable subject) — returning OIDC user; validate tenant
-         provenance and synchronize the IdP-managed admin flag.
+      1. (oidc_issuer, subject) — returning OIDC user; validate tenant provenance
+         and synchronize the IdP-managed admin flag. The issuer is the validated
+         token authority, so a re-pointed adapter key can't inherit the account.
       2. new identity with an UNVERIFIED email → deny; the account's username and
          email are derived from the email claim, so provisioning on an unverified
          claim would let a user squat an arbitrary address (locking out its real
          owner on their first login, and mislabelling the squatter in admin views).
       3. any email collision → deny; mutable human-readable claims never link
          (an IdP email claim must not be able to claim a local admin account).
-      4. otherwise JIT-create an identity bound to the stable provider subject.
+      4. otherwise JIT-create an identity bound to the stable (issuer, subject).
          The username is the normalized email (sessions are username-keyed); a
          residual username collision gets a deterministic hash suffix.
     """
-    # 1. Returning OIDC identity. The row lock serialises concurrent callbacks
-    # for the same subject so the admin-flag sync can't interleave. Verification
-    # is not re-checked here: identity is already established by (provider, subject).
-    existing = (
-        await session.exec(
-            select(User).where(User.auth_provider == cfg.key, User.oidc_subject == identity.subject).with_for_update()
-        )
-    ).first()
+    # 1. Returning OIDC identity. The row lock serialises concurrent callbacks for
+    # the same identity so the admin-flag sync can't interleave. Verification is not
+    # re-checked here: identity is already established by (issuer, subject).
+    existing = await _match_identity(session, identity, lock=True)
     if existing is not None:
         await _sync_returning_user(session, cfg=cfg, identity=identity, user=existing)
         return existing, False
@@ -274,15 +283,13 @@ async def provision_oidc_user(
 
     # 3. Email is a mutable display/contact attribute, never an identity key.
     normalized_email = identity.email.strip().lower()
-    by_email = (await session.exec(select(User).where(func.lower(User.email) == normalized_email))).first()
-    if by_email is not None:
+    if await _email_owner(session, normalized_email) is not None:
         raise OIDCProvisionError("account linking required")
 
-    # 4. JIT create. The stable provider subject authenticates this account; the
-    # email cannot claim an existing row because every collision above is denied.
+    # 4. JIT create. The (issuer, subject) authenticates this account; the email
+    # cannot claim an existing row because every collision above is denied.
     username = normalized_email
-    username_taken = (await session.exec(select(User).where(User.username == username))).first()
-    if username_taken is not None:
+    if (await session.exec(select(User).where(User.username == username))).first() is not None:
         # A local account whose username happens to be this email (with a
         # different/absent email of its own — same-email rows were denied above).
         username = _derive_username(normalized_email, cfg, identity)
@@ -292,6 +299,7 @@ async def provision_oidc_user(
         email=normalized_email,
         is_admin=map_is_admin(cfg, identity),
         auth_provider=cfg.key,
+        oidc_issuer=identity.issuer,
         oidc_subject=identity.subject,
         auth_tenant=identity.tenant_id,
         role_managed_by_idp=True,
@@ -300,24 +308,23 @@ async def provision_oidc_user(
     try:
         await session.commit()
     except IntegrityError:
-        # A unique violation: either a concurrent callback JIT-created this same
-        # (provider, subject), or the derived username was taken in the gap.
+        # A unique violation. It can be (a) a concurrent callback that JIT-created
+        # this same (issuer, subject), (b) a concurrent first-time callback with a
+        # DIFFERENT subject that won the same email (the partial unique index on SSO
+        # email fires), or (c) the derived username was taken. Re-derive after the
+        # rollback rather than assuming which — assuming "username only" is what
+        # would let case (b) create a second account for one email.
         await session.rollback()
-        existing = (
-            await session.exec(
-                select(User)
-                .where(User.auth_provider == cfg.key, User.oidc_subject == identity.subject)
-                .with_for_update()
-            )
-        ).first()
+        existing = await _match_identity(session, identity, lock=True)
         if existing is not None:
-            # Concurrent create of the same identity — adopt it.
             await _sync_returning_user(session, cfg=cfg, identity=identity, user=existing)
             return existing, False
-        # No subject match → it was the username that collided (the deterministic
-        # suffix is itself taken by a different account). Retry once with a wider,
-        # still-deterministic suffix so a pre-existing squatter of the short form
-        # can't permanently dead-end this identity's login.
+        # A different identity took this email between our check and now — deny,
+        # exactly as the initial collision check would have.
+        if await _email_owner(session, normalized_email) is not None:
+            raise OIDCProvisionError("account linking required") from None
+        # Pure username collision — retry once with a wider, still-deterministic
+        # suffix so a pre-existing squatter of the short form can't dead-end login.
         user.username = _derive_username(normalized_email, cfg, identity, width=32)
         session.add(user)
         try:

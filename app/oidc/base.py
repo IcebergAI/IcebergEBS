@@ -17,6 +17,10 @@ from typing import Any, Protocol
 class OIDCIdentity:
     """Normalised identity extracted from a validated ID token / userinfo."""
 
+    # The validated token issuer (`iss`). A `subject` is unique only WITHIN its
+    # issuer (OIDC spec), so the account key is (issuer, subject) — never the
+    # admin-configurable adapter key, which could later point at a different issuer.
+    issuer: str
     subject: str
     email: str
     email_verified: bool
@@ -53,10 +57,12 @@ class StandardOIDCAdapter:
         self.key = key
 
     def extract_identity(self, claims: dict[str, Any], role_claim: str) -> OIDCIdentity:
+        issuer = _require(claims, "iss")
         subject = _require(claims, "sub")
         email = _require(claims, "email")
         display_name = str(claims.get("name") or claims.get("preferred_username") or email)
         return OIDCIdentity(
+            issuer=issuer,
             subject=subject,
             email=email,
             email_verified=bool(claims.get("email_verified", False)),

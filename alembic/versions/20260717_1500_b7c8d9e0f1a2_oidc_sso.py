@@ -29,6 +29,7 @@ def upgrade() -> None:
         sa.Column("auth_provider", sqlmodel.sql.sqltypes.AutoString(), nullable=False, server_default="local"),
     )
     op.alter_column("user", "auth_provider", server_default=None)
+    op.add_column("user", sa.Column("oidc_issuer", sqlmodel.sql.sqltypes.AutoString(), nullable=True))
     op.add_column("user", sa.Column("oidc_subject", sqlmodel.sql.sqltypes.AutoString(), nullable=True))
     op.add_column("user", sa.Column("auth_tenant", sqlmodel.sql.sqltypes.AutoString(), nullable=True))
     op.add_column(
@@ -38,13 +39,27 @@ def upgrade() -> None:
     op.alter_column("user", "role_managed_by_idp", server_default=None)
     with op.batch_alter_table("user", schema=None) as batch_op:
         batch_op.create_index(batch_op.f("ix_user_auth_provider"), ["auth_provider"], unique=False)
-        # An OIDC account is keyed on the immutable (provider, subject) pair;
-        # Postgres treats NULL oidc_subject as distinct, so local rows never collide.
-        batch_op.create_unique_constraint("uq_user_provider_subject", ["auth_provider", "oidc_subject"])
-        # Local-xor-subject: a row is local-with-no-subject or SSO-with-a-subject.
+        # An OIDC account is keyed on the immutable, validated (issuer, subject) pair
+        # (the adapter key is admin-configurable and could be re-pointed at another
+        # issuer). Postgres treats NULL as distinct, so local rows never collide.
+        batch_op.create_unique_constraint("uq_user_issuer_subject", ["oidc_issuer", "oidc_subject"])
+        # Local-xor-subject, and issuer present iff subject present.
         batch_op.create_check_constraint(
             "ck_user_local_xor_subject", "(auth_provider = 'local') = (oidc_subject IS NULL)"
         )
+        batch_op.create_check_constraint(
+            "ck_user_issuer_subject_together", "(oidc_issuer IS NULL) = (oidc_subject IS NULL)"
+        )
+    # SSO accounts must not share an email (already lowercased at write time) — closes
+    # the concurrent-first-login duplicate-account race at the DB layer. Partial so
+    # local accounts (free-form / repeatable / NULL emails) are unaffected.
+    op.create_index(
+        "uq_user_sso_email",
+        "user",
+        ["email"],
+        unique=True,
+        postgresql_where=sa.text("oidc_subject IS NOT NULL"),
+    )
 
     # Admin-editable SSO config singleton (#32) — deliberately NO secret columns:
     # client secrets are env-only (see app/config.py).
@@ -95,12 +110,19 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     op.drop_table("oidcsettings")
+    # SSO users have a NULL password_hash; restoring the NOT NULL constraint below
+    # would fail while any exist. Removing SSO is inherently destructive to SSO
+    # accounts, so drop them (their history rows SET NULL / CASCADE per the schema).
+    op.execute('DELETE FROM "user" WHERE password_hash IS NULL')
+    op.drop_index("uq_user_sso_email", table_name="user")
     with op.batch_alter_table("user", schema=None) as batch_op:
+        batch_op.drop_constraint("ck_user_issuer_subject_together", type_="check")
         batch_op.drop_constraint("ck_user_local_xor_subject", type_="check")
-        batch_op.drop_constraint("uq_user_provider_subject", type_="unique")
+        batch_op.drop_constraint("uq_user_issuer_subject", type_="unique")
         batch_op.drop_index(batch_op.f("ix_user_auth_provider"))
     op.drop_column("user", "role_managed_by_idp")
     op.drop_column("user", "auth_tenant")
     op.drop_column("user", "oidc_subject")
+    op.drop_column("user", "oidc_issuer")
     op.drop_column("user", "auth_provider")
     op.alter_column("user", "password_hash", existing_type=sqlmodel.sql.sqltypes.AutoString(), nullable=False)
