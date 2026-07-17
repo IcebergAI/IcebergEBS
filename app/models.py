@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 from typing import Any, Optional
 
-from sqlalchemy import CheckConstraint, Column, DateTime, Index, desc
+from sqlalchemy import CheckConstraint, Column, DateTime, Index, desc, text
 from sqlmodel import Field, SQLModel, UniqueConstraint
 
 from app.utils import json_list, json_object
@@ -23,14 +23,65 @@ def _tz_column(*, nullable: bool) -> Column[Any]:
 
 
 class User(SQLModel, table=True):
+    # SSO identity (#32): an OIDC account is keyed on the immutable, validated
+    # (oidc_issuer, oidc_subject) pair — never the mutable email claim, and never
+    # the admin-configurable adapter key (which could be re-pointed at a different
+    # issuer, letting a colliding `sub` inherit an account). A `sub` is unique only
+    # within its issuer (OIDC spec). Postgres treats NULL values as distinct, so
+    # local rows (issuer/subject both NULL) never collide with each other.
+    __table_args__ = (
+        UniqueConstraint("oidc_issuer", "oidc_subject", name="uq_user_issuer_subject"),
+        # SSO accounts must not share a (already-lowercased) email: JIT provisioning
+        # denies email collisions, but two concurrent first-time callbacks with
+        # different subjects could otherwise both pass the app-level check and create
+        # duplicate rows for the same address — this closes that race at the DB layer
+        # (the #217 "strongest enforcement" rule). Partial so local accounts, whose
+        # emails are free-form and may repeat/be NULL, are unaffected.
+        Index(
+            "uq_user_sso_email",
+            "email",
+            unique=True,
+            postgresql_where=text("oidc_subject IS NOT NULL"),
+        ),
+        # Schema backstop for the identity invariant the provisioning code relies on
+        # (the #217 pattern): a row is EITHER local (issuer+subject NULL) OR SSO
+        # (both set). A "local" row carrying a subject, or an SSO row missing its
+        # issuer, is unresolvable by the (issuer, subject) match — make the ambiguous
+        # states unrepresentable, not just avoided.
+        CheckConstraint(
+            "(auth_provider = 'local') = (oidc_subject IS NULL)",
+            name="ck_user_local_xor_subject",
+        ),
+        CheckConstraint(
+            "(oidc_issuer IS NULL) = (oidc_subject IS NULL)",
+            name="ck_user_issuer_subject_together",
+        ),
+    )
+
     id: Optional[int] = Field(default=None, primary_key=True)
     username: str = Field(unique=True, index=True)
-    password_hash: str
+    # NULL for SSO-provisioned accounts: they have no local password and are
+    # refused by the password login path (see auth.verify_credentials).
+    password_hash: Optional[str] = None
     email: Optional[str] = None
     is_admin: bool = False
+    # "local" for password accounts, else the OIDC adapter key (#32) — used to pick
+    # the adapter + for the admin-UI badge, NOT as the identity key (see __table_args__).
+    auth_provider: str = Field(default="local", index=True)
+    # The validated token issuer (`iss`); with oidc_subject it is the account key.
+    oidc_issuer: Optional[str] = None
+    oidc_subject: Optional[str] = None
+    # IdP tenant provenance (Entra `tid`). Immutable once set — a returning login
+    # from a different tenant is an identity conflict, not the same account.
+    auth_tenant: Optional[str] = None
+    # True only for JIT-provisioned SSO accounts: their is_admin flag is re-derived
+    # from IdP groups on every login. Locally-created users (incl. the seeded
+    # break-glass admin) keep False, so the IdP can never demote them.
+    role_managed_by_idp: bool = False
     created_at: datetime = Field(default_factory=_utcnow, sa_column=_tz_column(nullable=False))
-    # Bumped on password change; sessions/cookies signed before this instant are
-    # rejected, invalidating other-device sessions on reset (M1 / #6).
+    # Generic session-revocation cutoff (M1 / #6, widened by #32): bumped on
+    # password change AND on an IdP-driven authorization change (is_admin sync).
+    # Sessions/cookies signed before this instant are rejected.
     password_changed_at: Optional[datetime] = Field(default_factory=_utcnow, sa_column=_tz_column(nullable=True))
 
 
@@ -185,6 +236,62 @@ class ProxySettings(SQLModel, table=True):
     mode: str = "SYSTEM"  # "NONE" | "SYSTEM" | "EXPLICIT" (app/proxy.py ProxyMode)
     proxy_url: str = ""
     no_proxy: str = ""
+    updated_at: datetime = Field(default_factory=_utcnow, sa_column=_tz_column(nullable=False))
+
+
+class OIDCSettings(SQLModel, table=True):
+    # Singleton (id == 1): admin-editable SSO/OIDC configuration (#32), seeded from
+    # the ICEBERG_EBS_AUTH_MODE / ICEBERG_EBS_OIDC_* env on first read
+    # (app/oidc_settings.py). Holds NO secret — the per-provider client secrets are
+    # env-only (settings.oidc_<provider>_client_secret) and never persisted here.
+    # Schema backstops for the invariants oidc_settings.update_settings enforces
+    # under a row lock (the #217 pattern): a writer that bypasses the helper — a
+    # migration backfill, manual SQL, a future code path — can't persist a junk
+    # auth_mode or an oidc-only config with no enabled provider, either of which
+    # would make the fail-closed startup validation abort boot with no repair path.
+    __table_args__ = (
+        CheckConstraint("auth_mode IN ('local', 'oidc', 'both')", name="ck_oidcsettings_auth_mode"),
+        CheckConstraint(
+            "auth_mode <> 'oidc' OR (oidc_entra_enabled OR oidc_authentik_enabled "
+            "OR oidc_auth0_enabled OR oidc_okta_enabled)",
+            name="ck_oidcsettings_oidc_requires_provider",
+        ),
+    )
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    auth_mode: str = "both"  # local | oidc | both
+    oidc_redirect_base_url: str = ""
+
+    oidc_entra_enabled: bool = False
+    oidc_entra_client_id: str = ""
+    oidc_entra_tenant_id: str = ""
+    oidc_entra_scopes: str = "openid email profile"
+    oidc_entra_role_claim: str = ""
+    oidc_entra_role_map: str = ""
+
+    oidc_authentik_enabled: bool = False
+    oidc_authentik_client_id: str = ""
+    oidc_authentik_base_url: str = ""
+    oidc_authentik_app_slug: str = ""
+    oidc_authentik_scopes: str = "openid email profile"
+    oidc_authentik_role_claim: str = "groups"
+    oidc_authentik_role_map: str = ""
+
+    oidc_auth0_enabled: bool = False
+    oidc_auth0_client_id: str = ""
+    oidc_auth0_domain: str = ""
+    oidc_auth0_scopes: str = "openid email profile"
+    oidc_auth0_role_claim: str = ""
+    oidc_auth0_role_map: str = ""
+
+    oidc_okta_enabled: bool = False
+    oidc_okta_client_id: str = ""
+    oidc_okta_domain: str = ""
+    oidc_okta_auth_server: str = ""
+    oidc_okta_scopes: str = "openid email profile"
+    oidc_okta_role_claim: str = "groups"
+    oidc_okta_role_map: str = ""
+
     updated_at: datetime = Field(default_factory=_utcnow, sa_column=_tz_column(nullable=False))
 
 

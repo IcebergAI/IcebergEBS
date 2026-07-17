@@ -79,6 +79,56 @@ class Settings(BaseSettings):
     login_rate_limit_enabled: bool = False
     login_rate_limit_per_minute: int = 5
     login_rate_limit_burst: int = 5
+    # SSO / OIDC (#32). Non-secret fields SEED the admin-editable OIDCSettings row
+    # on first read (app/oidc_settings.py); after that the row is the source of
+    # truth, editable live at /admin/oidc. auth_mode gates the two login paths:
+    # local (password only), oidc (SSO only — refused unless a complete provider is
+    # enabled, so a bad config can't lock everyone out), both (default). Client
+    # secrets are env-ONLY: never persisted to the DB, never returned by the API,
+    # never logged (same rule as the proxy credentials above).
+    auth_mode: str = "both"  # local | oidc | both
+    # Absolute public base URL for the IdP redirect back (e.g. "https://ebs.example.com")
+    # for proxy deployments where the app-observed host/scheme differs from the
+    # browser's. Empty ⇒ derive the callback URL from the request.
+    oidc_redirect_base_url: str = ""
+    # Microsoft Entra ID. tenant_id MUST be a specific tenant (GUID or verified
+    # domain) — never "common"/"organizations" — so ID-token issuer validation is exact.
+    oidc_entra_enabled: bool = False
+    oidc_entra_client_id: str = ""
+    oidc_entra_client_secret: SecretStr = SecretStr("")  # SECRET: env-only
+    oidc_entra_tenant_id: str = ""
+    oidc_entra_scopes: str = "openid email profile"
+    oidc_entra_role_claim: str = ""
+    oidc_entra_role_map: str = ""  # "group=admin,group2=user" allowlist
+    # Authentik (self-hostable; the e2e test target). Discovery is derived from
+    # base_url + app_slug: {base}/application/o/{slug}/.well-known/openid-configuration
+    oidc_authentik_enabled: bool = False
+    oidc_authentik_client_id: str = ""
+    oidc_authentik_client_secret: SecretStr = SecretStr("")  # SECRET: env-only
+    oidc_authentik_base_url: str = ""
+    oidc_authentik_app_slug: str = ""
+    oidc_authentik_scopes: str = "openid email profile"
+    oidc_authentik_role_claim: str = "groups"
+    oidc_authentik_role_map: str = ""
+    # Auth0. Roles/groups need a namespaced custom claim (Action/Rule) — point
+    # role_claim at it.
+    oidc_auth0_enabled: bool = False
+    oidc_auth0_client_id: str = ""
+    oidc_auth0_client_secret: SecretStr = SecretStr("")  # SECRET: env-only
+    oidc_auth0_domain: str = ""
+    oidc_auth0_scopes: str = "openid email profile"
+    oidc_auth0_role_claim: str = ""
+    oidc_auth0_role_map: str = ""
+    # Okta. auth_server "" = the org authorization server; set it (often "default")
+    # for a custom authorization server at /oauth2/<server>/.
+    oidc_okta_enabled: bool = False
+    oidc_okta_client_id: str = ""
+    oidc_okta_client_secret: SecretStr = SecretStr("")  # SECRET: env-only
+    oidc_okta_domain: str = ""
+    oidc_okta_auth_server: str = ""
+    oidc_okta_scopes: str = "openid email profile"
+    oidc_okta_role_claim: str = "groups"
+    oidc_okta_role_map: str = ""
     app_base_url: str = ""  # e.g. "https://icebergebs.example.com" — used in webhook payloads
     # Emit logs as single-line JSON (for a log collector) instead of timestamped text (#89).
     log_json: bool = False

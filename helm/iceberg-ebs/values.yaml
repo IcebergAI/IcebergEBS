@@ -84,6 +84,43 @@ icebergEbs:
   proxyNoProxy: "localhost,127.0.0.0/8,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,169.254.0.0/16,::1"
   proxyUsername: ""        # optional — set via --set; never commit a value here
   proxyPassword: ""        # optional — set via --set; never commit a value here
+  # SSO / OIDC (#32): authMode local|oidc|both; the per-provider non-secret config
+  # seeds the admin-editable settings (live at /admin/oidc). Client secrets are
+  # env-only secrets wired via the chart Secret — never ConfigMap data. Set
+  # oidcRedirectBaseUrl to the public https origin (the ingress host) so the IdP
+  # callback URL is built correctly behind the proxy chain.
+  authMode: both
+  oidcRedirectBaseUrl: ""
+  oidcEntraEnabled: false
+  oidcEntraClientId: ""
+  oidcEntraClientSecret: ""    # secret — set via --set; never commit a value here
+  oidcEntraTenantId: ""        # a specific tenant (GUID/domain), never "common"
+  oidcEntraScopes: "openid email profile"
+  oidcEntraRoleClaim: ""
+  oidcEntraRoleMap: ""         # "group=admin,group2=user"
+  oidcAuthentikEnabled: false
+  oidcAuthentikClientId: ""
+  oidcAuthentikClientSecret: ""  # secret — set via --set; never commit a value here
+  oidcAuthentikBaseUrl: ""
+  oidcAuthentikAppSlug: ""
+  oidcAuthentikScopes: "openid email profile"
+  oidcAuthentikRoleClaim: "groups"
+  oidcAuthentikRoleMap: ""
+  oidcAuth0Enabled: false
+  oidcAuth0ClientId: ""
+  oidcAuth0ClientSecret: ""    # secret — set via --set; never commit a value here
+  oidcAuth0Domain: ""
+  oidcAuth0Scopes: "openid email profile"
+  oidcAuth0RoleClaim: ""
+  oidcAuth0RoleMap: ""
+  oidcOktaEnabled: false
+  oidcOktaClientId: ""
+  oidcOktaClientSecret: ""     # secret — set via --set; never commit a value here
+  oidcOktaDomain: ""
+  oidcOktaAuthServer: ""       # empty = org authorization server
+  oidcOktaScopes: "openid email profile"
+  oidcOktaRoleClaim: "groups"
+  oidcOktaRoleMap: ""
 
 postgresql:
   auth:

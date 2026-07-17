@@ -367,6 +367,10 @@ silently ignored — #87). All settings use the `ICEBERG_EBS_` prefix.
 | `ICEBERG_EBS_PROXY_NO_PROXY` | localhost + private ranges | Hosts/suffixes/IPs/CIDRs that bypass the explicit proxy |
 | `ICEBERG_EBS_PROXY_USERNAME` | `""` | Proxy credentials — env-only secret (Helm: chart Secret, not ConfigMap) |
 | `ICEBERG_EBS_PROXY_PASSWORD` | `""` | See above |
+| `ICEBERG_EBS_AUTH_MODE` | `both` | Login paths: `local` \| `oidc` \| `both` (#32) |
+| `ICEBERG_EBS_OIDC_REDIRECT_BASE_URL` | `""` | Public base URL for the IdP callback behind a rewriting proxy |
+| `ICEBERG_EBS_OIDC_<PROVIDER>_*` | see `.env.example` | Per-provider OIDC config for `ENTRA`/`AUTHENTIK`/`AUTH0`/`OKTA` (#32) |
+| `ICEBERG_EBS_OIDC_<PROVIDER>_CLIENT_SECRET` | `""` | OIDC client secret — env-only secret (Helm: chart Secret, not ConfigMap) |
 
 Settings **not** in this table (e.g. the login rate-limit tuning `ICEBERG_EBS_LOGIN_MAX_ATTEMPTS` /
 `…_LOGIN_ATTEMPT_WINDOW_SECONDS` / `…_LOGIN_LOCKOUT_SECONDS`, `ICEBERG_EBS_API_KEY_LAST_USED_THROTTLE_SECONDS`,
@@ -407,6 +411,62 @@ Operational notes:
 - The connectivity test at `/admin/proxy` dials only server-known egress targets (the five store
   origins + enabled webhook **origins**, never their capability paths) — by design it does not
   accept arbitrary URLs.
+
+### Single sign-on (OIDC, #32)
+
+OIDC sign-in (Authorization Code + PKCE via Authlib) against **Microsoft Entra ID, Authentik,
+Auth0, or Okta**. The non-secret `ICEBERG_EBS_AUTH_MODE` / `ICEBERG_EBS_OIDC_*` env vars **seed**
+an admin-editable config (the `OIDCSettings` DB singleton, edited live at `/admin/oidc` — after
+the first boot **the DB row wins over the env** for everything except secrets). Client secrets
+stay **env-only** (`ICEBERG_EBS_OIDC_<PROVIDER>_CLIENT_SECRET`) — never persisted, returned by
+the API, or logged; in Helm they are chart-Secret keys wired as `secretKeyRef` env, never
+ConfigMap data (`tests/test_deploy_env.py` enforces the split).
+
+Setting up a provider:
+
+1. Register IcebergEBS with the IdP as a **confidential web application** using the redirect URI
+   `https://<your-host>/auth/oidc/<provider>/callback` (provider = `entra`/`authentik`/`auth0`/`okta`).
+2. Set the provider's env vars (see `.env.example`) — client id + secret plus the
+   provider-specific field(s): Entra **tenant ID** (a concrete GUID/verified domain, never
+   `common` — issuer validation must pin one tenant), Authentik **base URL + application slug**,
+   Auth0/Okta **domain** (Okta optionally an authorization-server id).
+3. Behind Caddy/the ingress, set `ICEBERG_EBS_OIDC_REDIRECT_BASE_URL` to the public origin so the
+   callback URL is built with the browser-visible host/scheme rather than the app-observed one.
+4. To map IdP groups to admin, configure the provider's group claim (`…_ROLE_CLAIM`, e.g.
+   `groups`) and an allowlist `…_ROLE_MAP` of `group=admin|user` pairs. Only groups mapped to
+   `admin` grant admin; the default is a regular user (no self-elevation). The mapped flag is
+   re-synced on every SSO login and revokes that user's older sessions when it changes.
+
+Operational notes:
+
+- **Break-glass:** keep `auth_mode=both` until SSO is proven, and keep at least one local admin
+  (the seeded `ICEBERG_EBS_ADMIN_*` account). `auth_mode=oidc` disables password login entirely
+  and is refused unless a complete provider is enabled — but a *misconfigured IdP* with
+  `auth_mode=oidc` still locks the UI: recover by setting `ICEBERG_EBS_AUTH_MODE=both`… which the
+  DB row overrides, so flip it back via the API/DB or temporarily restore the env secret and use
+  SSO. Prefer switching to `oidc` only from the admin page, which validates the result.
+- **Fail-closed startup:** the stored SSO config is validated during boot; a config that became
+  invalid (typically the env client secret was removed while a provider is still enabled) aborts
+  startup rather than silently starting without a working login path. Restore the env var (or
+  correct the row) and restart.
+- SSO-provisioned accounts have **no local password** (username = their email); password login
+  refuses them, and a password reset is the IdP's job. Accounts are keyed on the immutable
+  provider subject — a changed email never links to a different account; a collision with an
+  existing account's email is denied ("account linking required") rather than auto-linked. A
+  brand-new identity must present a **verified** email (the account name is derived from it), so
+  configure your IdP to assert email verification.
+- **The IdP is the access gate.** JIT provisioning means anyone your IdP authenticates for this
+  application gets an account, so control access with **IdP-side app assignment** (assign the app
+  to specific users/groups), not by deleting rows here: deleting an SSO user in `/admin/users` is
+  **not a ban** — their next sign-in re-provisions a fresh account. Off-board at the IdP.
+- **IdP-side credential resets don't propagate.** IcebergEBS learns of an IdP password reset or
+  account disable only on the next sign-in. A stolen session cookie stays valid until
+  `session_max_age`, and any API keys the account minted keep working, until the IdP-driven admin
+  re-sync bumps the session cutoff (only on an is_admin change) or an admin deletes the keys. For
+  immediate revocation of a specific session, delete the user's API keys and rely on the cookie
+  lifetime; back-channel / RP-initiated logout is a tracked follow-up.
+- All IdP traffic (discovery, JWKS, token, userinfo) routes through the **outbound proxy layer**
+  above, like every other egress path.
 
 ---
 

@@ -17,6 +17,14 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 os.environ.setdefault("ICEBERG_EBS_ADMIN_USERNAME", "testadmin")
 os.environ.setdefault("ICEBERG_EBS_ADMIN_PASSWORD", "testpass")
 os.environ.setdefault("ICEBERG_EBS_SECRET_KEY", "test-secret-key-for-testing-only-32chars")
+# Enable one OIDC provider (#32) so the SSO routes register and the login page
+# renders a button; discovery/JWKS are never fetched — tests stub the Authlib
+# client boundary (tests/test_oidc.py). AUTH_MODE stays the default "both".
+os.environ.setdefault("ICEBERG_EBS_OIDC_AUTHENTIK_ENABLED", "true")
+os.environ.setdefault("ICEBERG_EBS_OIDC_AUTHENTIK_BASE_URL", "https://authentik.test")
+os.environ.setdefault("ICEBERG_EBS_OIDC_AUTHENTIK_APP_SLUG", "iceberg-ebs")
+os.environ.setdefault("ICEBERG_EBS_OIDC_AUTHENTIK_CLIENT_ID", "test-client-id")
+os.environ.setdefault("ICEBERG_EBS_OIDC_AUTHENTIK_CLIENT_SECRET", "test-client-secret")
 
 from app.auth import create_session_cookie, generate_api_key, hash_api_key, hash_password
 from app.config import settings
@@ -80,6 +88,21 @@ def make_fake_crx(manifest: dict | None = None) -> bytes:
 @pytest.fixture(scope="session")
 def anyio_backend():
     return "asyncio"
+
+
+@pytest.fixture(autouse=True)
+def _reset_oidc_state():
+    """Reset the in-memory SSO config snapshot + Authlib registration around every
+    test (#32) — a test that set_config()s or registers providers must not leak
+    into the next (the OIDCSettings row itself is handled by _clean_tables)."""
+    from app import oidc_settings
+    from app.oidc import service as oidc_service
+
+    oidc_settings.set_config(None)
+    oidc_service.reset_registration()
+    yield
+    oidc_settings.set_config(None)
+    oidc_service.reset_registration()
 
 
 @pytest_asyncio.fixture(scope="session", loop_scope="session")

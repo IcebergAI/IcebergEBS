@@ -31,6 +31,10 @@ dependencies = [
     "apscheduler",
     "bcrypt",
     "alembic",
+    # OIDC SSO (#32). Authlib drives the Authorization-Code+PKCE flow, discovery,
+    # JWKS fetch and ID-token validation; the per-provider adapters live in
+    # app/oidc/. Same floor as the sibling deep_thought project.
+    "authlib>=1.6",
 ]
 
 [project.urls]
@@ -115,6 +119,10 @@ module = [
     "app.retention",
     "app.database",
     "app.fetchers.*",
+    # ORM-touching SSO modules (#32); the pure OIDC core (app.oidc.base/config +
+    # the adapters) stays type-checked.
+    "app.oidc.service",
+    "app.oidc_settings",
 ]
 ignore_errors = true
 

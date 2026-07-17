@@ -126,11 +126,17 @@ _DUMMY_HASH: str = bcrypt.hashpw(b"dummy", bcrypt.gensalt(rounds=BCRYPT_ROUNDS))
 
 
 async def verify_credentials(username: str, password: str, session: AsyncSession):
-    """Return the User if credentials are valid, None otherwise."""
+    """Return the User if credentials are valid, None otherwise.
+
+    SSO-provisioned accounts have no local password (password_hash is NULL, #32);
+    they take the dummy-hash path like unknown usernames — always paying the
+    bcrypt cost, always failing — so password login can neither succeed for them
+    nor leak their existence via timing.
+    """
     user = (await session.exec(select(User).where(User.username == username))).first()
-    hash_to_check = user.password_hash if user else _DUMMY_HASH
-    valid = await verify_password(password, hash_to_check)
-    return user if (user and valid) else None
+    stored_hash = user.password_hash if user else None
+    valid = await verify_password(password, stored_hash or _DUMMY_HASH)
+    return user if (user and stored_hash and valid) else None
 
 
 async def authenticate_session(request: Request, session: AsyncSession) -> User | None:

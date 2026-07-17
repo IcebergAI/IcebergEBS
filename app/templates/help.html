@@ -135,11 +135,37 @@
       extensions — adding for one user has no effect on another.
     </p>
     <ul class="text-[13.5px] leading-relaxed pl-5 list-disc" style="color:var(--ink-soft)">
-      <li>Admin creates users via <a href="/admin/users">admin / users</a>. There is no self-registration.</li>
+      <li>Admin creates users via <a href="/admin/users">admin / users</a>. There is no self-registration —
+        except just-in-time provisioning on single sign-on (below).</li>
       <li>Change your password or pick a theme (system, light, or dark) under the username menu in the top bar.</li>
       <li>Admins can delete users — their alert rules, webhook destinations, and API keys are
         removed, while their extensions are kept (unassigned and taken off the watchlist) so
         fetch and alert history survives.</li>
+    </ul>
+  </div>
+
+  <div class="surface p-6 mb-4">
+    <h2 class="section-title">Single sign-on (OIDC)</h2>
+    <p class="text-[13.5px] leading-relaxed mb-2" style="color:var(--ink-soft)">
+      IcebergEBS can sign users in against an OIDC identity provider — <strong>Microsoft Entra
+      ID, Authentik, Auth0, or Okta</strong> — alongside or instead of password login. Admins
+      configure providers live at <strong>Single sign-on</strong> in the rail; the
+      <code class="mono">ICEBERG_EBS_AUTH_MODE</code> / <code class="mono">ICEBERG_EBS_OIDC_*</code>
+      environment variables seed the initial values, and the per-provider client secrets are
+      environment-only (never stored in the database or shown in the UI).
+    </p>
+    <ul class="text-[13.5px] leading-relaxed pl-5 list-disc" style="color:var(--ink-soft)">
+      <li>A first SSO login creates the account automatically (username = the IdP email). SSO
+        accounts have no local password — password changes are the identity provider's job.</li>
+      <li>Admin membership can follow IdP groups: map <code class="mono">group=admin</code> pairs
+        in the provider's role map. Unmapped users sign in as regular users, never admins, and the
+        flag is re-checked on every SSO login (removing the group demotes and signs out other sessions).</li>
+      <li>The authentication mode is <strong>both</strong> (password + SSO), <strong>local</strong>
+        (password only), or <strong>oidc</strong> (SSO only). OIDC-only mode is refused unless a
+        complete provider is enabled, so a bad config can't lock everyone out; local accounts stay
+        available as break-glass in <strong>both</strong> mode.</li>
+      <li>Accounts are keyed on the provider's immutable subject, never the (mutable) email — an
+        SSO login whose email matches an existing account is denied rather than auto-linked.</li>
     </ul>
   </div>
 
@@ -251,6 +277,16 @@
     <table>
       <thead><tr><th>Env var</th><th>Default</th><th>Description</th></tr></thead>
       <tbody>
+        <tr>
+          <td class="mono" style="white-space:nowrap">ICEBERG_EBS_AUTH_MODE</td>
+          <td style="color:var(--muted)">both</td>
+          <td style="color:var(--muted)">login paths: local | oidc | both (#32)</td>
+        </tr>
+        <tr>
+          <td class="mono" style="white-space:nowrap">ICEBERG_EBS_OIDC_&lt;PROVIDER&gt;_*</td>
+          <td style="color:var(--muted)">disabled</td>
+          <td style="color:var(--muted)">per-provider SSO config (ENTRA / AUTHENTIK / AUTH0 / OKTA); client secrets are env-only (#32)</td>
+        </tr>
         <tr>
           <td class="mono" style="white-space:nowrap">ICEBERG_EBS_ADMIN_USERNAME</td>
           <td style="color:var(--muted)">—</td>

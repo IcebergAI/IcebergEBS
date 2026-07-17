@@ -28,7 +28,11 @@
     </div>
 
     <h1 class="text-[18px] font-semibold mb-1" style="color:var(--ink)">Sign in</h1>
+    {% if local_auth_enabled %}
     <p class="text-[13px] mb-6" style="color:var(--muted)">Use the credentials provided by your workspace admin.</p>
+    {% else %}
+    <p class="text-[13px] mb-6" style="color:var(--muted)">Sign in with your organisation's identity provider.</p>
+    {% endif %}
 
     {% if error %}
     <div class="flash" style="border-left-color: var(--risk-critical); color: var(--risk-critical); margin-bottom: 16px">
@@ -36,6 +40,7 @@
     </div>
     {% endif %}
 
+    {% if local_auth_enabled %}
     <form method="post" action="/login" class="flex flex-col gap-3.5">
       <div>
         <label class="label-cap block mb-1.5">Username</label>
@@ -47,6 +52,23 @@
       </div>
       <button type="submit" class="btn btn-primary w-full justify-center mt-2">Sign in</button>
     </form>
+    {% endif %}
+
+    {# SSO (#32): plain same-origin anchors — no scripts on the login page. #}
+    {% if sso_providers %}
+    {% if local_auth_enabled %}
+    <div class="flex items-center gap-3 my-5" aria-hidden="true">
+      <div class="flex-1" style="border-top:1px solid var(--line)"></div>
+      <span class="text-[11px]" style="color:var(--muted)">or</span>
+      <div class="flex-1" style="border-top:1px solid var(--line)"></div>
+    </div>
+    {% endif %}
+    <div class="flex flex-col gap-2.5">
+      {% for key, name in sso_providers %}
+      <a href="/auth/oidc/{{ key }}/login" class="btn btn-secondary w-full justify-center">Continue with {{ name }}</a>
+      {% endfor %}
+    </div>
+    {% endif %}
 
     <div class="text-meta mt-6">Trust nothing. Score everything.</div>
   </div>
