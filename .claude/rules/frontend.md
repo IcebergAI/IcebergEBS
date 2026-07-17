@@ -3,6 +3,7 @@ description: The IcebergAI house design system (tokens/shell/fonts), theming, br
 paths:
   - "static/**"
   - "app/templates/**"
+  - "e2e/**"
 ---
 
 # Styling, Theming and Design
@@ -38,3 +39,8 @@ The `@alpinejs/csp` build cannot evaluate an inline `x-data` object that defines
 **Server data goes through `<script type="application/json" id="...">{{ data | tojson }}</script>` islands** read with the shared `readJSON(id)` helper (app.js) — never through the `x-data` attribute: JSON's `"` terminates the HTML attribute, and the CSP expression parser doesn't decode the `\uXXXX` escapes `|tojson` emits for `< > & '`. Existing islands: `dashboard-data`, `ext-data`, `account-data`, `keys-data`, `users-data`, `score-history`, `proxy-data`, `oidc-data`.
 
 **Directive expressions must stay within the CSP parser's grammar** (what deep_thought/iceberg use in production): property paths, bare method calls and calls with simple args, assignments, `!`/`!!`, comparisons, `&&`/`||`, ternaries, string `+` concat, `.trim()`/`.includes()`-style calls on scope properties. **Not supported** — arrow functions (`=>` tokenises as an unexpected `>` operator), template literals, `??`, `new …`, and any global (`window`, `document`, `localStorage`): put those in a component method/getter instead. No `x-html` (use `$refs` + `innerHTML` inside a method if ever needed).
+
+## Driving the UI locally (Playwright / e2e)
+To exercise the running UI (find/verify a UI bug in a real browser), drive the **dev app directly at `http://localhost:8000`** (`docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d postgres app`) — **not** the Caddy edge at `https://localhost`. The dev uvicorn command omits `--proxy-headers` (the prod Dockerfile CMD has it), so behind Caddy the app sees scheme `http` while the browser `Origin` is `https`, and `CSRFOriginMiddleware` 403s **every `POST /login`** (looks like a login bug — it's the reverse-proxy scheme mismatch). Admin creds are seeded from `.env` (`ICEBERG_EBS_ADMIN_USERNAME`/`ICEBERG_EBS_ADMIN_PASSWORD`), **not** `admin/admin` unless `.env` leaves them unset. Playwright isn't in `uv.lock`: install it into a throwaway venv and run the driver with the **sandbox disabled** (localhost is unreachable when sandboxed); Chromium is already cached at `~/.cache/ms-playwright`. The committed smoke is `e2e/test_ui.py` (CI points it at `https://localhost` via Caddy, which *does* run `--proxy-headers`); run it locally against the dev app with `BASE_URL=http://localhost:8000` + the two `ICEBERG_EBS_ADMIN_*` env vars. After editing `iceberg.css`/`app.css`, run `make css` or the dev bind-mount serves the stale `output.css`.
+
+If the app container crash-loops with `asyncpg InvalidPasswordError`, the Postgres **volume** was initialised with a different password than the current `.env` (Postgres sets the password only on **first** volume init, ignoring later `.env` changes). The dev overlay's throwaway `iceberg_ebs:iceberg_ebs` creds match the original init, so bringing the stack up via the overlay above just works — don't `ALTER USER … PASSWORD` (the auto-mode classifier blocks it) or wipe the volume.
