@@ -53,11 +53,26 @@ async def get_settings(session: AsyncSession) -> ProxySettings:
 
 
 async def update_settings(session: AsyncSession, changes: dict[str, Any]) -> ProxySettings:
-    """Apply a whitelisted patch to the singleton row and refresh the snapshot."""
-    row = await get_settings(session)
+    """Apply a whitelisted patch to the singleton row and refresh the snapshot.
+
+    The EXPLICIT⇒URL invariant is enforced HERE, on the resulting row, under a
+    ``FOR UPDATE`` row lock — validating before the update (in the route) is a
+    TOCTOU: two concurrent PUTs can each pass a pre-check and interleave into
+    EXPLICIT-with-empty-URL, silently failing open to direct egress. The lock
+    serialises writers so the row each one validates is the row it commits; the
+    schema-level CHECK constraint (see ``models.ProxySettings``) backstops any
+    writer that bypasses this function. Raises ``ValueError`` on violation.
+    """
+    await get_settings(session)  # ensure the singleton exists (seeds on first read)
+    row = await session.get(ProxySettings, _SINGLETON_ID, with_for_update=True)
+    if row is None:  # just seeded above and never deleted — unreachable in practice
+        raise RuntimeError("ProxySettings singleton row missing")
     for key in EDITABLE_FIELDS:
         if key in changes and changes[key] is not None:
             setattr(row, key, changes[key])
+    if row.mode == proxy.ProxyMode.EXPLICIT.value and not row.proxy_url.strip():
+        await session.rollback()  # discard the patch and release the row lock
+        raise ValueError("explicit mode requires a proxy URL")
     row.updated_at = _utcnow()
     session.add(row)
     await session.commit()

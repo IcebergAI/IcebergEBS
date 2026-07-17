@@ -730,3 +730,68 @@ async def test_refresh_cache_loads_snapshot(test_db, monkeypatch):
     cfg = proxy.get_config()
     assert cfg is not None
     assert cfg.mode == "NONE"
+
+
+# ---------------------------------------------------------------------------
+# EXPLICIT⇒URL invariant under concurrency: the validation lives in
+# update_settings on the RESULTING row under a FOR UPDATE lock, with a schema
+# CHECK constraint as the backstop — a route-level pre-check alone is a TOCTOU
+# (two interleaved PUTs could merge into EXPLICIT-with-empty-URL = fail-open).
+# ---------------------------------------------------------------------------
+
+
+async def test_update_settings_rejects_resulting_invalid_state(test_db):
+    from app import proxy_settings
+
+    async with AsyncSession(test_db) as s:
+        await proxy_settings.update_settings(s, {"mode": "NONE", "proxy_url": ""})
+    async with AsyncSession(test_db) as s:
+        with pytest.raises(ValueError, match="explicit mode requires a proxy URL"):
+            await proxy_settings.update_settings(s, {"mode": "EXPLICIT"})
+    async with AsyncSession(test_db) as s:
+        row = await proxy_settings.get_settings(s)
+    assert row.mode == "NONE"  # rejected patch rolled back, nothing committed
+
+
+async def test_concurrent_updates_cannot_merge_into_explicit_without_url(test_db):
+    """The bot-reported race: one writer sets mode=EXPLICIT, another clears
+    proxy_url. Whatever the interleave, the loser must be rejected — the merged
+    fail-open state (EXPLICIT + empty URL) must be unreachable."""
+    import asyncio
+
+    from app import proxy_settings
+
+    async with AsyncSession(test_db) as s:
+        await proxy_settings.update_settings(s, {"mode": "SYSTEM", "proxy_url": "http://proxy:3128"})
+
+    async def set_explicit():
+        async with AsyncSession(test_db) as s:
+            await proxy_settings.update_settings(s, {"mode": "EXPLICIT"})
+
+    async def clear_url():
+        async with AsyncSession(test_db) as s:
+            await proxy_settings.update_settings(s, {"proxy_url": ""})
+
+    results = await asyncio.gather(set_explicit(), clear_url(), return_exceptions=True)
+    # Exactly one writer must lose (ValueError), never both succeed.
+    errors = [r for r in results if isinstance(r, Exception)]
+    assert len(errors) == 1 and isinstance(errors[0], ValueError)
+
+    async with AsyncSession(test_db) as s:
+        row = await proxy_settings.get_settings(s)
+    assert not (row.mode == "EXPLICIT" and not row.proxy_url.strip())
+
+
+async def test_schema_check_constraint_backstops_invariant(test_db):
+    """A writer that bypasses update_settings entirely still cannot commit the
+    fail-open state: the CHECK constraint rejects it at the schema level."""
+    from sqlalchemy import text as sa_text
+    from sqlalchemy.exc import IntegrityError
+
+    from app import proxy_settings
+
+    async with AsyncSession(test_db) as s:
+        await proxy_settings.get_settings(s)  # seed the singleton
+        with pytest.raises(IntegrityError):
+            await s.execute(sa_text("UPDATE proxysettings SET mode = 'EXPLICIT', proxy_url = '' WHERE id = 1"))
+        await s.rollback()

@@ -29,6 +29,9 @@ def upgrade() -> None:
         sa.Column("no_proxy", sqlmodel.sql.sqltypes.AutoString(), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
         sa.PrimaryKeyConstraint("id"),
+        # Schema-level backstop for the EXPLICIT⇒URL invariant: EXPLICIT with an
+        # empty URL silently falls back to direct egress (proxy bypass).
+        sa.CheckConstraint("mode != 'EXPLICIT' OR proxy_url != ''", name="ck_proxysettings_explicit_requires_url"),
     )
     # ### end Alembic commands ###
 

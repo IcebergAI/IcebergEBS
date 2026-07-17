@@ -144,17 +144,14 @@ async def get_proxy_settings(_: AdminUser, session: SessionDep) -> ProxySettings
 
 @router.put("/proxy/settings")
 async def put_proxy_settings(body: ProxySettingsUpdate, _: AdminUser, session: SessionDep) -> ProxySettingsOut:
-    changes = body.model_dump(exclude_unset=True)
-    # Enforce the mode/URL invariant against the RESULTING settings, not just the
-    # request fields: EXPLICIT with an empty URL would silently connect direct
-    # (resolve_proxy_url falls back), quietly bypassing the intended proxy — e.g.
-    # a PUT that clears only proxy_url while the stored mode stays explicit.
-    current = await proxy_settings.get_settings(session)
-    resulting_mode = changes.get("mode") if changes.get("mode") is not None else current.mode
-    resulting_url = changes.get("proxy_url") if changes.get("proxy_url") is not None else current.proxy_url
-    if resulting_mode == proxy.ProxyMode.EXPLICIT.value and not resulting_url.strip():
-        raise HTTPException(status_code=422, detail="explicit mode requires a proxy URL")
-    row = await proxy_settings.update_settings(session, changes)
+    # The EXPLICIT⇒URL invariant is enforced inside update_settings, on the
+    # RESULTING row under a FOR UPDATE lock — a route-level pre-check would be a
+    # TOCTOU against a concurrent PUT (e.g. one request sets mode=EXPLICIT while
+    # another clears proxy_url; each pre-check passes, the merge fails open).
+    try:
+        row = await proxy_settings.update_settings(session, body.model_dump(exclude_unset=True))
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from None
     return ProxySettingsOut.model_validate(row)
 
 
@@ -179,6 +176,11 @@ async def test_proxy(body: ProxyTestIn, _: AdminUser, session: SessionDep) -> di
     if target is None:
         raise HTTPException(status_code=400, detail="Unknown target")
     cfg = proxy.ProxyConfig(mode=row.mode, proxy_url=row.proxy_url, no_proxy=row.no_proxy)
+    # via_proxy reports the route of the ATTEMPTED request only: it stays False
+    # until the routing decision for the URL actually dialled (for webhooks, the
+    # pinned-IP form — what the routing transport sees in production) is computed.
+    # A webhook that fails validation is never dialled, so no route is claimed.
+    decision: str | None = None
     try:
         url = target.url
         headers: dict[str, str] = {}
@@ -193,20 +195,16 @@ async def test_proxy(body: ProxyTestIn, _: AdminUser, session: SessionDep) -> di
                 extensions = {"sni_hostname": host}
         # Resolve through OUR parser even for SYSTEM mode (trust_env=False) so the
         # test exercises exactly the semantics ProxyRoutingTransport applies — not
-        # httpx's own env handling, which the main client never uses. Resolved
-        # against the URL actually dialled (for webhooks, the pinned-IP form —
-        # matching what the routing transport sees in production). Fresh throwaway
-        # client: a connectivity probe must not retry or share pools.
+        # httpx's own env handling, which the main client never uses. Fresh
+        # throwaway client: a connectivity probe must not retry or share pools.
         decision = proxy.resolve_proxy_url(cfg, url)
         async with httpx.AsyncClient(
             timeout=_TEST_TIMEOUT, follow_redirects=False, trust_env=False, proxy=decision
         ) as client:
             resp = await client.get(url, headers=headers, extensions=extensions)
         result = f"ok: HTTP {resp.status_code}"
-        via_proxy = decision is not None
     except Exception as exc:
         # Class name only — the message can embed the credential-bearing proxy URL (M4).
         logger.warning("Proxy connectivity test for %r failed: %s", body.target, proxy.scrub(str(exc)))
         result = f"error: {type(exc).__name__}"
-        via_proxy = proxy.resolve_proxy_url(cfg, target.url) is not None
-    return {"target": body.target, "via_proxy": via_proxy, "result": result}
+    return {"target": body.target, "via_proxy": decision is not None, "result": result}
