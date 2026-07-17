@@ -26,7 +26,7 @@
             <input type="radio" name="store" :value="s.k" x-model="store" class="sr-only">
             <div class="surface p-3 transition" :style="store === s.k ? 'border-color:var(--accent);box-shadow:0 0 0 1px var(--accent) inset' : ''">
               <span class="badge badge-store" :class="'badge-'+s.k"><span class="dot"></span><span x-text="s.k"></span></span>
-              <div class="text-[12.5px] mt-2" style="color:var(--ink-7)" x-text="s.l"></div>
+              <div class="text-[12.5px] mt-2" style="color:var(--ink-soft)" x-text="s.l"></div>
             </div>
           </label>
         </template>
@@ -50,15 +50,15 @@
     <div class="grid grid-cols-3 gap-3 text-[12px]">
       <div class="surface-soft p-3">
         <span class="badge badge-store badge-chrome"><span class="dot"></span>chrome</span>
-        <div class="mono text-[11.5px] mt-2 truncate" style="color:var(--ink-6)">cjpalhdlnbpafiamejdnhcphjbkeiagm</div>
+        <div class="mono text-[11.5px] mt-2 truncate" style="color:var(--ink-soft)">cjpalhdlnbpafiamejdnhcphjbkeiagm</div>
       </div>
       <div class="surface-soft p-3">
         <span class="badge badge-store badge-vscode"><span class="dot"></span>vscode</span>
-        <div class="mono text-[11.5px] mt-2 truncate" style="color:var(--ink-6)">ms-python.python</div>
+        <div class="mono text-[11.5px] mt-2 truncate" style="color:var(--ink-soft)">ms-python.python</div>
       </div>
       <div class="surface-soft p-3">
         <span class="badge badge-store badge-edge"><span class="dot"></span>edge</span>
-        <div class="mono text-[11.5px] mt-2 truncate" style="color:var(--ink-6)">jmjflgjpcpepeafmmgdpfkogkghcpiha</div>
+        <div class="mono text-[11.5px] mt-2 truncate" style="color:var(--ink-soft)">jmjflgjpcpepeafmmgdpfkogkghcpiha</div>
       </div>
     </div>
   </div>

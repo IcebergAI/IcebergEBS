@@ -6,13 +6,13 @@
 <script id="keys-data" type="application/json">{{ keys | tojson }}</script>
 <div x-data="apiKeysPage">
 
-<div class="flex items-center gap-2 text-[12.5px] mb-2" style="color:var(--ink-5)">
+<div class="flex items-center gap-2 text-[12.5px] mb-2" style="color:var(--muted)">
   <span>Account</span>
   <span>/</span>
-  <span style="color:var(--ink-7)">API keys</span>
+  <span style="color:var(--ink-soft)">API keys</span>
 </div>
 <h1 class="page-title">API keys</h1>
-<p class="text-[13px] mb-5" style="color:var(--ink-5)">
+<p class="text-[13px] mb-5" style="color:var(--muted)">
   Bearer tokens for SOAR platforms, scripts, and other machine-to-machine integrations.
   Keys inherit your account permissions — read-only keys can only make GET requests.
 </p>
@@ -20,7 +20,7 @@
 {# ── Auth example ────────────────────────────────────────────── #}
 <div class="surface-soft p-4 mb-6" style="max-width:640px">
   <div class="label-cap mb-2">Authenticating a request</div>
-  <pre class="mono text-[12px] p-3 rounded-lg overflow-x-auto" style="background:var(--ink-0);color:var(--ink-7);border:1px solid var(--ink-3);margin:0">curl https://your-instance/api/extensions \
+  <pre class="mono text-[12px] p-3 rounded-lg overflow-x-auto" style="background:var(--paper);color:var(--ink-soft);border:1px solid var(--line);margin:0">curl https://your-instance/api/extensions \
   -H "Authorization: Bearer &lt;key&gt;"</pre>
 </div>
 
@@ -30,13 +30,13 @@
     <div class="flex items-start gap-3">
       <div class="flex-1 min-w-0">
         <div class="label-cap mb-1.5" style="color:var(--badge-low-color)">Key created — copy it now</div>
-        <p class="text-[12.5px] mb-3" style="color:var(--ink-6)">This is the only time the key will be shown. Store it in a secrets manager or environment variable.</p>
+        <p class="text-[12.5px] mb-3" style="color:var(--ink-soft)">This is the only time the key will be shown. Store it in a secrets manager or environment variable.</p>
         <div class="flex items-center gap-2">
-          <code class="mono text-[12px] break-all flex-1 px-2.5 py-2 rounded" style="background:var(--ink-0);color:var(--ink-8);border:1px solid var(--ink-3);display:block;word-break:break-all" x-text="newKey"></code>
+          <code class="mono text-[12px] break-all flex-1 px-2.5 py-2 rounded" style="background:var(--paper);color:var(--ink);border:1px solid var(--line);display:block;word-break:break-all" x-text="newKey"></code>
           <button class="btn btn-secondary btn-sm" style="flex-shrink:0" @click="copyKey()" x-text="copied ? '✓ Copied' : 'Copy'"></button>
         </div>
       </div>
-      <button @click="newKey='';copied=false" class="shrink-0" style="color:var(--ink-4);margin-top:2px;padding:2px">
+      <button @click="newKey='';copied=false" class="shrink-0" style="color:var(--line-strong);margin-top:2px;padding:2px">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
       </button>
     </div>
@@ -63,9 +63,9 @@
       <div class="flex items-center gap-2.5">
         <input type="checkbox" id="readonly-check" x-model="form.readonly"
                style="width:15px;height:15px;accent-color:var(--accent);flex-shrink:0;cursor:pointer">
-        <label for="readonly-check" class="text-[13px]" style="color:var(--ink-7);cursor:pointer">
+        <label for="readonly-check" class="text-[13px]" style="color:var(--ink-soft);cursor:pointer">
           Read-only
-          <span class="text-[12px]" style="color:var(--ink-5)">(GET requests only — recommended for alert ingestion)</span>
+          <span class="text-[12px]" style="color:var(--muted)">(GET requests only — recommended for alert ingestion)</span>
         </label>
       </div>
       <div x-show="formError" class="text-[12.5px]" style="color:var(--risk-critical)" x-text="formError"></div>
@@ -80,7 +80,7 @@
 
   {# ── Empty state ───────────────────────────────────────────── #}
   <template x-if="keys.length === 0 && !showAdd">
-    <div class="surface p-6 text-center text-[13px]" style="color:var(--ink-5)">
+    <div class="surface p-6 text-center text-[13px]" style="color:var(--muted)">
       No API keys — create one to enable machine-to-machine access.
     </div>
   </template>
@@ -102,15 +102,15 @@
         <tbody>
           <template x-for="k in keys" :key="k.id">
             <tr>
-              <td class="font-medium" style="color:var(--ink-8)" x-text="k.label"></td>
-              <td class="mono text-[12px]" style="color:var(--ink-5)"
+              <td class="font-medium" style="color:var(--ink)" x-text="k.label"></td>
+              <td class="mono text-[12px]" style="color:var(--muted)"
                   x-text="k.key_prefix ? k.key_prefix + '…' + k.key_suffix : '—'"></td>
               <td>
                 <span x-show="k.readonly" class="badge badge-medium">read-only</span>
-                <span x-show="!k.readonly" class="badge" style="background:var(--ink-1);color:var(--ink-6);border-color:var(--ink-3)">read-write</span>
+                <span x-show="!k.readonly" class="badge" style="background:var(--surface-2);color:var(--ink-soft);border-color:var(--line)">read-write</span>
               </td>
-              <td class="mono text-[12px]" style="color:var(--ink-5)" x-text="formatDate(k.created_at)"></td>
-              <td class="mono text-[12px]" :style="k.last_used_at ? 'color:var(--ink-6)' : 'color:var(--ink-4)'"
+              <td class="mono text-[12px]" style="color:var(--muted)" x-text="formatDate(k.created_at)"></td>
+              <td class="mono text-[12px]" :style="k.last_used_at ? 'color:var(--ink-soft)' : 'color:var(--line-strong)'"
                   x-text="k.last_used_at ? formatDate(k.last_used_at) : 'never used'"></td>
               <td class="text-right">
                 <button class="btn btn-danger btn-sm" @click="revokeKey(k.id)">Revoke</button>

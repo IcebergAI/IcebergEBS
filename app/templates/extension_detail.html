@@ -19,17 +19,17 @@
 
 {# ── Action row ──────────────────────────────────────────── #}
 <div class="flex items-center justify-between mb-4 flex-wrap gap-3">
-  <div class="flex items-center gap-2 text-[12.5px]" style="color:var(--ink-5)">
+  <div class="flex items-center gap-2 text-[12.5px]" style="color:var(--muted)">
     <a href="/">Extensions</a>
     <span>/</span>
-    <span style="color:var(--ink-7)">{{ ext.name }}</span>
+    <span style="color:var(--ink-soft)">{{ ext.name }}</span>
   </div>
   <div class="flex items-center gap-2">
     <button class="switch" :class="watchlist && 'on'" @click="toggleWatchlist()" title="Auto-refresh on background scheduler">
       <span class="track"><span class="thumb"></span></span>
       <span x-text="watchlist ? 'Watching' : 'Not watching'"></span>
     </button>
-    <div class="w-px h-5 mx-1" style="background:var(--ink-3)"></div>
+    <div class="w-px h-5 mx-1" style="background:var(--line)"></div>
     <button class="btn btn-secondary btn-sm" @click="refreshNow">
       <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 15-6.7L21 8"/><path d="M21 3v5h-5"/></svg>
       Refresh now
@@ -62,39 +62,39 @@
         <circle cx="65" cy="65" r="56" class="track" stroke-width="10" fill="none"/>
       </svg>
       <div class="absolute inset-0 flex flex-col items-center justify-center">
-        <div class="num mono" style="color:var(--ink-5)">—</div>
-        <div class="text-[11px]" style="color:var(--ink-5)">not scored</div>
+        <div class="num mono" style="color:var(--muted)">—</div>
+        <div class="text-[11px]" style="color:var(--muted)">not scored</div>
       </div>
       {% endif %}
     </div>
 
     <div class="flex-1 min-w-0">
       <div class="flex items-center gap-2 flex-wrap">
-        <h1 class="text-[22px] font-semibold tracking-tight" style="color:var(--ink-8)">{{ ext.name }}</h1>
+        <h1 class="text-[22px] font-semibold tracking-tight" style="color:var(--ink)">{{ ext.name }}</h1>
         <span class="badge badge-store badge-{{ ext.store }}"><span class="dot"></span>{{ ext.store }}</span>
-        <span class="mono text-[11.5px] px-2 py-0.5 rounded" style="background:var(--ink-1);color:var(--ink-6);border:1px solid var(--ink-3)">v{{ ext.version }}</span>
-        <span class="mono text-[11.5px]" style="color:var(--ink-5)">{{ ext.extension_id }}</span>
+        <span class="mono text-[11.5px] px-2 py-0.5 rounded" style="background:var(--surface-2);color:var(--ink-soft);border:1px solid var(--line)">v{{ ext.version }}</span>
+        <span class="mono text-[11.5px]" style="color:var(--muted)">{{ ext.extension_id }}</span>
       </div>
       {% if ext.description %}
-      <p class="text-[13.5px] leading-relaxed mt-2 max-w-2xl" style="color:var(--ink-6)">{{ ext.description }}</p>
+      <p class="text-[13.5px] leading-relaxed mt-2 max-w-2xl" style="color:var(--ink-soft)">{{ ext.description }}</p>
       {% endif %}
 
       <dl class="grid grid-cols-2 md:grid-cols-4 gap-x-8 gap-y-3 mt-5">
         <div>
           <dt class="label-cap">Publisher</dt>
-          <dd class="text-[13.5px] mt-1" style="color:var(--ink-8)">{{ ext.publisher or '—' }}</dd>
+          <dd class="text-[13.5px] mt-1" style="color:var(--ink)">{{ ext.publisher or '—' }}</dd>
         </div>
         <div>
           <dt class="label-cap">Installs</dt>
-          <dd class="text-[13.5px] mt-1 mono tabular-nums" style="color:var(--ink-8)">{{ '{:,}'.format(ext.install_count) if ext.install_count is not none else '—' }}</dd>
+          <dd class="text-[13.5px] mt-1 mono tabular-nums" style="color:var(--ink)">{{ '{:,}'.format(ext.install_count) if ext.install_count is not none else '—' }}</dd>
         </div>
         <div>
           <dt class="label-cap">Last updated</dt>
-          <dd class="text-[13.5px] mt-1" style="color:var(--ink-8)">{{ ext.last_updated.strftime('%b %d, %Y') if ext.last_updated else '—' }}</dd>
+          <dd class="text-[13.5px] mt-1" style="color:var(--ink)">{{ ext.last_updated.strftime('%b %d, %Y') if ext.last_updated else '—' }}</dd>
         </div>
         <div>
           <dt class="label-cap">Last fetched</dt>
-          <dd class="text-[13.5px] mt-1" style="color:var(--ink-8)">{{ ext.last_fetched_at.strftime('%b %d, %H:%M') if ext.last_fetched_at else 'never' }}</dd>
+          <dd class="text-[13.5px] mt-1" style="color:var(--ink)">{{ ext.last_fetched_at.strftime('%b %d, %H:%M') if ext.last_fetched_at else 'never' }}</dd>
         </div>
       </dl>
     </div>
@@ -148,17 +148,17 @@
         {% for label, value, max, note in rows %}
         {% set pct = (value / max * 100)|round(1) %}
         {% set band = 'low' if pct < 25 else ('medium' if pct < 50 else ('high' if pct < 75 else 'critical')) %}
-        <div class="flex items-center gap-3 py-2.5" style="border-bottom: 1px solid var(--ink-2)">
-          <div class="w-32 text-[13px]" style="color:var(--ink-7)">{{ label }}</div>
+        <div class="flex items-center gap-3 py-2.5" style="border-bottom: 1px solid var(--line)">
+          <div class="w-32 text-[13px]" style="color:var(--ink-soft)">{{ label }}</div>
           <div class="flex-1 score-bar-track"><div class="score-bar-fill fill-{{ band }}" style="width: {{ pct }}%"></div></div>
-          <div class="mono text-[12.5px] tabular-nums w-16 text-right"><span style="color:var(--ink-8);font-weight:500">{{ value }}</span><span style="color:var(--ink-5)"> / {{ max }}</span></div>
-          <div class="hidden md:block w-52 text-[11.5px]" style="color:var(--ink-5)">{{ note }}</div>
+          <div class="mono text-[12.5px] tabular-nums w-16 text-right"><span style="color:var(--ink);font-weight:500">{{ value }}</span><span style="color:var(--muted)"> / {{ max }}</span></div>
+          <div class="hidden md:block w-52 text-[11.5px]" style="color:var(--muted)">{{ note }}</div>
         </div>
         {% endfor %}
-        <div class="flex items-center gap-3 pt-3 mt-1" style="border-top: 1px solid var(--ink-3)">
-          <div class="w-32 text-[13px] font-semibold" style="color:var(--ink-8)">Total</div>
+        <div class="flex items-center gap-3 pt-3 mt-1" style="border-top: 1px solid var(--line)">
+          <div class="w-32 text-[13px] font-semibold" style="color:var(--ink)">Total</div>
           <div class="flex-1 score-bar-track"><div class="score-bar-fill fill-{{ risk_band }}" style="width: {{ risk_detail.total }}%"></div></div>
-          <div class="mono text-[13px] font-semibold tabular-nums w-16 text-right" style="color:var(--ink-8)">{{ risk_detail.total }} / 100</div>
+          <div class="mono text-[13px] font-semibold tabular-nums w-16 text-right" style="color:var(--ink)">{{ risk_detail.total }} / 100</div>
           <div class="hidden md:block w-52"><span class="badge badge-{{ risk_band }}">{{ risk_band }} risk</span></div>
         </div>
       </div>
@@ -169,18 +169,18 @@
     <div class="surface p-5">
       <h2 class="section-title">Package summary</h2>
       <dl class="grid grid-cols-2 gap-y-3 gap-x-3">
-        <div><dt class="label-cap">Manifest</dt><dd class="text-[13.5px] mt-0.5 mono" style="color:var(--ink-8)">MV{{ package_analysis.manifest_version }}</dd></div>
-        <div><dt class="label-cap">Files</dt><dd class="text-[13.5px] mt-0.5 mono tabular-nums" style="color:var(--ink-8)">{{ package_analysis.file_count }}</dd></div>
-        <div><dt class="label-cap">Size</dt><dd class="text-[13.5px] mt-0.5 mono tabular-nums" style="color:var(--ink-8)">{{ (package_analysis.total_size_bytes / 1024)|round(1) }} KB</dd></div>
+        <div><dt class="label-cap">Manifest</dt><dd class="text-[13.5px] mt-0.5 mono" style="color:var(--ink)">MV{{ package_analysis.manifest_version }}</dd></div>
+        <div><dt class="label-cap">Files</dt><dd class="text-[13.5px] mt-0.5 mono tabular-nums" style="color:var(--ink)">{{ package_analysis.file_count }}</dd></div>
+        <div><dt class="label-cap">Size</dt><dd class="text-[13.5px] mt-0.5 mono tabular-nums" style="color:var(--ink)">{{ (package_analysis.total_size_bytes / 1024)|round(1) }} KB</dd></div>
         <div><dt class="label-cap">Obfuscation</dt>
           <dd class="text-[13.5px] mt-0.5">
-            <span style="color: {% if package_analysis.obfuscation_score >= 6 %}var(--risk-critical){% elif package_analysis.obfuscation_score >= 3 %}var(--risk-high){% else %}var(--ink-8){% endif %}">{{ package_analysis.obfuscation_score }}</span><span style="color:var(--ink-5)">/10</span>
+            <span style="color: {% if package_analysis.obfuscation_score >= 6 %}var(--risk-critical){% elif package_analysis.obfuscation_score >= 3 %}var(--risk-high){% else %}var(--ink){% endif %}">{{ package_analysis.obfuscation_score }}</span><span style="color:var(--muted)">/10</span>
           </dd>
         </div>
         <div><dt class="label-cap">eval()</dt><dd class="text-[13.5px] mt-0.5" style="color: {% if package_analysis.uses_eval %}var(--risk-high){% else %}var(--risk-low){% endif %}">{{ 'detected' if package_analysis.uses_eval else 'none' }}</dd></div>
         <div><dt class="label-cap">Remote code</dt><dd class="text-[13.5px] mt-0.5" style="color: {% if package_analysis.uses_remote_code %}var(--risk-high){% else %}var(--risk-low){% endif %}">{{ 'detected' if package_analysis.uses_remote_code else 'none' }}</dd></div>
-        <div><dt class="label-cap">Minified</dt><dd class="text-[13.5px] mt-0.5" style="color:var(--ink-8)">{{ 'yes' if package_analysis.has_minified_code else 'no' }}</dd></div>
-        <div><dt class="label-cap">Domains</dt><dd class="text-[13.5px] mt-0.5" style="color:var(--ink-8)">{{ package_analysis.external_domains|length }} unknown</dd></div>
+        <div><dt class="label-cap">Minified</dt><dd class="text-[13.5px] mt-0.5" style="color:var(--ink)">{{ 'yes' if package_analysis.has_minified_code else 'no' }}</dd></div>
+        <div><dt class="label-cap">Domains</dt><dd class="text-[13.5px] mt-0.5" style="color:var(--ink)">{{ package_analysis.external_domains|length }} unknown</dd></div>
       </dl>
     </div>
     {% endif %}
@@ -190,33 +190,33 @@
   <div class="surface p-5">
     <div class="flex items-center justify-between mb-3">
       <h2 class="section-title" style="margin:0">Org footprint</h2>
-      <span class="text-[11.5px]" style="color:var(--ink-5)">from SOAR inventory</span>
+      <span class="text-[11.5px]" style="color:var(--muted)">from SOAR inventory</span>
     </div>
     {% if footprint_assets %}
     <div class="flex flex-wrap gap-8 mb-4">
       <div>
         <dt class="label-cap">Installed on</dt>
-        <dd class="text-[19px] font-semibold tabular-nums mt-0.5" style="color:var(--ink-8)">{{ '{:,}'.format(footprint_assets) }} <span class="text-[13px] font-normal" style="color:var(--ink-5)">asset{{ '' if footprint_assets == 1 else 's' }}</span></dd>
+        <dd class="text-[19px] font-semibold tabular-nums mt-0.5" style="color:var(--ink)">{{ '{:,}'.format(footprint_assets) }} <span class="text-[13px] font-normal" style="color:var(--muted)">asset{{ '' if footprint_assets == 1 else 's' }}</span></dd>
       </div>
       <div>
         <dt class="label-cap">Exposure</dt>
-        <dd class="text-[19px] font-semibold tabular-nums mt-0.5" style="color:var(--ink-8)">{{ '{:,}'.format(exposure) if exposure is not none else '—' }} <span class="text-[13px] font-normal" style="color:var(--ink-5)">risk × assets</span></dd>
+        <dd class="text-[19px] font-semibold tabular-nums mt-0.5" style="color:var(--ink)">{{ '{:,}'.format(exposure) if exposure is not none else '—' }} <span class="text-[13px] font-normal" style="color:var(--muted)">risk × assets</span></dd>
       </div>
       <div>
         <dt class="label-cap">Departments</dt>
-        <dd class="text-[19px] font-semibold tabular-nums mt-0.5" style="color:var(--ink-8)">{{ footprint_departments|length }}</dd>
+        <dd class="text-[19px] font-semibold tabular-nums mt-0.5" style="color:var(--ink)">{{ footprint_departments|length }}</dd>
       </div>
     </div>
     <div class="grid grid-cols-1 md:grid-cols-2 gap-x-6">
       {% for d in footprint_departments %}
-      <div class="flex items-center justify-between text-[12.5px] py-1.5" style="border-bottom: 1px solid var(--ink-2)">
-        <span style="color:var(--ink-7)">{{ d.department }}</span>
-        <span class="mono tabular-nums" style="color:var(--ink-8)">{{ '{:,}'.format(d.count) }}</span>
+      <div class="flex items-center justify-between text-[12.5px] py-1.5" style="border-bottom: 1px solid var(--line)">
+        <span style="color:var(--ink-soft)">{{ d.department }}</span>
+        <span class="mono tabular-nums" style="color:var(--ink)">{{ '{:,}'.format(d.count) }}</span>
       </div>
       {% endfor %}
     </div>
     {% else %}
-    <div class="text-[13px]" style="color:var(--ink-5)">No inventory reported. Push installs via <span class="mono">POST /api/inventory</span> from your SOAR.</div>
+    <div class="text-[13px]" style="color:var(--muted)">No inventory reported. Push installs via <span class="mono">POST /api/inventory</span> from your SOAR.</div>
     {% endif %}
   </div>
 
@@ -224,8 +224,8 @@
   {% if permissions or host_permissions %}
   <div class="surface p-5">
     <div class="flex items-center justify-between mb-3">
-      <h2 class="section-title" style="margin:0">Permissions <span class="font-normal" style="color:var(--ink-5)">· {{ (permissions|length) + (host_permissions|length) }} declared</span></h2>
-      <div class="flex items-center gap-2 text-[11.5px]" style="color:var(--ink-5)">
+      <h2 class="section-title" style="margin:0">Permissions <span class="font-normal" style="color:var(--muted)">· {{ (permissions|length) + (host_permissions|length) }} declared</span></h2>
+      <div class="flex items-center gap-2 text-[11.5px]" style="color:var(--muted)">
         <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full" style="background:var(--risk-critical)"></span>critical</span>
         <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full" style="background:var(--risk-high)"></span>high</span>
         <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full" style="background:var(--risk-medium)"></span>medium</span>
@@ -253,12 +253,12 @@
   {# External domains #}
   {% if package_analysis and package_analysis.external_domains %}
   <div class="surface p-5">
-    <h2 class="section-title">External domains <span class="font-normal" style="color:var(--ink-5)">· {{ package_analysis.external_domains|length }}</span></h2>
+    <h2 class="section-title">External domains <span class="font-normal" style="color:var(--muted)">· {{ package_analysis.external_domains|length }}</span></h2>
     <div class="grid grid-cols-1 md:grid-cols-2 gap-x-6">
       {% for d in package_analysis.external_domains %}
-      <div class="flex items-center justify-between text-[12.5px] mono py-1.5" style="border-bottom: 1px solid var(--ink-2);color:var(--ink-7)">
+      <div class="flex items-center justify-between text-[12.5px] mono py-1.5" style="border-bottom: 1px solid var(--line);color:var(--ink-soft)">
         <span>{{ d }}</span>
-        <span class="text-[10.5px]" style="color:var(--ink-5)">unknown</span>
+        <span class="text-[10.5px]" style="color:var(--muted)">unknown</span>
       </div>
       {% endfor %}
     </div>
@@ -274,7 +274,7 @@
     <div class="flex items-center justify-between mb-3 flex-wrap gap-2">
       <h2 class="section-title" style="margin:0">
         Detection findings
-        <span class="font-normal" style="color:var(--ink-5)">
+        <span class="font-normal" style="color:var(--muted)">
           · {{ package_analysis.grouped_findings|length }}{% if package_analysis.findings|length != package_analysis.grouped_findings|length %} grouped from {{ package_analysis.findings|length }}{% endif %}
         </span>
       </h2>
@@ -286,7 +286,7 @@
         <button :class="sev==='low' && 'active'" @click="sev='low'">Low</button>
       </div>
     </div>
-    <p class="text-[11.5px] mb-4" style="color:var(--ink-5)">Static heuristics from the downloaded package — no code is executed and no external services are called.</p>
+    <p class="text-[11.5px] mb-4" style="color:var(--muted)">Static heuristics from the downloaded package — no code is executed and no external services are called.</p>
 
     <div class="flex flex-col gap-3">
       {% set severities = [('critical', 'Critical'), ('high', 'High'), ('medium', 'Medium'), ('low', 'Low')] %}
@@ -300,9 +300,9 @@
               <div class="min-w-0">
                 <div class="flex items-center gap-2 flex-wrap">
                   <span class="badge badge-{{ severity }}">{{ severity }}</span>
-                  <span class="font-medium text-[13px]" style="color:var(--ink-8)">{{ finding.title }}</span>
+                  <span class="font-medium text-[13px]" style="color:var(--ink)">{{ finding.title }}</span>
                   {% if finding.rows|length > 1 %}
-                  <span class="text-[11px]" style="color:var(--ink-5)">· {{ finding.rows|length }} {{ finding.row_label }}</span>
+                  <span class="text-[11px]" style="color:var(--muted)">· {{ finding.rows|length }} {{ finding.row_label }}</span>
                   {% endif %}
                 </div>
               </div>
@@ -310,19 +310,19 @@
             </div>
             <div class="mt-2 flex flex-col gap-1.5">
               {% for section in finding.sections %}
-              <div class="{% if not loop.first %}border-t pt-1.5{% endif %}" style="border-color:var(--ink-3)">
+              <div class="{% if not loop.first %}border-t pt-1.5{% endif %}" style="border-color:var(--line)">
                 {% if section.type == 'detail' %}
-                <div class="text-[12px] leading-relaxed" style="color:var(--ink-6)">{{ section.detail }}</div>
-                <div class="mt-1.5 mono text-[11px] leading-relaxed" style="color:var(--ink-5);overflow-wrap:anywhere">
+                <div class="text-[12px] leading-relaxed" style="color:var(--ink-soft)">{{ section.detail }}</div>
+                <div class="mt-1.5 mono text-[11px] leading-relaxed" style="color:var(--muted);overflow-wrap:anywhere">
                   {{ section.locations|join(' · ') }}
                 </div>
                 {% else %}
                 {% if section.location %}
-                <div class="mono text-[11px] leading-relaxed break-all mb-1.5" style="color:var(--ink-5)">{{ section.location }}</div>
+                <div class="mono text-[11px] leading-relaxed break-all mb-1.5" style="color:var(--muted)">{{ section.location }}</div>
                 {% endif %}
                 <div class="flex flex-col gap-1">
                   {% for detail in section.details %}
-                  <div class="text-[12px] leading-relaxed" style="color:var(--ink-6)">{{ detail }}</div>
+                  <div class="text-[12px] leading-relaxed" style="color:var(--ink-soft)">{{ detail }}</div>
                   {% endfor %}
                 </div>
                 {% endif %}
@@ -336,7 +336,7 @@
     </div>
   </div>
   {% else %}
-  <div class="surface p-6 text-center text-[13px]" style="color:var(--ink-5)">No detection findings for this extension.</div>
+  <div class="surface p-6 text-center text-[13px]" style="color:var(--muted)">No detection findings for this extension.</div>
   {% endif %}
 </div>{# end findings panel #}
 
@@ -345,17 +345,17 @@
   {% if threat_intel_indicators %}
   <div class="surface p-5">
     <div class="flex items-center justify-between mb-1 flex-wrap gap-2">
-      <h2 class="section-title" style="margin:0">Observable indicators <span class="font-normal" style="color:var(--ink-5)">· {{ threat_intel_indicators|length }}</span></h2>
-      <span class="text-[11.5px]" style="color:var(--ink-5)">Lookups are manual &amp; privacy-preserving</span>
+      <h2 class="section-title" style="margin:0">Observable indicators <span class="font-normal" style="color:var(--muted)">· {{ threat_intel_indicators|length }}</span></h2>
+      <span class="text-[11.5px]" style="color:var(--muted)">Lookups are manual &amp; privacy-preserving</span>
     </div>
-    <p class="text-[12px] mb-4" style="color:var(--ink-5)">
+    <p class="text-[12px] mb-4" style="color:var(--muted)">
       Network callouts are destinations used in detected call patterns. Referenced URLs are literal strings and may not be requested at runtime.
     </p>
 
     {% if threat_intel_primary_indicators %}
     <div class="surface-soft overflow-hidden">
       {% for indicator in threat_intel_primary_indicators %}
-      <div class="p-3" style="{% if not loop.last %}border-bottom:1px solid var(--ink-3){% endif %}">
+      <div class="p-3" style="{% if not loop.last %}border-bottom:1px solid var(--line){% endif %}">
         <div class="flex items-start justify-between gap-3 flex-wrap">
           <div class="flex items-center gap-2 flex-wrap">
             <span class="badge badge-store">{{ indicator.label }}</span>
@@ -373,9 +373,9 @@
             {% endfor %}
           </div>
         </div>
-        <div class="mono text-[12px] leading-relaxed mt-2" style="color:var(--ink-7);overflow-wrap:anywhere">{{ indicator.value }}</div>
+        <div class="mono text-[12px] leading-relaxed mt-2" style="color:var(--ink-soft);overflow-wrap:anywhere">{{ indicator.value }}</div>
         {% if indicator.description %}
-        <div class="text-[12px] leading-relaxed mt-1" style="color:var(--ink-5)">{{ indicator.description }}</div>
+        <div class="text-[12px] leading-relaxed mt-1" style="color:var(--muted)">{{ indicator.description }}</div>
         {% endif %}
       </div>
       {% endfor %}
@@ -385,16 +385,16 @@
     {% if threat_intel_referenced_indicators %}
     <details class="surface-soft mt-3 overflow-hidden">
       <summary class="cursor-pointer p-3" style="list-style-position:inside">
-        <span class="font-semibold text-[13px]" style="color:var(--ink-8)">Referenced URLs</span>
-        <span class="text-[12px]" style="color:var(--ink-5)">· {{ threat_intel_referenced_indicators|length }} literal strings</span>
+        <span class="font-semibold text-[13px]" style="color:var(--ink)">Referenced URLs</span>
+        <span class="text-[12px]" style="color:var(--muted)">· {{ threat_intel_referenced_indicators|length }} literal strings</span>
       </summary>
       <div class="px-3 pb-3">
-        <p class="text-[12px] mb-2" style="color:var(--ink-5)">
+        <p class="text-[12px] mb-2" style="color:var(--muted)">
           These URLs were found in code but were not tied to a detected network call pattern.
         </p>
         <div class="surface-soft overflow-hidden">
           {% for indicator in threat_intel_referenced_indicators %}
-          <div class="p-3" style="{% if not loop.last %}border-bottom:1px solid var(--ink-3){% endif %}">
+          <div class="p-3" style="{% if not loop.last %}border-bottom:1px solid var(--line){% endif %}">
             <div class="flex items-start justify-between gap-3 flex-wrap">
               <div class="flex items-center gap-2 flex-wrap">
                 <span class="badge badge-store">{{ indicator.label }}</span>
@@ -412,9 +412,9 @@
                 {% endfor %}
               </div>
             </div>
-            <div class="mono text-[12px] leading-relaxed mt-2" style="color:var(--ink-7);overflow-wrap:anywhere">{{ indicator.value }}</div>
+            <div class="mono text-[12px] leading-relaxed mt-2" style="color:var(--ink-soft);overflow-wrap:anywhere">{{ indicator.value }}</div>
             {% if indicator.description %}
-            <div class="text-[12px] leading-relaxed mt-1" style="color:var(--ink-5)">{{ indicator.description }}</div>
+            <div class="text-[12px] leading-relaxed mt-1" style="color:var(--muted)">{{ indicator.description }}</div>
             {% endif %}
           </div>
           {% endfor %}
@@ -424,7 +424,7 @@
     {% endif %}
   </div>
   {% else %}
-  <div class="surface p-6 text-center text-[13px]" style="color:var(--ink-5)">No threat intelligence indicators for this extension.</div>
+  <div class="surface p-6 text-center text-[13px]" style="color:var(--muted)">No threat intelligence indicators for this extension.</div>
   {% endif %}
 </div>{# end intel panel #}
 
@@ -436,7 +436,7 @@
   <div class="surface p-5">
     <div class="flex items-center justify-between mb-3">
       <h2 class="section-title" style="margin:0">Risk score history</h2>
-      <span class="text-[11.5px]" style="color:var(--ink-5)">{{ score_history.points|length }} data point{{ 's' if score_history.points|length != 1 }}</span>
+      <span class="text-[11.5px]" style="color:var(--muted)">{{ score_history.points|length }} data point{{ 's' if score_history.points|length != 1 }}</span>
     </div>
     <div id="risk-trend"></div>
   </div>
@@ -447,7 +447,7 @@
   <div class="surface overflow-hidden">
     <div class="px-5 pt-4 pb-3 flex items-center justify-between">
       <h2 class="section-title" style="margin:0">Fetch history</h2>
-      <span class="text-[11.5px]" style="color:var(--ink-5)">Last {{ fetch_logs|length }}</span>
+      <span class="text-[11.5px]" style="color:var(--muted)">Last {{ fetch_logs|length }}</span>
     </div>
     <table>
       <thead>
@@ -456,7 +456,7 @@
       <tbody>
         {% for log in fetch_logs %}
         <tr>
-          <td class="mono" style="color:var(--ink-6)">{{ log.fetched_at.strftime('%b %d, %H:%M') }}</td>
+          <td class="mono" style="color:var(--ink-soft)">{{ log.fetched_at.strftime('%b %d, %H:%M') }}</td>
           <td>
             {% if log.success %}
             <span class="badge badge-low">success</span>
@@ -468,7 +468,7 @@
             {% if log.risk_score_before is not none and log.risk_score_after is not none %}
               {% set delta = log.risk_score_after - log.risk_score_before %}
               {{ log.risk_score_before }} →
-              <span style="color:var(--ink-8);font-weight:500">{{ log.risk_score_after }}</span>
+              <span style="color:var(--ink);font-weight:500">{{ log.risk_score_after }}</span>
               {% if delta > 0 %}
               <span class="delta up">▲ {{ delta }}</span>
               {% elif delta < 0 %}
@@ -477,17 +477,17 @@
             {% elif log.risk_score_after is not none %}
               → {{ log.risk_score_after }}
             {% else %}
-              <span style="color:var(--ink-5)">—</span>
+              <span style="color:var(--muted)">—</span>
             {% endif %}
           </td>
-          <td style="color: {% if log.error_message %}var(--risk-critical){% else %}var(--ink-5){% endif %}">{{ log.error_message or '' }}</td>
+          <td style="color: {% if log.error_message %}var(--risk-critical){% else %}var(--muted){% endif %}">{{ log.error_message or '' }}</td>
         </tr>
         {% endfor %}
       </tbody>
     </table>
   </div>
   {% else %}
-  <div class="surface p-6 text-center text-[13px]" style="color:var(--ink-5)">No fetch history yet.</div>
+  <div class="surface p-6 text-center text-[13px]" style="color:var(--muted)">No fetch history yet.</div>
   {% endif %}
 
 </div>{# end history panel #}

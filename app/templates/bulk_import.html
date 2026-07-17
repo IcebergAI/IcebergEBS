@@ -42,12 +42,12 @@
                 <tr :style="res.status === 'added' ? 'cursor:pointer' : ''"
                     @click="openResult(res)">
                   <td><span class="badge badge-store" :class="res.store ? 'badge-' + res.store : ''" x-text="res.store || '—'"></span></td>
-                  <td class="mono text-[12px]" style="color:var(--ink-7)" x-text="res.extension_id"></td>
+                  <td class="mono text-[12px]" style="color:var(--ink-soft)" x-text="res.extension_id"></td>
                   <td>
                     <span class="badge"
                           :class="{'badge-low': res.status==='added', 'badge-medium': res.status==='duplicate', 'badge-high': res.status==='invalid', 'badge-critical': res.status==='error'}"
                           x-text="res.status"></span>
-                    <span class="text-[11.5px] ml-1" style="color:var(--ink-5)" x-text="res.detail || ''"></span>
+                    <span class="text-[11.5px] ml-1" style="color:var(--muted)" x-text="res.detail || ''"></span>
                   </td>
                 </tr>
               </template>
