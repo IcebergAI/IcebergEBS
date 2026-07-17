@@ -14,24 +14,6 @@
    --c-* semantics).
    ───────────────────────────────────────────────────────────── */
 
-/* ── Legacy token bridge ──────────────────────────────────────
-   The templates still carry inline style="…var(--ink-N)…" attributes from the
-   pre-house design (~230 sites). Alias the old scale onto house tokens so every
-   one of them resolves to the house palette; the long-tail sweep to real token
-   names (and this bridge's removal) is tracked as a follow-up issue. */
-:root, html[data-theme="dark"] {
-  --ink-0: var(--paper);
-  --ink-1: var(--surface-2);
-  --ink-2: var(--line);
-  --ink-3: var(--line);
-  --ink-4: var(--line-strong);
-  --ink-5: var(--muted);
-  --ink-6: var(--ink-soft);
-  --ink-7: var(--ink-soft);
-  --ink-8: var(--ink);
-  --accent-bg: var(--accent-soft);
-}
-
 /* ── Risk palette (app-specific; house-harmonised) ────────────
    critical/high anchor on --c-crit's hue range, medium on --c-warn, low on
    --c-ok. The 75/50/25 score→band thresholds live ONLY in app/scoring.py —

@@ -29,38 +29,38 @@
   <div class="surface p-4">
     <div class="label-cap">Tracked</div>
     <div class="flex items-baseline gap-2 mt-2">
-      <div class="text-[26px] font-semibold tabular-nums" style="color:var(--ink-8);letter-spacing:-0.01em">{{ extensions_count }}</div>
-      <div class="text-[11.5px]" style="color:var(--ink-5)">extensions</div>
+      <div class="text-[26px] font-semibold tabular-nums" style="color:var(--ink);letter-spacing:-0.01em">{{ extensions_count }}</div>
+      <div class="text-[11.5px]" style="color:var(--muted)">extensions</div>
     </div>
   </div>
   <div class="surface p-4">
     <div class="label-cap">High &amp; critical</div>
     <div class="flex items-baseline gap-2 mt-2">
       <div class="text-[26px] font-semibold tabular-nums"
-           style="color:{% if high_risk_count > 0 %}var(--risk-critical){% else %}var(--ink-8){% endif %};letter-spacing:-0.01em">{{ high_risk_count }}</div>
-      <div class="text-[11.5px]" style="color:var(--ink-5)">need review</div>
+           style="color:{% if high_risk_count > 0 %}var(--risk-critical){% else %}var(--ink){% endif %};letter-spacing:-0.01em">{{ high_risk_count }}</div>
+      <div class="text-[11.5px]" style="color:var(--muted)">need review</div>
     </div>
   </div>
   <div class="surface p-4">
     <div class="label-cap">Watchlist</div>
     <div class="flex items-baseline gap-2 mt-2">
-      <div class="text-[26px] font-semibold tabular-nums" style="color:var(--ink-8);letter-spacing:-0.01em">{{ watchlist_count|default(extensions_count) }}</div>
-      <div class="text-[11.5px]" style="color:var(--ink-5)">auto-refreshed</div>
+      <div class="text-[26px] font-semibold tabular-nums" style="color:var(--ink);letter-spacing:-0.01em">{{ watchlist_count|default(extensions_count) }}</div>
+      <div class="text-[11.5px]" style="color:var(--muted)">auto-refreshed</div>
     </div>
   </div>
   <div class="surface p-4">
     <div class="label-cap">Fetch health</div>
     <div class="flex items-baseline gap-2 mt-2">
       <div class="text-[26px] font-semibold tabular-nums"
-           style="color:{% if unhealthy_count|default(0) > 0 %}var(--risk-high){% else %}var(--ink-8){% endif %};letter-spacing:-0.01em">{{ unhealthy_count|default(0) }}</div>
-      <div class="text-[11.5px]" style="color:var(--ink-5)">{% if unhealthy_count|default(0) > 0 %}stale or failing{% else %}all healthy{% endif %}</div>
+           style="color:{% if unhealthy_count|default(0) > 0 %}var(--risk-high){% else %}var(--ink){% endif %};letter-spacing:-0.01em">{{ unhealthy_count|default(0) }}</div>
+      <div class="text-[11.5px]" style="color:var(--muted)">{% if unhealthy_count|default(0) > 0 %}stale or failing{% else %}all healthy{% endif %}</div>
     </div>
   </div>
   <div class="surface p-4">
     <div class="label-cap">Last refresh</div>
     <div class="mt-2">
-      <div class="text-[13px]" style="color:var(--ink-8)">{{ last_refresh_label|default('—') }}</div>
-      <div class="text-[11.5px]" style="color:var(--ink-5)">{{ next_refresh_label|default('next: scheduled') }}</div>
+      <div class="text-[13px]" style="color:var(--ink)">{{ last_refresh_label|default('—') }}</div>
+      <div class="text-[11.5px]" style="color:var(--muted)">{{ next_refresh_label|default('next: scheduled') }}</div>
     </div>
   </div>
 </div>
@@ -70,18 +70,18 @@
 <div class="surface p-5 mb-6">
   <div class="flex items-center justify-between mb-3">
     <h2 class="section-title" style="margin:0">Top exposure</h2>
-    <span class="text-[11.5px]" style="color:var(--ink-5)">risk × assets installed</span>
+    <span class="text-[11.5px]" style="color:var(--muted)">risk × assets installed</span>
   </div>
   <div class="flex flex-col">
     {% for e in top_exposure %}
     <a href="/extensions/{{ e.id }}"
        class="flex items-center gap-3 py-2 {% if not loop.last %}border-b{% endif %}"
-       style="border-color:var(--ink-2)">
+       style="border-color:var(--line)">
       <span class="badge badge-store badge-{{ e.store }}" style="flex:none"><span class="dot"></span>{{ e.store }}</span>
-      <span class="text-[13.5px] font-medium truncate flex-1" style="color:var(--ink-8)">{{ e.name }}</span>
-      <span class="text-[12px] tabular-nums" style="color:var(--ink-5)">{{ '{:,}'.format(e.install_footprint) }} assets</span>
-      <span class="text-[12px] tabular-nums" style="color:var(--ink-5)">risk {{ e.risk_score }}</span>
-      <span class="text-[14px] font-semibold tabular-nums" style="color:var(--ink-8);min-width:56px;text-align:right">{{ '{:,}'.format(e.exposure) }}</span>
+      <span class="text-[13.5px] font-medium truncate flex-1" style="color:var(--ink)">{{ e.name }}</span>
+      <span class="text-[12px] tabular-nums" style="color:var(--muted)">{{ '{:,}'.format(e.install_footprint) }} assets</span>
+      <span class="text-[12px] tabular-nums" style="color:var(--muted)">risk {{ e.risk_score }}</span>
+      <span class="text-[14px] font-semibold tabular-nums" style="color:var(--ink);min-width:56px;text-align:right">{{ '{:,}'.format(e.exposure) }}</span>
     </a>
     {% endfor %}
   </div>
@@ -90,16 +90,16 @@
 
 {% if extensions_count == 0 %}
 <div class="surface p-12 text-center">
-  <svg class="mx-auto mb-3" width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="color:var(--ink-5)"><path d="M12 3l8 4v5c0 5-3.5 8-8 9-4.5-1-8-4-8-9V7l8-4z"/></svg>
-  <div class="text-[15px] font-medium mb-1" style="color:var(--ink-8)">No extensions tracked yet</div>
-  <div class="text-[13px] mb-4" style="color:var(--ink-5)">Add one to start collecting metadata and risk scores.</div>
+  <svg class="mx-auto mb-3" width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="color:var(--muted)"><path d="M12 3l8 4v5c0 5-3.5 8-8 9-4.5-1-8-4-8-9V7l8-4z"/></svg>
+  <div class="text-[15px] font-medium mb-1" style="color:var(--ink)">No extensions tracked yet</div>
+  <div class="text-[13px] mb-4" style="color:var(--muted)">Add one to start collecting metadata and risk scores.</div>
   <a href="/extensions/add" class="btn btn-primary">Add your first extension</a>
 </div>
 {% else %}
 
 {% macro sort_arrow(col) %}{% if sort == col %} <span class="text-meta">{{ '↑' if order == 'asc' else '↓' }}</span>{% endif %}{% endmacro %}
 {% macro sort_link(col) %}{{ qs(sort=col, order=('asc' if sort == col and order == 'desc' else 'desc'), page=1) }}{% endmacro %}
-{% set active_pill = 'background:var(--ink-8);color:white;border-color:var(--ink-8)' %}
+{% set active_pill = 'background:var(--ink);color:white;border-color:var(--ink)' %}
 
 {# Server data reaches the component via a JSON island (never the x-data
    attribute — the CSP build's parser doesn't decode |tojson's \uXXXX escapes). #}
@@ -113,7 +113,7 @@
       {% for s in ['chrome', 'vscode', 'edge'] %}
       <a class="badge badge-store badge-{{ s }}" href="{{ qs(store=s, page=1) }}" style="{% if filter_store == s %}{{ active_pill }}{% endif %}"><span class="dot"></span>{{ s }}</a>
       {% endfor %}
-      <div class="w-px h-4 mx-1.5" style="background:var(--ink-3)"></div>
+      <div class="w-px h-4 mx-1.5" style="background:var(--line)"></div>
       <a class="badge" href="{{ qs(risk=None, page=1) }}" style="{% if not filter_risk %}{{ active_pill }}{% endif %}">Any risk</a>
       {% for lvl in ['critical', 'high', 'medium', 'low'] %}
       <a class="badge badge-{{ lvl }}" href="{{ qs(risk=lvl, page=1) }}" style="{% if filter_risk == lvl %}{{ active_pill }}{% endif %}">{{ lvl }}</a>
@@ -138,8 +138,8 @@
 
   {% if filtered_total == 0 %}
   <div class="surface p-10 text-center">
-    <div class="text-[14px] font-medium mb-1" style="color:var(--ink-8)">No extensions match these filters</div>
-    <div class="text-[13px]" style="color:var(--ink-5)">Try clearing the search or filters.</div>
+    <div class="text-[14px] font-medium mb-1" style="color:var(--ink)">No extensions match these filters</div>
+    <div class="text-[13px]" style="color:var(--muted)">Try clearing the search or filters.</div>
   </div>
   {% else %}
   <div class="surface overflow-hidden">
@@ -160,7 +160,7 @@
           <tr style="cursor:pointer" @click="openExt(ext)">
             <td>
               <div class="flex items-center gap-2">
-                <div class="font-medium" style="color:var(--ink-8)" x-text="ext.name || ext.extension_id"></div>
+                <div class="font-medium" style="color:var(--ink)" x-text="ext.name || ext.extension_id"></div>
                 <template x-if="ext.last_fetch_ok === false">
                   <span class="badge badge-critical" :title="ext.last_fetch_error || 'Last fetch failed'">fetch failed</span>
                 </template>
@@ -168,7 +168,7 @@
                   <span class="badge badge-medium" title="No successful refresh within the staleness window">stale</span>
                 </template>
               </div>
-              <div class="mono text-[11.5px] mt-0.5" style="color:var(--ink-5)" x-text="ext.extension_id"></div>
+              <div class="mono text-[11.5px] mt-0.5" style="color:var(--muted)" x-text="ext.extension_id"></div>
             </td>
             <td>
               <span class="badge badge-store" :class="'badge-' + ext.store">
@@ -184,9 +184,9 @@
                 <span class="badge" :class="'badge-' + ext.risk_band" x-text="ext.risk_band"></span>
               </div>
             </td>
-            <td style="color:var(--ink-7)" x-text="ext.publisher || '—'"></td>
-            <td class="text-right mono tabular-nums" style="color:var(--ink-6)" x-text="installsText(ext)"></td>
-            <td style="color:var(--ink-6)" x-text="updatedText(ext)"></td>
+            <td style="color:var(--ink-soft)" x-text="ext.publisher || '—'"></td>
+            <td class="text-right mono tabular-nums" style="color:var(--ink-soft)" x-text="installsText(ext)"></td>
+            <td style="color:var(--ink-soft)" x-text="updatedText(ext)"></td>
             <td>
               <div class="flex justify-end gap-1" @click.stop>
                 <button class="btn btn-ghost btn-sm" title="Refresh" @click="refreshExt(ext.id)">

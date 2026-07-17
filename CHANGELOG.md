@@ -58,6 +58,10 @@ release to diff against.
 
 ### Changed
 
+- **Legacy design tokens fully retired** (#212): the ~250 inline `style="…var(--ink-N)…"`
+  attributes left from the pre-house design are swept to the house token names and the
+  `app.css` alias bridge is deleted; `tests/test_design_tokens.py` guards against legacy
+  tokens or stray oklch severity literals reappearing in templates/JS.
 - **Adopted the IcebergAI house design system** (#105): the shared family token sheet
   (`static/css/iceberg.css` — cool blue-grey oklch palette, fixed glacial-cyan accent, dark
   `.rail` / light `.workspace` / `.brandbar` shell) replaces the bespoke "Refined Operator"

@@ -9,7 +9,7 @@
 
   <div class="surface p-6 mb-4">
     <h2 class="section-title">What is IcebergEBS?</h2>
-    <p class="text-[13.5px] leading-relaxed" style="color:var(--ink-6)">
+    <p class="text-[13.5px] leading-relaxed" style="color:var(--ink-soft)">
       IcebergEBS tracks browser and editor extensions and scores them for risk. It downloads the
       actual extension package and inspects the code, combined with store metadata, to produce
       a 0–100 risk score across six signals.
@@ -18,31 +18,31 @@
 
   <div class="surface p-6 mb-4">
     <h2 class="section-title">Adding extensions</h2>
-    <p class="text-[13.5px] mb-3" style="color:var(--ink-6)">
+    <p class="text-[13.5px] mb-3" style="color:var(--ink-soft)">
       Paste either a full store URL or a bare extension ID on the
       <a href="/extensions/add">add page</a>. The store is auto-detected from URLs.
       To add many at once, use <a href="/extensions/bulk">bulk import</a> — paste one
       <code class="mono">store,id</code> (or store URL) per line. The dashboard list can be
       filtered/searched/sorted and exported to CSV or JSON.
     </p>
-    <div style="overflow-x:auto;border:1px solid var(--ink-3);border-radius:8px">
+    <div style="overflow-x:auto;border:1px solid var(--line);border-radius:8px">
     <table>
       <thead><tr><th>Store</th><th>ID format</th><th>Example</th></tr></thead>
       <tbody>
         <tr>
           <td><span class="badge badge-store badge-chrome"><span class="dot"></span>chrome</span></td>
           <td>32 characters a&#8211;p</td>
-          <td class="mono text-[12px]" style="color:var(--ink-5)">cjpalhdlnbpafiamejdnhcphjbkeiagm</td>
+          <td class="mono text-[12px]" style="color:var(--muted)">cjpalhdlnbpafiamejdnhcphjbkeiagm</td>
         </tr>
         <tr>
           <td><span class="badge badge-store badge-vscode"><span class="dot"></span>vscode</span></td>
           <td>publisher.extensionName</td>
-          <td class="mono text-[12px]" style="color:var(--ink-5)">ms-python.python</td>
+          <td class="mono text-[12px]" style="color:var(--muted)">ms-python.python</td>
         </tr>
         <tr>
           <td><span class="badge badge-store badge-edge"><span class="dot"></span>edge</span></td>
           <td>32 characters a&#8211;p (same format as Chrome)</td>
-          <td class="mono text-[12px]" style="color:var(--ink-5)">jmjflgjpcpepeafmmgdpfkogkghcpiha</td>
+          <td class="mono text-[12px]" style="color:var(--muted)">jmjflgjpcpepeafmmgdpfkogkghcpiha</td>
         </tr>
       </tbody>
     </table>
@@ -51,17 +51,17 @@
 
   <div class="surface p-6 mb-4">
     <h2 class="section-title">Risk score signals</h2>
-    <p class="text-[13.5px] mb-3" style="color:var(--ink-6)">Each extension is scored 0–100 across six signals. Higher = riskier.</p>
-    <div style="overflow-x:auto;border:1px solid var(--ink-3);border-radius:8px">
+    <p class="text-[13.5px] mb-3" style="color:var(--ink-soft)">Each extension is scored 0–100 across six signals. Higher = riskier.</p>
+    <div style="overflow-x:auto;border:1px solid var(--line);border-radius:8px">
     <table>
       <thead><tr><th>Signal</th><th class="text-right">Max</th><th>Source</th><th>What it measures</th></tr></thead>
       <tbody>
-        <tr><td>Permissions</td>      <td class="text-right mono">25</td><td style="color:var(--ink-5)">package</td><td style="color:var(--ink-5)">Tiered danger of declared permissions</td></tr>
-        <tr><td>Popularity</td>       <td class="text-right mono">20</td><td style="color:var(--ink-5)">store</td>  <td style="color:var(--ink-5)">Low installs or sudden drops</td></tr>
-        <tr><td>Publisher</td>        <td class="text-right mono">15</td><td style="color:var(--ink-5)">store</td>  <td style="color:var(--ink-5)">Ownership change, verification, generic names</td></tr>
-        <tr><td>Staleness</td>        <td class="text-right mono">15</td><td style="color:var(--ink-5)">store</td>  <td style="color:var(--ink-5)">Time since last update</td></tr>
-        <tr><td>Code behaviour</td>   <td class="text-right mono">15</td><td style="color:var(--ink-5)">package</td><td style="color:var(--ink-5)">eval / remote code / obfuscation</td></tr>
-        <tr><td>External domains</td> <td class="text-right mono">10</td><td style="color:var(--ink-5)">package</td><td style="color:var(--ink-5)">Unknown URLs in code</td></tr>
+        <tr><td>Permissions</td>      <td class="text-right mono">25</td><td style="color:var(--muted)">package</td><td style="color:var(--muted)">Tiered danger of declared permissions</td></tr>
+        <tr><td>Popularity</td>       <td class="text-right mono">20</td><td style="color:var(--muted)">store</td>  <td style="color:var(--muted)">Low installs or sudden drops</td></tr>
+        <tr><td>Publisher</td>        <td class="text-right mono">15</td><td style="color:var(--muted)">store</td>  <td style="color:var(--muted)">Ownership change, verification, generic names</td></tr>
+        <tr><td>Staleness</td>        <td class="text-right mono">15</td><td style="color:var(--muted)">store</td>  <td style="color:var(--muted)">Time since last update</td></tr>
+        <tr><td>Code behaviour</td>   <td class="text-right mono">15</td><td style="color:var(--muted)">package</td><td style="color:var(--muted)">eval / remote code / obfuscation</td></tr>
+        <tr><td>External domains</td> <td class="text-right mono">10</td><td style="color:var(--muted)">package</td><td style="color:var(--muted)">Unknown URLs in code</td></tr>
       </tbody>
     </table>
     </div>
@@ -75,7 +75,7 @@
 
   <div class="surface p-6 mb-4">
     <h2 class="section-title">Inventory &amp; exposure</h2>
-    <p class="text-[13.5px] leading-relaxed mb-3" style="color:var(--ink-6)">
+    <p class="text-[13.5px] leading-relaxed mb-3" style="color:var(--ink-soft)">
       Risk alone doesn't tell you blast radius. Push your org's real install footprint from your
       SOAR (IcebergEBS doesn't build EDR/Intune connectors itself) to <span class="mono">POST /api/inventory</span>
       — a batch of <span class="mono">{store, extension_id, asset_id, asset_type?, department?}</span>
@@ -84,7 +84,7 @@
       <strong>scored on the next scheduled refresh</strong>, so pushing inventory grows the watchlist
       automatically without stalling large batches on live store fetches.
     </p>
-    <p class="text-[13.5px] leading-relaxed" style="color:var(--ink-6)">
+    <p class="text-[13.5px] leading-relaxed" style="color:var(--ink-soft)">
       <strong>Exposure</strong> ("blast radius") = <span class="mono">risk score × assets installed</span>.
       The dashboard ranks your highest-exposure extensions, and each extension's detail page shows how
       many assets it's on and a per-department breakdown. Sort any list/export by
@@ -94,19 +94,19 @@
 
   <div class="surface p-6 mb-4">
     <h2 class="section-title">Detection findings</h2>
-    <p class="text-[13.5px] leading-relaxed mb-3" style="color:var(--ink-6)">
+    <p class="text-[13.5px] leading-relaxed mb-3" style="color:var(--ink-soft)">
       IcebergEBS records structured findings while inspecting the downloaded package. Findings are
       deterministic static heuristics — they do not call external reputation services or require
       third-party API keys.
     </p>
-    <div style="overflow-x:auto;border:1px solid var(--ink-3);border-radius:8px">
+    <div style="overflow-x:auto;border:1px solid var(--line);border-radius:8px">
     <table>
       <thead><tr><th>Area</th><th>Examples</th></tr></thead>
       <tbody>
-        <tr><td>Manifest</td><td style="color:var(--ink-5)">Manifest V2, broad host access, unsafe CSP entries, high-risk permissions</td></tr>
-        <tr><td>Execution</td><td style="color:var(--ink-5)">eval, new Function, string timers, dynamic script injection, remote importScripts</td></tr>
-        <tr><td>Communication</td><td style="color:var(--ink-5)">Remote fetch, XHR, WebSocket, EventSource, sendBeacon calls</td></tr>
-        <tr><td>Reviewability</td><td style="color:var(--ink-5)">Minified or obfuscated JavaScript with file-level context</td></tr>
+        <tr><td>Manifest</td><td style="color:var(--muted)">Manifest V2, broad host access, unsafe CSP entries, high-risk permissions</td></tr>
+        <tr><td>Execution</td><td style="color:var(--muted)">eval, new Function, string timers, dynamic script injection, remote importScripts</td></tr>
+        <tr><td>Communication</td><td style="color:var(--muted)">Remote fetch, XHR, WebSocket, EventSource, sendBeacon calls</td></tr>
+        <tr><td>Reviewability</td><td style="color:var(--muted)">Minified or obfuscated JavaScript with file-level context</td></tr>
       </tbody>
     </table>
     </div>
@@ -114,14 +114,14 @@
 
   <div class="surface p-6 mb-4">
     <h2 class="section-title">Threat Intelligence</h2>
-    <p class="text-[13.5px] leading-relaxed mb-3" style="color:var(--ink-6)">
+    <p class="text-[13.5px] leading-relaxed mb-3" style="color:var(--ink-soft)">
       IcebergEBS extracts observable indicators from the inspected package, including package
       hashes, external domains, and JavaScript network callouts. Referenced URLs that are
       only found as literal strings are kept separate from callouts. The Threat Intelligence
       panel provides copy controls and manual lookup links for external tools such as
       VirusTotal and AlienVault OTX.
     </p>
-    <p class="text-[12px] leading-relaxed" style="color:var(--ink-5)">
+    <p class="text-[12px] leading-relaxed" style="color:var(--muted)">
       Lookups are manual and privacy-preserving by default. IcebergEBS does not call external
       threat-intelligence APIs or submit packages; clicking an external lookup link sends the
       selected indicator to that service.
@@ -130,11 +130,11 @@
 
   <div class="surface p-6 mb-4">
     <h2 class="section-title">Users &amp; accounts</h2>
-    <p class="text-[13.5px] leading-relaxed mb-2" style="color:var(--ink-6)">
+    <p class="text-[13.5px] leading-relaxed mb-2" style="color:var(--ink-soft)">
       IcebergEBS is multi-user. Each user maintains their own isolated list of monitored
       extensions — adding for one user has no effect on another.
     </p>
-    <ul class="text-[13.5px] leading-relaxed pl-5 list-disc" style="color:var(--ink-6)">
+    <ul class="text-[13.5px] leading-relaxed pl-5 list-disc" style="color:var(--ink-soft)">
       <li>Admin creates users via <a href="/admin/users">admin / users</a>. There is no self-registration.</li>
       <li>Change your password or pick a theme (system, light, or dark) under the username menu in the top bar.</li>
       <li>Admins can delete users — their alert rules, webhook destinations, and API keys are
@@ -145,13 +145,13 @@
 
   <div class="surface p-6 mb-4">
     <h2 class="section-title">API keys</h2>
-    <p class="text-[13.5px] leading-relaxed mb-2" style="color:var(--ink-6)">
+    <p class="text-[13.5px] leading-relaxed mb-2" style="color:var(--ink-soft)">
       Programmatic callers (SOAR pushing to <span class="mono">POST /api/inventory</span>, reporting
       scripts hitting the export endpoint, …) authenticate to the JSON API with a bearer token
       instead of a session cookie: <span class="mono">Authorization: Bearer &lt;key&gt;</span>.
       Create and revoke keys under <a href="/account/keys">account / API keys</a>.
     </p>
-    <ul class="text-[13.5px] leading-relaxed pl-5 list-disc" style="color:var(--ink-6)">
+    <ul class="text-[13.5px] leading-relaxed pl-5 list-disc" style="color:var(--ink-soft)">
       <li>The full key is shown <strong>once</strong> at creation — only a prefix/suffix is stored for display.</li>
       <li>Keys can be <strong>read-only</strong>: they work for GET requests and are rejected (403) for anything state-changing.</li>
       <li>Changing your password revokes all of your API keys along with other-device sessions.</li>
@@ -160,24 +160,24 @@
 
   <div class="surface p-6 mb-4">
     <h2 class="section-title">Alerts &amp; webhooks</h2>
-    <p class="text-[13.5px] mb-3" style="color:var(--ink-6)">
+    <p class="text-[13.5px] mb-3" style="color:var(--ink-soft)">
       Configure webhook destinations and alert rules under <a href="/account">account / alerts</a>.
       IcebergEBS POSTs a JSON payload to your webhook URL whenever a monitored extension changes.
     </p>
-    <div style="overflow-x:auto;border:1px solid var(--ink-3);border-radius:8px">
+    <div style="overflow-x:auto;border:1px solid var(--line);border-radius:8px">
     <table>
       <thead><tr><th>Event type</th><th>Triggers when</th></tr></thead>
       <tbody>
-        <tr><td><code class="mono">risk_level_change</code></td><td style="color:var(--ink-5)">Risk band changes (low / medium / high / critical)</td></tr>
-        <tr><td><code class="mono">publisher_change</code></td> <td style="color:var(--ink-5)">Publisher name differs from previous fetch</td></tr>
-        <tr><td><code class="mono">permission_change</code></td><td style="color:var(--ink-5)">Manifest permissions added or removed</td></tr>
-        <tr><td><code class="mono">new_version</code></td>      <td style="color:var(--ink-5)">Version string changes</td></tr>
+        <tr><td><code class="mono">risk_level_change</code></td><td style="color:var(--muted)">Risk band changes (low / medium / high / critical)</td></tr>
+        <tr><td><code class="mono">publisher_change</code></td> <td style="color:var(--muted)">Publisher name differs from previous fetch</td></tr>
+        <tr><td><code class="mono">permission_change</code></td><td style="color:var(--muted)">Manifest permissions added or removed</td></tr>
+        <tr><td><code class="mono">new_version</code></td>      <td style="color:var(--muted)">Version string changes</td></tr>
       </tbody>
     </table>
     </div>
 
     <div class="label-cap mt-5 mb-2">Example payload</div>
-<pre class="mono text-[12px] p-3 rounded-lg overflow-x-auto" style="background:var(--ink-1);color:var(--ink-7);border:1px solid var(--ink-3)">{
+<pre class="mono text-[12px] p-3 rounded-lg overflow-x-auto" style="background:var(--surface-2);color:var(--ink-soft);border:1px solid var(--line)">{
   "text": "IcebergEBS: uBlock Origin risk level changed medium → high",
   "event": "risk_level_change",
   "extension": {
@@ -190,20 +190,20 @@
   "change": { "old": "medium", "new": "high" },
   "risk_score": 55
 }</pre>
-    <p class="text-[12px] mt-2" style="color:var(--ink-5)">
+    <p class="text-[12px] mt-2" style="color:var(--muted)">
       <code class="mono">iceberg_ebs_url</code> is only included when <code class="mono">ICEBERG_EBS_APP_BASE_URL</code> is set.
     </p>
   </div>
 
   <div class="surface p-6 mb-4">
     <h2 class="section-title">Background refresh</h2>
-    <p class="text-[13.5px] leading-relaxed" style="color:var(--ink-6)">
+    <p class="text-[13.5px] leading-relaxed" style="color:var(--ink-soft)">
       Extensions on the watchlist are automatically re-fetched every
       <code class="mono">ICEBERG_EBS_FETCH_INTERVAL_MINUTES</code> minutes (default: 60). Re-scoring
       detects publisher changes, install count drops, and new code patterns. Toggle watchlist
       per extension on the detail page.
     </p>
-    <p class="text-[13.5px] leading-relaxed mt-3" style="color:var(--ink-6)">
+    <p class="text-[13.5px] leading-relaxed mt-3" style="color:var(--ink-soft)">
       The dashboard <strong>Fetch health</strong> tile counts watchlist extensions that are
       <em>failing</em> (last fetch errored) or <em>stale</em> (no successful refresh recently),
       and the extension row flags each one. Transient store failures are retried with backoff
@@ -220,59 +220,59 @@
 
   <div class="surface p-6">
     <h2 class="section-title">Configuration</h2>
-    <div style="overflow-x:auto;border:1px solid var(--ink-3);border-radius:8px">
+    <div style="overflow-x:auto;border:1px solid var(--line);border-radius:8px">
     <table>
       <thead><tr><th>Env var</th><th>Default</th><th>Description</th></tr></thead>
       <tbody>
         <tr>
           <td class="mono" style="white-space:nowrap">ICEBERG_EBS_ADMIN_USERNAME</td>
-          <td style="color:var(--ink-5)">—</td>
-          <td style="color:var(--ink-5)">required</td>
+          <td style="color:var(--muted)">—</td>
+          <td style="color:var(--muted)">required</td>
         </tr>
         <tr>
           <td class="mono" style="white-space:nowrap">ICEBERG_EBS_ADMIN_PASSWORD</td>
-          <td style="color:var(--ink-5)">—</td>
-          <td style="color:var(--ink-5)">required</td>
+          <td style="color:var(--muted)">—</td>
+          <td style="color:var(--muted)">required</td>
         </tr>
         <tr>
           <td class="mono" style="white-space:nowrap">ICEBERG_EBS_SECRET_KEY</td>
-          <td style="color:var(--ink-5)">—</td>
-          <td style="color:var(--ink-5)">required — generate with<br><code class="mono text-[11.5px]">python -c "import secrets; print(secrets.token_hex(32))"</code></td>
+          <td style="color:var(--muted)">—</td>
+          <td style="color:var(--muted)">required — generate with<br><code class="mono text-[11.5px]">python -c "import secrets; print(secrets.token_hex(32))"</code></td>
         </tr>
         <tr>
           <td class="mono" style="white-space:nowrap">ICEBERG_EBS_DATABASE_URL</td>
-          <td class="mono text-[11.5px]" style="color:var(--ink-5);white-space:nowrap">postgresql+asyncpg://iceberg_ebs:iceberg_ebs@localhost:5432/iceberg_ebs</td>
-          <td style="color:var(--ink-5)"></td>
+          <td class="mono text-[11.5px]" style="color:var(--muted);white-space:nowrap">postgresql+asyncpg://iceberg_ebs:iceberg_ebs@localhost:5432/iceberg_ebs</td>
+          <td style="color:var(--muted)"></td>
         </tr>
         <tr>
           <td class="mono" style="white-space:nowrap">ICEBERG_EBS_SESSION_MAX_AGE</td>
-          <td style="color:var(--ink-5)">86400</td>
-          <td style="color:var(--ink-5)">session lifetime in seconds</td>
+          <td style="color:var(--muted)">86400</td>
+          <td style="color:var(--muted)">session lifetime in seconds</td>
         </tr>
         <tr>
           <td class="mono" style="white-space:nowrap">ICEBERG_EBS_FETCH_INTERVAL_MINUTES</td>
-          <td style="color:var(--ink-5)">60</td>
-          <td style="color:var(--ink-5)">background refresh cadence</td>
+          <td style="color:var(--muted)">60</td>
+          <td style="color:var(--muted)">background refresh cadence</td>
         </tr>
         <tr>
           <td class="mono" style="white-space:nowrap">ICEBERG_EBS_RETENTION_DAYS</td>
-          <td style="color:var(--ink-5)">0</td>
-          <td style="color:var(--ink-5)">prune fetch/install/alert history older than N days (0 = disabled)</td>
+          <td style="color:var(--muted)">0</td>
+          <td style="color:var(--muted)">prune fetch/install/alert history older than N days (0 = disabled)</td>
         </tr>
         <tr>
           <td class="mono" style="white-space:nowrap">ICEBERG_EBS_APP_BASE_URL</td>
-          <td style="color:var(--ink-5)">—</td>
-          <td style="color:var(--ink-5)">public URL of your instance, included as <code class="mono">iceberg_ebs_url</code> in payloads</td>
+          <td style="color:var(--muted)">—</td>
+          <td style="color:var(--muted)">public URL of your instance, included as <code class="mono">iceberg_ebs_url</code> in payloads</td>
         </tr>
         <tr>
           <td class="mono" style="white-space:nowrap">ICEBERG_EBS_HTTPX_TIMEOUT</td>
-          <td style="color:var(--ink-5)">15.0</td>
-          <td style="color:var(--ink-5)">outbound HTTP timeout in seconds</td>
+          <td style="color:var(--muted)">15.0</td>
+          <td style="color:var(--muted)">outbound HTTP timeout in seconds</td>
         </tr>
         <tr>
           <td class="mono" style="white-space:nowrap">ICEBERG_EBS_SECURE_COOKIES</td>
-          <td style="color:var(--ink-5)">true</td>
-          <td style="color:var(--ink-5)">set <code class="mono">Secure</code> flag on session cookies — disable for plain HTTP dev</td>
+          <td style="color:var(--muted)">true</td>
+          <td style="color:var(--muted)">set <code class="mono">Secure</code> flag on session cookies — disable for plain HTTP dev</td>
         </tr>
       </tbody>
     </table>

@@ -13,10 +13,10 @@
 } | tojson }}</script>
 <div x-data="accountPrefs">
 
-<div class="flex items-center gap-2 text-[12.5px] mb-2" style="color:var(--ink-5)">
+<div class="flex items-center gap-2 text-[12.5px] mb-2" style="color:var(--muted)">
   <span>Account</span>
   <span>/</span>
-  <span style="color:var(--ink-7)">Alerts &amp; webhooks</span>
+  <span style="color:var(--ink-soft)">Alerts &amp; webhooks</span>
 </div>
 <h1 class="page-title">Alerts &amp; webhooks</h1>
 <p class="page-sub mb-5">Notify Slack, PagerDuty, or any webhook when a watched extension changes risk, publisher, permissions, or version.</p>
@@ -52,13 +52,13 @@
   </div>
 
   <template x-if="destinations.length===0">
-    <div class="text-[12.5px] mb-3" style="color:var(--ink-5)">Add a destination below before creating rules.</div>
+    <div class="text-[12.5px] mb-3" style="color:var(--muted)">Add a destination below before creating rules.</div>
   </template>
 
   {# ── Add rule form (sentence grammar) ─────────────────── #}
   <div class="surface p-5 mb-3" x-show="showAddRule" x-cloak>
     <div class="flex items-end gap-3 flex-wrap">
-      <div class="text-[13px] pb-2" style="color:var(--ink-6)">When</div>
+      <div class="text-[13px] pb-2" style="color:var(--ink-soft)">When</div>
       <div>
         <label class="label-cap block mb-1.5">Event</label>
         <select x-model="ruleForm.event_type" style="width:auto;min-width:170px">
@@ -68,7 +68,7 @@
           <option value="new_version">New version</option>
         </select>
       </div>
-      <div class="text-[13px] pb-2" style="color:var(--ink-6)">on</div>
+      <div class="text-[13px] pb-2" style="color:var(--ink-soft)">on</div>
       <div>
         <label class="label-cap block mb-1.5">Scope</label>
         <select x-model="ruleForm.extension_id" style="width:auto;min-width:160px">
@@ -78,7 +78,7 @@
           </template>
         </select>
       </div>
-      <div class="text-[13px] pb-2" style="color:var(--ink-6)">notify</div>
+      <div class="text-[13px] pb-2" style="color:var(--ink-soft)">notify</div>
       <div>
         <label class="label-cap block mb-1.5">Destination</label>
         <select x-model="ruleForm.destination_id" style="width:auto;min-width:160px">
@@ -98,7 +98,7 @@
   </div>
 
   <template x-if="rules.length === 0 && !showAddRule">
-    <div class="surface p-6 text-center text-[13px]" style="color:var(--ink-5)"
+    <div class="surface p-6 text-center text-[13px]" style="color:var(--muted)"
          x-text="destinations.length===0 ? 'Add a destination below, then create a rule.' : 'No rules yet.'"></div>
   </template>
 
@@ -106,18 +106,18 @@
   <div class="flex flex-col gap-2" x-show="rules.length > 0">
     <template x-for="r in rules" :key="r.id">
       <div class="surface px-4 py-3 flex items-center justify-between gap-3 flex-wrap">
-        <div class="flex items-center gap-2 text-[13.5px] flex-wrap" style="color:var(--ink-6)">
-          <span style="color:var(--ink-5)">When</span>
+        <div class="flex items-center gap-2 text-[13.5px] flex-wrap" style="color:var(--ink-soft)">
+          <span style="color:var(--muted)">When</span>
           <span class="chip" x-text="eventLabel(r.event_type)"></span>
-          <span style="color:var(--ink-5)">on</span>
+          <span style="color:var(--muted)">on</span>
           <span class="chip" x-text="r.ext_name || 'All extensions'"></span>
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--ink-4)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
-          <span class="chip" style="background:var(--accent-bg);color:var(--accent);border-color:color-mix(in oklch,var(--accent) 22%,transparent)" x-text="r.dest_label"></span>
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--line-strong)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+          <span class="chip" style="background:var(--accent-soft);color:var(--accent);border-color:color-mix(in oklch,var(--accent) 22%,transparent)" x-text="r.dest_label"></span>
         </div>
         <div class="flex items-center gap-2">
           <button class="switch" :class="r.enabled && 'on'" @click="toggleRule(r)">
             <span class="track"><span class="thumb"></span></span>
-            <span class="text-[12px]" style="color:var(--ink-5)" x-text="r.enabled ? 'On' : 'Off'"></span>
+            <span class="text-[12px]" style="color:var(--muted)" x-text="r.enabled ? 'On' : 'Off'"></span>
           </button>
           <button class="btn btn-danger btn-sm" @click="deleteRule(r.id)">Delete</button>
         </div>
@@ -157,7 +157,7 @@
   </div>
 
   <template x-if="destinations.length === 0 && !showAddDest">
-    <div class="surface p-6 text-center text-[13px]" style="color:var(--ink-5)">
+    <div class="surface p-6 text-center text-[13px]" style="color:var(--muted)">
       No destinations configured — add a webhook URL to receive alerts.
     </div>
   </template>
@@ -169,11 +169,11 @@
       <tbody>
         <template x-for="d in destinations" :key="d.id">
           <tr>
-            <td class="font-medium" style="color:var(--ink-8)" x-text="d.label"></td>
-            <td class="mono text-[12px]" style="color:var(--ink-5);max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" x-text="d.target"></td>
+            <td class="font-medium" style="color:var(--ink)" x-text="d.label"></td>
+            <td class="mono text-[12px]" style="color:var(--muted);max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" x-text="d.target"></td>
             <td>
               <button class="badge" @click="toggleDest(d)"
-                      :style="d.enabled ? 'background:var(--risk-low-bg);color:var(--badge-low-color);border-color:color-mix(in oklch, var(--risk-low) 25%, transparent)' : 'background:var(--ink-1);color:var(--ink-5);border-color:var(--ink-3)'"
+                      :style="d.enabled ? 'background:var(--risk-low-bg);color:var(--badge-low-color);border-color:color-mix(in oklch, var(--risk-low) 25%, transparent)' : 'background:var(--surface-2);color:var(--muted);border-color:var(--line)'"
                       x-text="d.enabled ? '● enabled' : '○ disabled'"></button>
             </td>
             <td>
@@ -208,7 +208,7 @@
     </div>
   </div>
   <template x-if="filteredLog.length === 0">
-    <div class="surface p-6 text-center text-[13px]" style="color:var(--ink-5)"
+    <div class="surface p-6 text-center text-[13px]" style="color:var(--muted)"
          x-text="alertLog.length === 0 ? 'No alerts fired yet.' : 'No matching entries.'"></div>
   </template>
   <template x-if="filteredLog.length > 0">
@@ -218,10 +218,10 @@
       <tbody>
         <template x-for="row in filteredLog" :key="row.id">
           <tr>
-            <td class="mono text-[12px]" style="color:var(--ink-5)" x-text="formatTime(row.sent_at)"></td>
+            <td class="mono text-[12px]" style="color:var(--muted)" x-text="formatTime(row.sent_at)"></td>
             <td x-text="eventLabel(row.event_type)"></td>
-            <td style="color:var(--ink-6)" x-text="row.ext_name"></td>
-            <td style="color:var(--ink-6)" x-text="row.dest_label"></td>
+            <td style="color:var(--ink-soft)" x-text="row.ext_name"></td>
+            <td style="color:var(--ink-soft)" x-text="row.dest_label"></td>
             <td>
               <span x-show="row.success" class="badge badge-low">delivered</span>
               <span x-show="!row.success" class="badge badge-critical" :title="row.error">failed</span>

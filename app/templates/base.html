@@ -104,32 +104,32 @@
       </div>
 
       <div class="flex items-center gap-3" x-data="userMenu">
-        <button @click="open=!open" class="flex items-center gap-2 px-1.5 py-1 rounded-md hover:bg-[var(--ink-1)] transition">
+        <button @click="open=!open" class="flex items-center gap-2 px-1.5 py-1 rounded-md hover:bg-[var(--surface-2)] transition">
           <span class="avatar">{{ username[0]|upper }}</span>
           <span class="hidden md:flex flex-col items-start">
-            <span class="text-[12.5px] font-medium leading-tight" style="color:var(--ink-8)">{{ username }}</span>
-            <span class="text-[11px] leading-tight" style="color:var(--ink-5)">{% if is_admin %}workspace admin{% else %}member{% endif %}</span>
+            <span class="text-[12.5px] font-medium leading-tight" style="color:var(--ink)">{{ username }}</span>
+            <span class="text-[11px] leading-tight" style="color:var(--muted)">{% if is_admin %}workspace admin{% else %}member{% endif %}</span>
           </span>
-          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--ink-5)"><path d="m6 9 6 6 6-6"/></svg>
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--muted)"><path d="m6 9 6 6 6-6"/></svg>
         </button>
         <div x-show="open" @click.outside="open=false" x-cloak
              class="absolute right-7 top-12 surface py-1.5"
              style="min-width:200px;box-shadow:var(--shadow-lift);z-index:20">
-          <a href="/account" class="block px-3 py-2 text-[13px] hover:bg-[var(--ink-1)]" style="color:var(--ink-7)" @click="open=false">Alerts &amp; webhooks</a>
-          <a href="/account/keys" class="block px-3 py-2 text-[13px] hover:bg-[var(--ink-1)]" style="color:var(--ink-7)" @click="open=false">API keys</a>
-          <a href="/account/password" class="block px-3 py-2 text-[13px] hover:bg-[var(--ink-1)]" style="color:var(--ink-7)" @click="open=false">Change password</a>
-          <div class="my-1 mx-3 border-t" style="border-color:var(--ink-3)"></div>
+          <a href="/account" class="block px-3 py-2 text-[13px] hover:bg-[var(--surface-2)]" style="color:var(--ink-soft)" @click="open=false">Alerts &amp; webhooks</a>
+          <a href="/account/keys" class="block px-3 py-2 text-[13px] hover:bg-[var(--surface-2)]" style="color:var(--ink-soft)" @click="open=false">API keys</a>
+          <a href="/account/password" class="block px-3 py-2 text-[13px] hover:bg-[var(--surface-2)]" style="color:var(--ink-soft)" @click="open=false">Change password</a>
+          <div class="my-1 mx-3 border-t" style="border-color:var(--line)"></div>
           <div class="px-3 py-2">
-            <div class="text-[11px] mb-1.5" style="color:var(--ink-5)">Theme</div>
+            <div class="text-[11px] mb-1.5" style="color:var(--muted)">Theme</div>
             <div class="seg">
               <button :class="theme === 'system' && 'active'" @click="setTheme('system')">System</button>
               <button :class="theme === 'light' && 'active'" @click="setTheme('light')">Light</button>
               <button :class="theme === 'dark' && 'active'" @click="setTheme('dark')">Dark</button>
             </div>
           </div>
-          <div class="my-1 mx-3 border-t" style="border-color:var(--ink-3)"></div>
+          <div class="my-1 mx-3 border-t" style="border-color:var(--line)"></div>
           <form method="post" action="/logout" class="m-0">
-            <button type="submit" class="w-full text-left px-3 py-2 text-[13px] hover:bg-[var(--ink-1)]" style="color:var(--ink-7)">Sign out</button>
+            <button type="submit" class="w-full text-left px-3 py-2 text-[13px] hover:bg-[var(--surface-2)]" style="color:var(--ink-soft)">Sign out</button>
           </form>
         </div>
       </div>

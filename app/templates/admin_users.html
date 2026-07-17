@@ -30,10 +30,10 @@
       <input type="password" x-model="form.password" placeholder="password" @keydown.enter="createUser()">
     </div>
     <div>
-      <label class="label-cap block mb-1.5">Email <span style="text-transform:none;letter-spacing:0;font-weight:400;color:var(--ink-5)">(optional)</span></label>
+      <label class="label-cap block mb-1.5">Email <span style="text-transform:none;letter-spacing:0;font-weight:400;color:var(--muted)">(optional)</span></label>
       <input type="text" x-model="form.email" placeholder="user@example.com" @keydown.enter="createUser()">
     </div>
-    <label class="flex items-center gap-2 cursor-pointer text-[13px]" style="color:var(--ink-7)">
+    <label class="flex items-center gap-2 cursor-pointer text-[13px]" style="color:var(--ink-soft)">
       <input type="checkbox" x-model="form.is_admin"> Admin privileges
     </label>
     <div x-show="createError" class="text-[12.5px]" style="color:var(--risk-critical)" x-text="createError"></div>
@@ -59,21 +59,21 @@
           <div class="flex items-center gap-2.5">
             <div class="avatar" :style="u.is_admin ? '' : 'background: var(--muted)'" x-text="u.username[0].toUpperCase()"></div>
             <div>
-              <div class="font-medium" style="color:var(--ink-8)"><span x-text="u.username"></span>
-                <span x-show="u.id === currentUserId" class="text-[11px] font-normal" style="color:var(--ink-5)">(you)</span>
+              <div class="font-medium" style="color:var(--ink)"><span x-text="u.username"></span>
+                <span x-show="u.id === currentUserId" class="text-[11px] font-normal" style="color:var(--muted)">(you)</span>
               </div>
             </div>
           </div>
         </td>
-        <td style="color:var(--ink-6)" x-text="u.email || '—'"></td>
+        <td style="color:var(--ink-soft)" x-text="u.email || '—'"></td>
         <td>
-          <span x-show="u.is_admin" class="badge" style="background:var(--accent-bg);color:var(--accent);border-color:color-mix(in oklch, var(--accent) 25%, transparent)">admin</span>
-          <span x-show="!u.is_admin" class="badge" style="background:var(--ink-1);color:var(--ink-7);border-color:var(--ink-3)">user</span>
+          <span x-show="u.is_admin" class="badge" style="background:var(--accent-soft);color:var(--accent);border-color:color-mix(in oklch, var(--accent) 25%, transparent)">admin</span>
+          <span x-show="!u.is_admin" class="badge" style="background:var(--surface-2);color:var(--ink-soft);border-color:var(--line)">user</span>
         </td>
-        <td style="color:var(--ink-6)" x-text="createdText(u)"></td>
+        <td style="color:var(--ink-soft)" x-text="createdText(u)"></td>
         <td class="text-right">
           <button x-show="u.id !== currentUserId" class="btn btn-danger btn-sm" @click="deleteUser(u.id, u.username)">Delete</button>
-          <span x-show="u.id === currentUserId" style="color:var(--ink-5);font-size:12px">—</span>
+          <span x-show="u.id === currentUserId" style="color:var(--muted);font-size:12px">—</span>
         </td>
       </tr>
     </template>

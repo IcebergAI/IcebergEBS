@@ -25,7 +25,7 @@ function readJSON(id) {
 // ── Theme (system/light/dark) ────────────────────────────────────────────
 // theme-boot.js owns the pre-paint stamp; this is the runtime switcher the
 // user-menu picker drives. Keep the two files' cookie/localStorage contract and
-// the --ink-0 backgrounds in sync.
+// the two --paper background literals in sync.
 
 function ebsWriteCookie(name, value) {
   const maxAge = 60 * 60 * 24 * 365;
