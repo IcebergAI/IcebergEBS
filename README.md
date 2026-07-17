@@ -7,6 +7,18 @@ Extension-watch tool for Chrome, Edge, and VS Code. Tracks browser and editor ex
 
 Multi-user. Each user maintains an independent list of monitored extensions. A background scheduler re-fetches watchlisted extensions on a configurable interval and fires webhook alerts when something changes.
 
+![IcebergEBS dashboard — tracked extensions, risk scores, and org-wide exposure](docs/screenshots/dashboard.png)
+
+## Screenshots
+
+| Extension detail — score breakdown & package analysis | Alerts & webhooks |
+|---|---|
+| ![Extension detail page](docs/screenshots/extension-detail.png) | ![Alerts & webhooks configuration](docs/screenshots/alerts-webhooks.png) |
+| **Add extension — paste a store URL or ID** | **Dark theme** |
+| ![Add extension page](docs/screenshots/add-extension.png) | ![Dashboard in dark theme](docs/screenshots/dashboard-dark.png) |
+
+<sub>Captured from a locally seeded instance — refresh them with the scripts in [`scripts/`](scripts/README.md).</sub>
+
 ## Requirements
 
 - Python 3.14+
