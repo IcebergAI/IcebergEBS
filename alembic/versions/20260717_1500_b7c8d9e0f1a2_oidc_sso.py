@@ -111,9 +111,17 @@ def upgrade() -> None:
 def downgrade() -> None:
     op.drop_table("oidcsettings")
     # SSO users have a NULL password_hash; restoring the NOT NULL constraint below
-    # would fail while any exist. Removing SSO is inherently destructive to SSO
-    # accounts, so drop them (their history rows SET NULL / CASCADE per the schema).
-    op.execute('DELETE FROM "user" WHERE password_hash IS NULL')
+    # would fail while any exist. PRESERVE those accounts (and their owned
+    # extensions / rules / keys) rather than deleting them — a rollback must not
+    # destroy user data. Give each an unusable-but-valid bcrypt hash: it's a hash
+    # of a discarded 32-byte random secret, so no password can ever match it and
+    # bcrypt.checkpw won't raise on a malformed value. These accounts simply can't
+    # log in locally (they never had a password), which is correct.
+    op.execute(
+        'UPDATE "user" SET password_hash = '
+        "'$2b$12$autXOyS3So4zNwsNiR7yHeMl5Y58OXLwiJeCiE5wu/qcMzlM704UK' "
+        "WHERE password_hash IS NULL"
+    )
     op.drop_index("uq_user_sso_email", table_name="user")
     with op.batch_alter_table("user", schema=None) as batch_op:
         batch_op.drop_constraint("ck_user_issuer_subject_together", type_="check")
