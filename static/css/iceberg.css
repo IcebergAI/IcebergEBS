@@ -181,6 +181,29 @@ a:hover { color: var(--accent-deep); }
 .rail-id-role { font-family: var(--fs-mono); font-size: 9.5px; font-weight: 600; letter-spacing: 0.1em; color: var(--accent); text-transform: uppercase; }
 .rail-version { font-family: var(--fs-mono); font-size: 9.5px; letter-spacing: 0.06em; color: var(--rail-faint); padding: 6px 4px 0; }
 
+/* Rail-foot account menu — the identity block doubles as the user/settings
+ * dropdown trigger; the popover opens upward out of the foot. */
+.rail-usermenu { position: relative; }
+.rail-id-btn {
+  width: 100%; background: none; border: 0; cursor: pointer;
+  padding: 6px 8px; border-radius: 8px; text-align: left;
+  transition: background .12s;
+}
+.rail-id-btn:hover { background: var(--rail-2); }
+.rail-id-btn .rail-id-name, .rail-id-btn .rail-id-role { display: block; }
+.rail-id-caret { margin-left: auto; flex: none; color: var(--rail-faint); transition: transform .15s; }
+.rail-id-caret.rotated { transform: rotate(180deg); }
+.rail-menu {
+  position: absolute; left: 0; right: 0; bottom: calc(100% + 8px);
+  min-width: 200px; box-shadow: var(--shadow-lift); z-index: 30;
+}
+.rail-menu-item {
+  display: block; padding: 8px 12px; border-radius: 6px;
+  font-size: 13px; color: var(--ink-soft);
+}
+.rail-menu-item:hover { background: var(--surface-2); }
+.rail-menu-sep { margin: 4px 12px; border-top: 1px solid var(--line); }
+
 /* --------------------------------------------------------------------------
  *  Shell: rail | (topbar / canvas)
  * ------------------------------------------------------------------------ */

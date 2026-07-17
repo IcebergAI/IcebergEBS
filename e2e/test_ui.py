@@ -86,16 +86,39 @@ def test_topbar_search_interaction(page: Page, collect_errors):
 def test_theme_picker_roundtrip(page: Page, collect_errors):
     """The system/light/dark picker (#106): drives the Alpine userMenu component —
     the first CI proof that Alpine interactivity actually works behind the strict
-    CSP — and theme-boot.js's persistence across a reload."""
+    CSP — and theme-boot.js's persistence across a reload. The menu lives at the
+    bottom of the rail (the account/settings dropdown), not the topbar."""
     _login(page)
-    # Open the user menu (Alpine @click) and pick the dark theme.
-    page.click("header.topbar .avatar")
+    # Open the rail account menu (Alpine @click) and pick the dark theme.
+    page.click("aside.rail .rail-id-btn")
     page.click("button:has-text('Dark')")
     assert page.get_attribute("html", "data-theme") == "dark"
     # The choice survives a reload via localStorage + the ebs_* cookies, stamped
     # before first paint by the external theme-boot.js.
     page.reload()
     assert page.get_attribute("html", "data-theme") == "dark"
-    page.click("header.topbar .avatar")
+    page.click("aside.rail .rail-id-btn")
     page.click("button:has-text('System')")
+    _assert_no_critical_errors(collect_errors)
+
+
+def test_slash_shortcut_does_not_hijack_text_fields(page: Page, collect_errors):
+    """Regression: the '/' topbar-search shortcut (static/js/topbar-search.js) must
+    not steal focus while the user is typing into a field. Webhook URLs, extension
+    IDs and bulk lists are full of slashes, so hijacking focus on '/' swallowed the
+    character — a webhook URL typed as 'https://hooks…' only ever captured 'https:'."""
+    _login(page)
+    page.goto(f"{BASE_URL}/account")
+    page.click("text=New destination")
+    url = page.locator("input[placeholder^='https://hooks']")
+    url.click()
+    typed = "https://hooks.example.com/services/T00/B00/xyz"
+    page.keyboard.type(typed)
+    # The whole slash-bearing value lands in the field, and focus never jumped away.
+    expect(url).to_have_value(typed)
+    expect(url).to_be_focused()
+    # And the shortcut still works when NOT in a field: '/' focuses the search box.
+    page.locator("h1").first.click()
+    page.keyboard.press("/")
+    expect(page.locator(".search input")).to_be_focused()
     _assert_no_critical_errors(collect_errors)
