@@ -24,7 +24,6 @@ class OIDCIdentity:
     subject: str
     email: str
     email_verified: bool
-    display_name: str
     groups: list[str] = field(default_factory=list)
     tenant_id: str | None = None
 
@@ -47,10 +46,9 @@ class OIDCAdapter(Protocol):
 class StandardOIDCAdapter:
     """Adapter for spec-compliant OIDC providers (Authentik, Auth0, Okta, …).
 
-    Reads the standard claims: ``sub``, ``email`` (+ ``email_verified``), ``name``
-    (falling back to ``preferred_username``), and groups/roles from the configured
-    ``role_claim``. Entra needs its own adapter because its work/school tokens
-    diverge (email fallback + email-verified policy).
+    Reads the standard claims: ``sub``, ``email`` (+ ``email_verified``), and
+    groups/roles from the configured ``role_claim``. Entra needs its own adapter
+    because its work/school tokens diverge (email fallback + email-verified policy).
     """
 
     def __init__(self, key: str) -> None:
@@ -60,13 +58,11 @@ class StandardOIDCAdapter:
         issuer = _require(claims, "iss")
         subject = _require(claims, "sub")
         email = _require(claims, "email")
-        display_name = str(claims.get("name") or claims.get("preferred_username") or email)
         return OIDCIdentity(
             issuer=issuer,
             subject=subject,
             email=email,
             email_verified=bool(claims.get("email_verified", False)),
-            display_name=display_name,
             groups=_groups_from(claims, role_claim),
         )
 
