@@ -71,6 +71,14 @@ services:
       # HTTP timeout. Other app/config.py settings use their defaults unless added here.
       ICEBERG_EBS_SESSION_MAX_AGE: ${ICEBERG_EBS_SESSION_MAX_AGE:-86400}
       ICEBERG_EBS_HTTPX_TIMEOUT: ${ICEBERG_EBS_HTTPX_TIMEOUT:-15.0}
+      # Outbound proxy (#216): mode/url/no-proxy seed the admin-editable routing config;
+      # the credentials are env-ONLY (never stored in the DB or shown in the UI). Defaults
+      # must match app/config.py or an unset var would silently override the app default.
+      ICEBERG_EBS_PROXY_MODE: ${ICEBERG_EBS_PROXY_MODE:-system}
+      ICEBERG_EBS_PROXY_URL: ${ICEBERG_EBS_PROXY_URL:-}
+      ICEBERG_EBS_PROXY_NO_PROXY: ${ICEBERG_EBS_PROXY_NO_PROXY:-localhost,127.0.0.0/8,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,169.254.0.0/16,::1}
+      ICEBERG_EBS_PROXY_USERNAME: ${ICEBERG_EBS_PROXY_USERNAME:-}
+      ICEBERG_EBS_PROXY_PASSWORD: ${ICEBERG_EBS_PROXY_PASSWORD:-}
       # Don't attempt to write .pyc into the read-only /app tree.
       PYTHONDONTWRITEBYTECODE: "1"
     healthcheck:

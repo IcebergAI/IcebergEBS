@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 from typing import Any, Optional
 
-from sqlalchemy import Column, DateTime, Index, desc
+from sqlalchemy import CheckConstraint, Column, DateTime, Index, desc
 from sqlmodel import Field, SQLModel, UniqueConstraint
 
 from app.utils import json_list, json_object
@@ -166,6 +166,26 @@ class ApiKey(SQLModel, table=True):
     readonly: bool = False
     created_at: datetime = Field(default_factory=_utcnow, sa_column=_tz_column(nullable=False))
     last_used_at: Optional[datetime] = Field(default=None, sa_column=_tz_column(nullable=True))
+
+
+class ProxySettings(SQLModel, table=True):
+    # Singleton (id == 1): admin-editable outbound-proxy routing config (#216),
+    # seeded from the ICEBERG_EBS_PROXY_* env on first read (app/proxy_settings.py).
+    # Holds NO secret — proxy credentials are env-only and injected into the proxy
+    # URL at resolution time (app/proxy.py), never persisted here.
+    # The CHECK backstops the EXPLICIT⇒URL invariant at the schema level: EXPLICIT
+    # with an empty URL silently falls back to direct egress (proxy bypass), and
+    # app-level validation alone is one forgotten writer away from that state —
+    # update_settings enforces it under a row lock, the constraint catches the rest.
+    __table_args__ = (
+        CheckConstraint("mode != 'EXPLICIT' OR proxy_url != ''", name="ck_proxysettings_explicit_requires_url"),
+    )
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    mode: str = "SYSTEM"  # "NONE" | "SYSTEM" | "EXPLICIT" (app/proxy.py ProxyMode)
+    proxy_url: str = ""
+    no_proxy: str = ""
+    updated_at: datetime = Field(default_factory=_utcnow, sa_column=_tz_column(nullable=False))
 
 
 class AlertLog(SQLModel, table=True):

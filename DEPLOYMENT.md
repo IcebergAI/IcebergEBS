@@ -362,6 +362,11 @@ silently ignored — #87). All settings use the `ICEBERG_EBS_` prefix.
 | `ICEBERG_EBS_API_RATE_LIMIT_BURST` | `20` | `/api/*` back-to-back burst per client IP (#202) |
 | `ICEBERG_EBS_LOGIN_RATE_LIMIT_PER_MINUTE` | `5` | Sustained `POST /login` requests/min per client IP (#202) |
 | `ICEBERG_EBS_LOGIN_RATE_LIMIT_BURST` | `5` | `POST /login` back-to-back burst per client IP (#202) |
+| `ICEBERG_EBS_PROXY_MODE` | `system` | Outbound proxy mode: `system` \| `none` \| `explicit` (#216) |
+| `ICEBERG_EBS_PROXY_URL` | `""` | Forward proxy for `explicit` mode — no credentials in the URL |
+| `ICEBERG_EBS_PROXY_NO_PROXY` | localhost + private ranges | Hosts/suffixes/IPs/CIDRs that bypass the explicit proxy |
+| `ICEBERG_EBS_PROXY_USERNAME` | `""` | Proxy credentials — env-only secret (Helm: chart Secret, not ConfigMap) |
+| `ICEBERG_EBS_PROXY_PASSWORD` | `""` | See above |
 
 Settings **not** in this table (e.g. the login rate-limit tuning `ICEBERG_EBS_LOGIN_MAX_ATTEMPTS` /
 `…_LOGIN_ATTEMPT_WINDOW_SECONDS` / `…_LOGIN_LOCKOUT_SECONDS`, `ICEBERG_EBS_API_KEY_LAST_USED_THROTTLE_SECONDS`,
@@ -371,6 +376,37 @@ the outbound-HTTP retry/pool tuning `ICEBERG_EBS_HTTPX_MAX_RETRIES` / `…_HTTPX
 `ICEBERG_EBS_STORE_CIRCUIT_FAILURE_THRESHOLD`) run at their `app/config.py` defaults; to make one tunable in
 production, add it to the Compose `app.environment` block and the Helm ConfigMap (and a
 `icebergEbs.*` value) the same way the rows above are wired.
+
+### Outbound proxy (#216)
+
+All egress — store metadata fetching, package downloads, **and** webhook alert delivery — routes
+through the proxy layer. The `ICEBERG_EBS_PROXY_*` env vars **seed** an admin-editable routing
+config (the `ProxySettings` DB singleton, edited live at `/admin/proxy` — changes apply from the
+next outbound request, no restart). Credentials are the exception: they stay **env-only**
+(`ICEBERG_EBS_PROXY_USERNAME` / `…_PASSWORD`), injected into the proxy URL at send time and never
+persisted, returned by the API, or logged. In Helm they are chart-Secret keys
+(`proxy-username`/`proxy-password`) wired as `secretKeyRef` env — never ConfigMap data
+(`tests/test_deploy_env.py` enforces this split).
+
+Operational notes:
+
+- **Upgrade behaviour change:** before #216 the app ignored `HTTP(S)_PROXY` env vars entirely
+  (httpx never applies them through a custom transport). The default mode `system` now honours
+  them — a deployment that happens to export an ambient proxy var starts proxying after upgrade.
+  Set `ICEBERG_EBS_PROXY_MODE=none` to force the old always-direct behaviour.
+- **Webhooks keep their SSRF defence through the proxy.** Delivery still connects to the
+  pre-validated public IP — through an HTTP proxy that is an IP-literal `CONNECT`. A proxy that
+  denies IP-literal tunnels breaks webhook delivery; fix it with a proxy-side allowlist or a
+  no-proxy **IP/CIDR** entry (domain entries can't match a pinned-IP URL). Never weaken the
+  pinning to accommodate a proxy.
+- **Local DNS must stay available**: webhook URL validation resolves the destination locally
+  before dialling; a segment that blocks DNS egress fails validation before the proxy is
+  consulted.
+- Proxy schemes are `http`/`https` only (no SOCKS — it would add the `httpx[socks]` runtime
+  dependency; widen `PROXY_URL_SCHEMES` in `app/proxy.py` + `pyproject.toml` if ever needed).
+- The connectivity test at `/admin/proxy` dials only server-known egress targets (the five store
+  origins + enabled webhook **origins**, never their capability paths) — by design it does not
+  accept arbitrary URLs.
 
 ---
 

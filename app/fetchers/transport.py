@@ -20,8 +20,11 @@ import email.utils
 import logging
 import random
 from datetime import datetime, timezone
+from typing import Callable, Optional
 
 import httpx
+
+from app import proxy
 
 logger = logging.getLogger(__name__)
 
@@ -72,6 +75,62 @@ def _backoff_delay(attempt: int, *, base: float, cap: float) -> float:
     ceiling = min(cap, base * (2**attempt))
     # Jitter for retry backoff — decorrelating retries, not a security/crypto context.
     return random.uniform(0, max(ceiling, 0.0))  # nosec B311
+
+
+class ProxyRoutingTransport(httpx.AsyncBaseTransport):
+    """Route each request direct or through the configured outbound proxy (#216).
+
+    Consults ``app.proxy.route_for`` per request, so an admin edit at
+    /admin/proxy takes effect on the very next outbound request — no client
+    rebuild, no cache invalidation. This lives at the transport layer (rather
+    than httpx ``mounts=``) because NO_PROXY CIDR entries like ``10.0.0.0/8``
+    cannot be expressed as URL patterns, and because a single shared client
+    serves every egress path.
+
+    The proxied inner transport is built lazily, keyed on the resolved
+    (credential-bearing) proxy URL. When the URL changes, the old transport is
+    retired rather than closed — in-flight scheduler/webhook requests finish on
+    it — and everything retired is closed in :meth:`aclose` at shutdown. Growth
+    is bounded by admin edits per process lifetime. No locking: there is no
+    ``await`` between the cache check and the swap, so the section is atomic
+    per task on the single event loop (the deployment mandates one worker).
+
+    Deliberately no logging in this class: the resolved proxy URL carries the
+    env-only credentials, and a log line here could leak them.
+    """
+
+    def __init__(
+        self,
+        *,
+        limits: httpx.Limits,
+        transport_factory: Optional[Callable[[Optional[str]], httpx.AsyncBaseTransport]] = None,
+    ) -> None:
+        self._factory = transport_factory or (
+            lambda proxy_url: httpx.AsyncHTTPTransport(limits=limits, proxy=proxy_url)
+        )
+        self._direct = self._factory(None)
+        self._proxied: Optional[tuple[str, httpx.AsyncBaseTransport]] = None
+        self._retired: list[httpx.AsyncBaseTransport] = []
+
+    def _transport_for(self, proxy_url: Optional[str]) -> httpx.AsyncBaseTransport:
+        if proxy_url is None:
+            return self._direct
+        if self._proxied is None or self._proxied[0] != proxy_url:
+            if self._proxied is not None:
+                self._retired.append(self._proxied[1])
+            self._proxied = (proxy_url, self._factory(proxy_url))
+        return self._proxied[1]
+
+    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+        transport = self._transport_for(proxy.route_for(str(request.url)))
+        return await transport.handle_async_request(request)
+
+    async def aclose(self) -> None:
+        await self._direct.aclose()
+        if self._proxied is not None:
+            await self._proxied[1].aclose()
+        for transport in self._retired:
+            await transport.aclose()
 
 
 class RetryTransport(httpx.AsyncBaseTransport):

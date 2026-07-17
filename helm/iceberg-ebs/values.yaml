@@ -75,6 +75,15 @@ icebergEbs:
   apiRateLimitBurst: 20
   loginRateLimitPerMinute: 5
   loginRateLimitBurst: 5
+  # Outbound proxy (#216): system honours HTTP(S)_PROXY/NO_PROXY env, none is always
+  # direct, explicit routes through proxyUrl unless the target matches proxyNoProxy.
+  # These seed the admin-editable routing config (live at /admin/proxy). Credentials
+  # are env-only secrets wired via the chart Secret — never ConfigMap data.
+  proxyMode: system
+  proxyUrl: ""
+  proxyNoProxy: "localhost,127.0.0.0/8,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,169.254.0.0/16,::1"
+  proxyUsername: ""        # optional — set via --set; never commit a value here
+  proxyPassword: ""        # optional — set via --set; never commit a value here
 
 postgresql:
   auth:

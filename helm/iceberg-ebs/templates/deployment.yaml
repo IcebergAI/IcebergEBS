@@ -127,6 +127,18 @@ spec:
                 secretKeyRef:
                   name: {{ include "iceberg-ebs.fullname" . }}
                   key: secret-key
+            # Outbound-proxy credentials (#216): env-only secrets (never ConfigMap
+            # data, never persisted by the app). Empty by default = no proxy auth.
+            - name: ICEBERG_EBS_PROXY_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "iceberg-ebs.fullname" . }}
+                  key: proxy-username
+            - name: ICEBERG_EBS_PROXY_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "iceberg-ebs.fullname" . }}
+                  key: proxy-password
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true

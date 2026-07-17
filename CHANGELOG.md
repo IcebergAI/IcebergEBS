@@ -56,8 +56,22 @@ release to diff against.
   **referer, user-agent, and request/upstream timing**. Error-tracking (Sentry) is a documented
   follow-up (it needs a runtime dependency).
 
+- **Outbound proxy support for all egress** (#216) — store metadata fetching, package
+  downloads, and webhook alert delivery route through a configurable forward proxy. Three
+  modes (`system` — honour `HTTP(S)_PROXY`/`NO_PROXY` env; `none` — always direct;
+  `explicit` — configured proxy URL with standard NO_PROXY semantics incl. CIDR ranges),
+  seeded from `ICEBERG_EBS_PROXY_*` env into an admin-editable routing config at
+  `/admin/proxy` (applies from the next request, no restart), with an SSRF-safe
+  connectivity test over server-known egress targets only. Proxy credentials are
+  env-only — never persisted, returned by the API, or logged. Webhook delivery keeps its
+  IP-pinning SSRF defence through the proxy (IP-literal `CONNECT`).
+
 ### Changed
 
+- **Outbound `HTTP(S)_PROXY` env vars are now honoured by default** (#216): the shared
+  httpx client previously ignored them entirely (custom transport). The new default
+  proxy mode `system` applies them — set `ICEBERG_EBS_PROXY_MODE=none` to keep the old
+  always-direct behaviour.
 - **Legacy design tokens fully retired** (#212): the ~250 inline `style="…var(--ink-N)…"`
   attributes left from the pre-house design are swept to the house token names and the
   `app.css` alias bridge is deleted; `tests/test_design_tokens.py` guards against legacy

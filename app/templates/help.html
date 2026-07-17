@@ -219,6 +219,33 @@
   </div>
 
   <div class="surface p-6">
+    <h2 class="section-title">Outbound proxy</h2>
+    <p class="text-[13.5px] leading-relaxed" style="color:var(--ink-soft)">
+      All outbound traffic — store metadata fetching, package downloads, and webhook alert
+      delivery — can be routed through a forward proxy. Admins configure routing live at
+      <strong>Proxy</strong> in the rail (changes apply from the next outbound request, no
+      restart); the <code class="mono">ICEBERG_EBS_PROXY_*</code> environment variables seed the
+      initial values. Three modes: <strong>System</strong> (default — honour the standard
+      <code class="mono">HTTP_PROXY</code> / <code class="mono">HTTPS_PROXY</code> /
+      <code class="mono">NO_PROXY</code> environment variables), <strong>None</strong> (always
+      connect directly), and <strong>Explicit</strong> (use the configured proxy URL unless the
+      target matches the no-proxy list — hosts, domain suffixes, IPs, or CIDR ranges).
+    </p>
+    <p class="text-[13.5px] leading-relaxed mt-3" style="color:var(--ink-soft)">
+      Proxy credentials are environment-only
+      (<code class="mono">ICEBERG_EBS_PROXY_USERNAME</code> /
+      <code class="mono">ICEBERG_EBS_PROXY_PASSWORD</code>): they are injected at send time and
+      never stored in the database, shown in the UI, or written to logs. Webhook deliveries keep
+      their SSRF defence — the connection goes to a pre-validated IP through the proxy
+      (an IP-literal <code class="mono">CONNECT</code>), so a proxy that denies IP-literal
+      tunnels needs an allowlist entry, and a no-proxy bypass for a webhook destination must use
+      an IP or CIDR entry rather than its domain name. The connectivity test on the proxy page
+      dials only the deployment's known egress targets (the extension stores and configured
+      webhook origins), never an arbitrary URL.
+    </p>
+  </div>
+
+  <div class="surface p-6">
     <h2 class="section-title">Configuration</h2>
     <div style="overflow-x:auto;border:1px solid var(--line);border-radius:8px">
     <table>
@@ -273,6 +300,31 @@
           <td class="mono" style="white-space:nowrap">ICEBERG_EBS_SECURE_COOKIES</td>
           <td style="color:var(--muted)">true</td>
           <td style="color:var(--muted)">set <code class="mono">Secure</code> flag on session cookies — disable for plain HTTP dev</td>
+        </tr>
+        <tr>
+          <td class="mono" style="white-space:nowrap">ICEBERG_EBS_PROXY_MODE</td>
+          <td style="color:var(--muted)">system</td>
+          <td style="color:var(--muted)">outbound proxy mode: <code class="mono">system</code> | <code class="mono">none</code> | <code class="mono">explicit</code> — seeds the admin-editable routing config</td>
+        </tr>
+        <tr>
+          <td class="mono" style="white-space:nowrap">ICEBERG_EBS_PROXY_URL</td>
+          <td style="color:var(--muted)">—</td>
+          <td style="color:var(--muted)">forward proxy for <code class="mono">explicit</code> mode (<code class="mono">http://proxy.corp:3128</code>) — no credentials in the URL</td>
+        </tr>
+        <tr>
+          <td class="mono" style="white-space:nowrap">ICEBERG_EBS_PROXY_NO_PROXY</td>
+          <td style="color:var(--muted)">localhost + private ranges</td>
+          <td style="color:var(--muted)">comma-separated hosts / domain suffixes / IPs / CIDRs that bypass the explicit proxy</td>
+        </tr>
+        <tr>
+          <td class="mono" style="white-space:nowrap">ICEBERG_EBS_PROXY_USERNAME</td>
+          <td style="color:var(--muted)">—</td>
+          <td style="color:var(--muted)">proxy credentials, environment-only — injected at send time, never stored or logged</td>
+        </tr>
+        <tr>
+          <td class="mono" style="white-space:nowrap">ICEBERG_EBS_PROXY_PASSWORD</td>
+          <td style="color:var(--muted)">—</td>
+          <td style="color:var(--muted)">see above</td>
         </tr>
       </tbody>
     </table>
