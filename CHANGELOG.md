@@ -191,7 +191,10 @@ release to diff against.
   their sessions, silently, on an otherwise-successful login. `EntraAdapter` now detects the
   overage/distributed-groups condition and **fails the login closed** with a logged, operator-
   actionable reason (redirect to `/login?error=sso`) instead of syncing an empty group list, so
-  the admin's role and sessions are left untouched. Regression tests cover the overage payload.
+  the admin's role and sessions are left untouched. The overage indicator is always keyed on
+  `groups` in `_claim_names`, so the guard covers both the `groups` claim and the `emit_as_roles`
+  configuration (`role_claim="roles"`); an inline value is trusted over the pointer. Regression
+  tests cover the overage payloads.
 - **Variable fonts are shipped as one file per family+subset instead of byte-identical
   per-weight copies** (#236). `static/fonts/archivo-*` and `jetbrains-mono-*` were 10 and 8
   byte-identical copies of a single wght-axis *variable* woff2 each — every weight fetched the

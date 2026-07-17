@@ -447,6 +447,46 @@ def test_entra_inline_groups_unaffected_by_overage_guard():
     assert identity.groups == ["ebs-admins", "eng"]
 
 
+def test_entra_roles_overage_denied():
+    # emit_as_roles: group membership is emitted into the `roles` claim, but the
+    # overage indicator is STILL keyed on `groups` in _claim_names. A deployment
+    # with role_claim="roles" must also fail closed — otherwise the absent `roles`
+    # claim reads as "no groups" and demotes the admin (the review-bot finding on
+    # PR #241).
+    overage_claims = {
+        "iss": "https://i.test",
+        "sub": "s",
+        "tid": "t",
+        "email": "e@x.test",
+        "email_verified": True,
+        # no inline "roles" claim; overage pointer keyed on "groups"
+        "_claim_names": {"groups": "src1"},
+        "_claim_sources": {"src1": {"endpoint": "https://graph.microsoft.com/v1.0/me/getMemberObjects"}},
+    }
+    with pytest.raises(ValueError, match="overage"):
+        EntraAdapter().extract_identity(overage_claims, "roles")
+
+
+def test_entra_inline_roles_not_overaged():
+    # No false-positive deny: when the configured role_claim IS delivered inline
+    # (e.g. genuine app roles), an unrelated `_claim_names.groups` pointer must not
+    # trip the guard — the present role source is trusted.
+    identity = EntraAdapter().extract_identity(
+        {
+            "iss": "https://i.test",
+            "sub": "s",
+            "tid": "t",
+            "email": "e@x.test",
+            "email_verified": True,
+            "roles": ["ebs-admins"],
+            "_claim_names": {"groups": "src1"},
+            "_claim_sources": {"src1": {"endpoint": "https://graph.microsoft.com/"}},
+        },
+        "roles",
+    )
+    assert identity.groups == ["ebs-admins"]
+
+
 @pytest.mark.parametrize("key", ["authentik", "auth0", "okta"])
 def test_standard_adapters_share_claim_mapping(key):
     adapter = get_adapter(key)

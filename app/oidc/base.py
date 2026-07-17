@@ -83,18 +83,27 @@ def _role_claim_overaged(claims: dict[str, Any], role_claim: str) -> bool:
     """True when the configured groups/roles claim was displaced into an OIDC
     distributed claim rather than delivered inline.
 
-    Microsoft Entra ID omits the ``groups`` claim once a user is in more than
+    Microsoft Entra ID omits the group/role payload once a user is in more than
     ~200 groups and instead emits ``_claim_names``/``_claim_sources`` pointing at
-    Microsoft Graph (the "groups overage" contract). The inline claim is then
-    absent, so a plain ``claims.get(role_claim)`` would read it as "no groups" and
-    silently demote an IdP-managed admin. Treat it as an extraction failure
-    instead (#227). Gated on ``role_claim`` being configured — a deployment that
-    doesn't map groups to roles is unaffected.
+    Microsoft Graph (the "groups overage" contract). The overage indicator is
+    **always keyed on ``groups``** in ``_claim_names`` — even when membership is
+    emitted into the ``roles`` claim via the ``emit_as_roles`` optional-claim
+    setting — so a configured ``role_claim`` of either ``groups`` or ``roles`` is
+    affected. Reading the absent claim as "no groups" would silently demote an
+    IdP-managed admin and revoke their sessions (#227); treat it as an extraction
+    failure instead.
+
+    Gated on ``role_claim`` being configured **and not delivered inline**: a
+    deployment that doesn't map groups/roles is unaffected, and an inline value
+    (even an empty list) is trusted over the overage pointer, so a present role
+    source (e.g. genuine app roles) never trips a false-positive deny.
     """
-    if not role_claim:
+    if not role_claim or role_claim in claims:
         return False
     names = claims.get("_claim_names")
-    return isinstance(names, dict) and role_claim in names
+    if not isinstance(names, dict):
+        return False
+    return role_claim in names or "groups" in names
 
 
 def _groups_from(claims: dict[str, Any], role_claim: str) -> list[str]:
