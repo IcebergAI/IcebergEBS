@@ -782,6 +782,41 @@ async def test_concurrent_updates_cannot_merge_into_explicit_without_url(test_db
     assert not (row.mode == "EXPLICIT" and not row.proxy_url.strip())
 
 
+async def test_stale_identity_map_reader_validates_fresh_state(test_db):
+    """Deterministic staging of the reported race: a session that loaded the row
+    BEFORE another writer committed must not validate its stale snapshot. The
+    locking get uses populate_existing=True, so the queued writer re-reads the
+    winner's committed state and rejects with ValueError — without it, the stale
+    SYSTEM value passes validation and the CHECK constraint turns the commit
+    into an uncaught IntegrityError (500) instead of a 422."""
+    from app import proxy_settings
+
+    async with AsyncSession(test_db) as seed:
+        await proxy_settings.update_settings(seed, {"mode": "SYSTEM", "proxy_url": "http://proxy:3128"})
+
+    s1 = AsyncSession(test_db)
+    s2 = AsyncSession(test_db)
+    try:
+        # Both sessions load the row (SYSTEM + URL) into their identity maps
+        # before either takes the lock.
+        await proxy_settings.get_settings(s1)
+        await proxy_settings.get_settings(s2)
+        # Writer 1 wins: commits EXPLICIT (URL still set — valid).
+        await proxy_settings.update_settings(s1, {"mode": "EXPLICIT"})
+        # Writer 2 clears the URL. Its identity map still says SYSTEM; only a
+        # refreshed locked read can see EXPLICIT and reject the merge.
+        with pytest.raises(ValueError, match="explicit mode requires a proxy URL"):
+            await proxy_settings.update_settings(s2, {"proxy_url": ""})
+    finally:
+        await s1.close()
+        await s2.close()
+
+    async with AsyncSession(test_db) as s:
+        row = await proxy_settings.get_settings(s)
+    assert row.mode == "EXPLICIT"
+    assert row.proxy_url == "http://proxy:3128"  # loser's patch fully discarded
+
+
 async def test_schema_check_constraint_backstops_invariant(test_db):
     """A writer that bypasses update_settings entirely still cannot commit the
     fail-open state: the CHECK constraint rejects it at the schema level."""

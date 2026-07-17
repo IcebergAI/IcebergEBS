@@ -11,6 +11,7 @@ request with no client rebuild.
 
 from typing import Any
 
+from sqlalchemy.exc import IntegrityError
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app import proxy
@@ -59,12 +60,16 @@ async def update_settings(session: AsyncSession, changes: dict[str, Any]) -> Pro
     ``FOR UPDATE`` row lock — validating before the update (in the route) is a
     TOCTOU: two concurrent PUTs can each pass a pre-check and interleave into
     EXPLICIT-with-empty-URL, silently failing open to direct egress. The lock
-    serialises writers so the row each one validates is the row it commits; the
-    schema-level CHECK constraint (see ``models.ProxySettings``) backstops any
-    writer that bypasses this function. Raises ``ValueError`` on violation.
+    serialises writers, and ``populate_existing=True`` is load-bearing: without
+    it a locking ``session.get`` returns the identity-map instance WITHOUT
+    refreshing its attributes, so a writer that queued behind the lock would
+    validate the stale pre-commit state instead of what the winner just wrote.
+    The schema-level CHECK constraint (see ``models.ProxySettings``) backstops
+    any writer that bypasses this function; a constraint rejection is folded
+    into the same error path. Raises ``ValueError`` on violation.
     """
     await get_settings(session)  # ensure the singleton exists (seeds on first read)
-    row = await session.get(ProxySettings, _SINGLETON_ID, with_for_update=True)
+    row = await session.get(ProxySettings, _SINGLETON_ID, with_for_update=True, populate_existing=True)
     if row is None:  # just seeded above and never deleted — unreachable in practice
         raise RuntimeError("ProxySettings singleton row missing")
     for key in EDITABLE_FIELDS:
@@ -75,7 +80,13 @@ async def update_settings(session: AsyncSession, changes: dict[str, Any]) -> Pro
         raise ValueError("explicit mode requires a proxy URL")
     row.updated_at = _utcnow()
     session.add(row)
-    await session.commit()
+    try:
+        await session.commit()
+    except IntegrityError as exc:
+        # The CHECK constraint fired — only reachable by a writer racing outside
+        # this function's lock discipline. Same client-facing error either way.
+        await session.rollback()
+        raise ValueError("explicit mode requires a proxy URL") from exc
     await session.refresh(row)
     proxy.set_config(_to_config(row))
     return row
