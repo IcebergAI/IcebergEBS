@@ -19,3 +19,8 @@ data:
   ICEBERG_EBS_API_RATE_LIMIT_BURST:        {{ .Values.icebergEbs.apiRateLimitBurst | quote }}
   ICEBERG_EBS_LOGIN_RATE_LIMIT_PER_MINUTE: {{ .Values.icebergEbs.loginRateLimitPerMinute | quote }}
   ICEBERG_EBS_LOGIN_RATE_LIMIT_BURST:      {{ .Values.icebergEbs.loginRateLimitBurst | quote }}
+  # Outbound-proxy routing (#216). Credentials are NOT here — they are secrets,
+  # wired as secretKeyRef env in the Deployment from the chart Secret.
+  ICEBERG_EBS_PROXY_MODE:                  {{ .Values.icebergEbs.proxyMode | quote }}
+  ICEBERG_EBS_PROXY_URL:                   {{ .Values.icebergEbs.proxyUrl | quote }}
+  ICEBERG_EBS_PROXY_NO_PROXY:              {{ .Values.icebergEbs.proxyNoProxy | quote }}

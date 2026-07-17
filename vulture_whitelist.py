@@ -17,6 +17,9 @@ deferred  # unused variable (app/routes/api.py:324)
 duplicates  # unused variable (app/routes/api.py:325)
 invalid  # unused variable (app/routes/api.py:326)
 errors  # unused variable (app/routes/api.py:327)
+# ProxyMode.NONE is only ever constructed by value (ProxyMode(str.upper())) and
+# compared via the fall-through branch in resolve_proxy_url — never named (#216).
+NONE  # unused variable (app/proxy.py:47)
 popularity  # unused variable (app/scoring.py:25)
 staleness  # unused variable (app/scoring.py:27)
 code_behaviour  # unused variable (app/scoring.py:28)

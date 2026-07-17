@@ -1,0 +1,82 @@
+{% extends "base.html" %}
+{% block title %}IcebergEBS — Outbound proxy{% endblock %}
+{% block nav_proxy %}active{% endblock %}
+
+{% block content %}
+<script id="proxy-data" type="application/json">{{ proxy_data | tojson }}</script>
+<div x-data="proxyAdmin">
+
+<div class="flex items-end justify-between mb-5 flex-wrap gap-3">
+  <div>
+    <h1 class="page-title">Outbound proxy</h1>
+    <p class="page-sub">Route store fetching, package downloads, and webhook delivery through a forward proxy. Changes take effect on the next outbound request — no restart.</p>
+  </div>
+</div>
+
+{# Routing config #}
+<div class="surface p-5 mb-4" style="max-width:640px">
+  <h2 class="section-title">Routing</h2>
+  <div class="flex flex-col gap-3">
+    <div>
+      <label class="label-cap block mb-1.5">Mode</label>
+      <select x-model="form.mode">
+        <option value="SYSTEM">System — honour HTTP(S)_PROXY / NO_PROXY environment variables</option>
+        <option value="NONE">None — always connect directly</option>
+        <option value="EXPLICIT">Explicit — use the proxy URL below</option>
+      </select>
+    </div>
+    <div x-show="explicitMode">
+      <label class="label-cap block mb-1.5">Proxy URL</label>
+      <input type="text" x-model="form.proxy_url" placeholder="http://proxy.corp:3128" class="font-mono">
+      <p class="text-[12px] mt-1" style="color:var(--muted)">http or https. Credentials are never entered here — set
+        <span class="font-mono">ICEBERG_EBS_PROXY_USERNAME</span> / <span class="font-mono">ICEBERG_EBS_PROXY_PASSWORD</span>
+        in the environment; they are injected at send time and never stored or displayed.</p>
+    </div>
+    <div x-show="explicitMode">
+      <label class="label-cap block mb-1.5">No-proxy list</label>
+      <textarea x-model="form.no_proxy" rows="3" class="font-mono" placeholder="localhost,10.0.0.0/8,.internal.example.com"></textarea>
+      <p class="text-[12px] mt-1" style="color:var(--muted)">Comma-separated hosts, domain suffixes, IPs, or CIDR ranges that bypass the proxy.
+        Webhook deliveries connect to a validated IP, so bypass them with IP/CIDR entries, not domain names.</p>
+    </div>
+    <div x-show="saveError" class="text-[12.5px]" style="color:var(--risk-critical)" x-text="saveError"></div>
+    <div x-show="saveOk" class="text-[12.5px]" style="color:var(--c-ok)">Saved. Routing applies from the next outbound request.</div>
+    <div class="flex gap-2 mt-1">
+      <button class="btn btn-primary" @click="save()" :disabled="saving">
+        <span x-show="!saving">Save routing</span>
+        <span x-show="saving">Saving…</span>
+      </button>
+    </div>
+  </div>
+</div>
+
+{# Connectivity test #}
+<div class="surface p-5 mb-4" style="max-width:640px">
+  <h2 class="section-title">Connectivity test</h2>
+  <p class="text-[13px] mb-3" style="color:var(--ink-soft)">Dial one of the deployment's known egress targets with the saved routing config. Save first — the test uses what is stored, not the form.</p>
+  <div class="flex flex-col gap-3">
+    <div>
+      <label class="label-cap block mb-1.5">Target</label>
+      <select x-model="testTarget">
+        <template x-for="t in targets" :key="t">
+          <option :value="t" x-text="t"></option>
+        </template>
+      </select>
+    </div>
+    <div class="flex items-center gap-3">
+      <button class="btn btn-secondary" @click="runTest()" :disabled="testing || !testTarget">
+        <span x-show="!testing">Run test</span>
+        <span x-show="testing">Testing…</span>
+      </button>
+      <span x-show="testResult && testOk" class="pill" style="color:var(--c-ok)" x-text="testResult"></span>
+      <span x-show="testResult && !testOk" class="pill" style="color:var(--risk-critical)" x-text="testResult"></span>
+    </div>
+    <div x-show="testVia" class="text-[12px]" style="color:var(--muted)" x-text="testVia"></div>
+  </div>
+</div>
+
+</div>
+{% endblock %}
+
+{% block page_js %}
+<script defer src="/static/js/pages/admin-proxy.js"></script>
+{% endblock %}

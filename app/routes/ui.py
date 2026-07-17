@@ -11,6 +11,7 @@ from sqlalchemy import and_, func
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
+from app import proxy_settings
 from app.alert_queries import get_alert_log
 from app.auth import authenticate_session, clear_session, get_current_user, set_session, verify_credentials
 from app.config import settings
@@ -602,6 +603,37 @@ async def admin_users_page(
         {
             "users": users_data,
             "current_user_id": current_user.id,
+        },
+        user=current_user,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Admin — outbound proxy (#216)
+# ---------------------------------------------------------------------------
+
+
+@router.get("/admin/proxy", response_class=HTMLResponse)
+async def admin_proxy_page(
+    request: Request,
+    current_user: AdminUserUI,
+    session: SessionDep,
+):
+    row = await proxy_settings.get_settings(session)
+    # get_settings commits when it seeds the singleton (first read), which expires
+    # every instance in this request session — including current_user, whose
+    # attributes _render reads. Reload it or the template render dies lazy-loading.
+    await session.refresh(current_user)
+    return _render(
+        request,
+        "admin_proxy.html",
+        {
+            "proxy_data": {
+                "mode": row.mode,
+                "proxy_url": row.proxy_url,
+                "no_proxy": row.no_proxy,
+                "updated_at": row.updated_at.isoformat(),
+            },
         },
         user=current_user,
     )

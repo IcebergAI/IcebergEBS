@@ -168,6 +168,18 @@ class ApiKey(SQLModel, table=True):
     last_used_at: Optional[datetime] = Field(default=None, sa_column=_tz_column(nullable=True))
 
 
+class ProxySettings(SQLModel, table=True):
+    # Singleton (id == 1): admin-editable outbound-proxy routing config (#216),
+    # seeded from the ICEBERG_EBS_PROXY_* env on first read (app/proxy_settings.py).
+    # Holds NO secret — proxy credentials are env-only and injected into the proxy
+    # URL at resolution time (app/proxy.py), never persisted here.
+    id: Optional[int] = Field(default=None, primary_key=True)
+    mode: str = "SYSTEM"  # "NONE" | "SYSTEM" | "EXPLICIT" (app/proxy.py ProxyMode)
+    proxy_url: str = ""
+    no_proxy: str = ""
+    updated_at: datetime = Field(default_factory=_utcnow, sa_column=_tz_column(nullable=False))
+
+
 class AlertLog(SQLModel, table=True):
     # History rows: severing FKs (SET NULL) keeps the audit trail when the rule /
     # destination / owning user is deleted; extension deletion removes its logs.

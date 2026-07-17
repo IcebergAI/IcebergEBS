@@ -29,6 +29,18 @@ class Settings(BaseSettings):
     httpx_backoff_cap: float = 10.0
     httpx_max_connections: int = 20
     httpx_max_keepalive_connections: int = 10
+    # Outbound proxy (#216). These SEED the admin-editable ProxySettings row on first
+    # read (app/proxy_settings.py); after that the row is the source of truth for
+    # routing, editable live at /admin/proxy. Modes: system (honour HTTP(S)_PROXY /
+    # ALL_PROXY / NO_PROXY env — parsed by app/proxy.py, since httpx's trust_env can't
+    # do it through a custom transport), none (always direct), explicit (use proxy_url
+    # unless the target matches proxy_no_proxy). Credentials are env-ONLY: never
+    # persisted to the DB, never returned by the API, never logged.
+    proxy_mode: str = "system"  # system | none | explicit
+    proxy_url: str = ""  # scheme://host:port — no credentials here
+    proxy_no_proxy: str = "localhost,127.0.0.0/8,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,169.254.0.0/16,::1"
+    proxy_username: str = ""  # SECRET: env-only
+    proxy_password: SecretStr = SecretStr("")  # SECRET: env-only
     # Per-store circuit breaker: after this many consecutive failures for one store
     # within a refresh cycle, skip that store's remaining extensions for the rest of
     # the cycle and mark them as a store outage (not an extension fault). 0 disables.
