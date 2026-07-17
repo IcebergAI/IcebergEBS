@@ -371,6 +371,16 @@ release to diff against.
 
 ### Security
 
+- **SSO: closed a cross-provider identity-spoofing hole** (#226). OIDC provisioning matched an
+  account on the validated `(oidc_issuer, oidc_subject)` pair *globally*, but Authlib only checks a
+  token's `iss` against the *originating* provider's own discovery metadata — so a hostile or
+  compromised configured provider could publish another provider's issuer, serve its own JWKS, and
+  mint a token carrying that trust domain's `(iss, sub)` to log in as (or pre-squat) the other
+  provider's account, including admin sync. The provisioning match is now scoped to the configured
+  provider (`auth_provider`); the same `(issuer, subject)` presented under a different provider is
+  refused as an `"identity conflict"` (the global `uq_user_issuer_subject` constraint is the DB
+  backstop). The issuer stays in the key, so a re-pointed adapter still can't inherit an account
+  (#218). Regression test covers a second provider declaring the first's issuer with a distinct email.
 - **CSV export is hardened against spreadsheet formula injection** — a tracked extension's
   attacker-controlled `name`/`publisher` (e.g. `=HYPERLINK(...)`, `+SUM(...)`, `@cmd|…`) is no
   longer written verbatim into the CSV. Cells starting with a formula-trigger character
