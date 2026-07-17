@@ -24,3 +24,33 @@ data:
   ICEBERG_EBS_PROXY_MODE:                  {{ .Values.icebergEbs.proxyMode | quote }}
   ICEBERG_EBS_PROXY_URL:                   {{ .Values.icebergEbs.proxyUrl | quote }}
   ICEBERG_EBS_PROXY_NO_PROXY:              {{ .Values.icebergEbs.proxyNoProxy | quote }}
+  # SSO / OIDC (#32). Client secrets are NOT here — they are secrets, wired as
+  # secretKeyRef env in the Deployment from the chart Secret.
+  ICEBERG_EBS_AUTH_MODE:                   {{ .Values.icebergEbs.authMode | quote }}
+  ICEBERG_EBS_OIDC_REDIRECT_BASE_URL:      {{ .Values.icebergEbs.oidcRedirectBaseUrl | quote }}
+  ICEBERG_EBS_OIDC_ENTRA_ENABLED:          {{ .Values.icebergEbs.oidcEntraEnabled | quote }}
+  ICEBERG_EBS_OIDC_ENTRA_CLIENT_ID:        {{ .Values.icebergEbs.oidcEntraClientId | quote }}
+  ICEBERG_EBS_OIDC_ENTRA_TENANT_ID:        {{ .Values.icebergEbs.oidcEntraTenantId | quote }}
+  ICEBERG_EBS_OIDC_ENTRA_SCOPES:           {{ .Values.icebergEbs.oidcEntraScopes | quote }}
+  ICEBERG_EBS_OIDC_ENTRA_ROLE_CLAIM:       {{ .Values.icebergEbs.oidcEntraRoleClaim | quote }}
+  ICEBERG_EBS_OIDC_ENTRA_ROLE_MAP:         {{ .Values.icebergEbs.oidcEntraRoleMap | quote }}
+  ICEBERG_EBS_OIDC_AUTHENTIK_ENABLED:      {{ .Values.icebergEbs.oidcAuthentikEnabled | quote }}
+  ICEBERG_EBS_OIDC_AUTHENTIK_CLIENT_ID:    {{ .Values.icebergEbs.oidcAuthentikClientId | quote }}
+  ICEBERG_EBS_OIDC_AUTHENTIK_BASE_URL:     {{ .Values.icebergEbs.oidcAuthentikBaseUrl | quote }}
+  ICEBERG_EBS_OIDC_AUTHENTIK_APP_SLUG:     {{ .Values.icebergEbs.oidcAuthentikAppSlug | quote }}
+  ICEBERG_EBS_OIDC_AUTHENTIK_SCOPES:       {{ .Values.icebergEbs.oidcAuthentikScopes | quote }}
+  ICEBERG_EBS_OIDC_AUTHENTIK_ROLE_CLAIM:   {{ .Values.icebergEbs.oidcAuthentikRoleClaim | quote }}
+  ICEBERG_EBS_OIDC_AUTHENTIK_ROLE_MAP:     {{ .Values.icebergEbs.oidcAuthentikRoleMap | quote }}
+  ICEBERG_EBS_OIDC_AUTH0_ENABLED:          {{ .Values.icebergEbs.oidcAuth0Enabled | quote }}
+  ICEBERG_EBS_OIDC_AUTH0_CLIENT_ID:        {{ .Values.icebergEbs.oidcAuth0ClientId | quote }}
+  ICEBERG_EBS_OIDC_AUTH0_DOMAIN:           {{ .Values.icebergEbs.oidcAuth0Domain | quote }}
+  ICEBERG_EBS_OIDC_AUTH0_SCOPES:           {{ .Values.icebergEbs.oidcAuth0Scopes | quote }}
+  ICEBERG_EBS_OIDC_AUTH0_ROLE_CLAIM:       {{ .Values.icebergEbs.oidcAuth0RoleClaim | quote }}
+  ICEBERG_EBS_OIDC_AUTH0_ROLE_MAP:         {{ .Values.icebergEbs.oidcAuth0RoleMap | quote }}
+  ICEBERG_EBS_OIDC_OKTA_ENABLED:           {{ .Values.icebergEbs.oidcOktaEnabled | quote }}
+  ICEBERG_EBS_OIDC_OKTA_CLIENT_ID:         {{ .Values.icebergEbs.oidcOktaClientId | quote }}
+  ICEBERG_EBS_OIDC_OKTA_DOMAIN:            {{ .Values.icebergEbs.oidcOktaDomain | quote }}
+  ICEBERG_EBS_OIDC_OKTA_AUTH_SERVER:       {{ .Values.icebergEbs.oidcOktaAuthServer | quote }}
+  ICEBERG_EBS_OIDC_OKTA_SCOPES:            {{ .Values.icebergEbs.oidcOktaScopes | quote }}
+  ICEBERG_EBS_OIDC_OKTA_ROLE_CLAIM:        {{ .Values.icebergEbs.oidcOktaRoleClaim | quote }}
+  ICEBERG_EBS_OIDC_OKTA_ROLE_MAP:          {{ .Values.icebergEbs.oidcOktaRoleMap | quote }}

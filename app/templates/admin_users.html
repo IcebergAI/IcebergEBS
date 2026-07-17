@@ -69,6 +69,8 @@
         <td>
           <span x-show="u.is_admin" class="badge" style="background:var(--accent-soft);color:var(--accent);border-color:color-mix(in oklch, var(--accent) 25%, transparent)">admin</span>
           <span x-show="!u.is_admin" class="badge" style="background:var(--surface-2);color:var(--ink-soft);border-color:var(--line)">user</span>
+          {# SSO-provisioned accounts (#32): show which IdP owns the identity. #}
+          <span x-show="u.auth_provider !== 'local'" class="badge" style="background:var(--surface-2);color:var(--ink-soft);border-color:var(--line)" x-text="'sso: ' + u.auth_provider"></span>
         </td>
         <td style="color:var(--ink-soft)" x-text="createdText(u)"></td>
         <td class="text-right">

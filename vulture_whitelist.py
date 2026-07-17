@@ -23,6 +23,8 @@ NONE  # unused variable (app/proxy.py:47)
 popularity  # unused variable (app/scoring.py:25)
 staleness  # unused variable (app/scoring.py:27)
 code_behaviour  # unused variable (app/scoring.py:28)
+# OIDCSettingsOut response-model field — serialized by FastAPI, never read by name (#32).
+client_secrets_set  # unused variable (app/routes/oidc_settings.py:91)
 # PackageAnalysis scalar fields read only via getattr in to_json_dict() and in the
 # detail-page Jinja template (extension_detail.html) — vulture can't trace either (#164).
 file_count  # unused attribute (app/inspector.py:38)

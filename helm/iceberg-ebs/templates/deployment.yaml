@@ -139,6 +139,28 @@ spec:
                 secretKeyRef:
                   name: {{ include "iceberg-ebs.fullname" . }}
                   key: proxy-password
+            # OIDC client secrets (#32): env-only secrets (never ConfigMap data,
+            # never persisted by the app). Empty by default = provider disabled.
+            - name: ICEBERG_EBS_OIDC_ENTRA_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "iceberg-ebs.fullname" . }}
+                  key: oidc-entra-client-secret
+            - name: ICEBERG_EBS_OIDC_AUTHENTIK_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "iceberg-ebs.fullname" . }}
+                  key: oidc-authentik-client-secret
+            - name: ICEBERG_EBS_OIDC_AUTH0_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "iceberg-ebs.fullname" . }}
+                  key: oidc-auth0-client-secret
+            - name: ICEBERG_EBS_OIDC_OKTA_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "iceberg-ebs.fullname" . }}
+                  key: oidc-okta-client-secret
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true

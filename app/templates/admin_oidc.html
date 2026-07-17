@@ -1,0 +1,125 @@
+{% extends "base.html" %}
+{% block title %}IcebergEBS — Single sign-on{% endblock %}
+{% block nav_oidc %}active{% endblock %}
+
+{% block content %}
+<script id="oidc-data" type="application/json">{{ oidc_data | tojson }}</script>
+<div x-data="oidcAdmin">
+
+<div class="flex items-end justify-between mb-5 flex-wrap gap-3">
+  <div>
+    <h1 class="page-title">Single sign-on</h1>
+    <p class="page-sub">OIDC sign-in against your identity provider. Client secrets are never stored here — set
+      <span class="font-mono">ICEBERG_EBS_OIDC_&lt;PROVIDER&gt;_CLIENT_SECRET</span> in the environment.</p>
+  </div>
+</div>
+
+{# Global auth mode #}
+<div class="surface p-5 mb-4" style="max-width:640px">
+  <h2 class="section-title">Authentication mode</h2>
+  <div class="flex flex-col gap-3">
+    <div>
+      <label class="label-cap block mb-1.5">Mode</label>
+      <select x-model="form.auth_mode">
+        <option value="both">Both — password and SSO sign-in</option>
+        <option value="local">Local — password sign-in only</option>
+        <option value="oidc">OIDC — SSO only (disables password sign-in)</option>
+      </select>
+      <p class="text-[12px] mt-1" style="color:var(--muted)">OIDC-only mode is refused unless at least one provider below is
+        fully configured — keep a break-glass path in mind: switching back requires an admin who can still sign in.</p>
+    </div>
+    <div>
+      <label class="label-cap block mb-1.5">Redirect base URL</label>
+      <input type="text" x-model="form.oidc_redirect_base_url" placeholder="https://ebs.example.com" class="font-mono">
+      <p class="text-[12px] mt-1" style="color:var(--muted)">Public base URL used to build the IdP callback
+        (<span class="font-mono">/auth/oidc/&lt;provider&gt;/callback</span>) when the app sits behind a proxy that rewrites
+        host or scheme. Empty derives it from the request.</p>
+    </div>
+  </div>
+</div>
+
+{# Per-provider cards #}
+{% set provider_meta = [
+  {"key": "entra", "name": "Microsoft Entra ID", "extras": [
+    {"field": "tenant_id", "label": "Tenant ID", "placeholder": "00000000-0000-0000-0000-000000000000",
+     "hint": "A specific tenant (GUID or verified domain) — never common/organizations."},
+  ]},
+  {"key": "authentik", "name": "Authentik", "extras": [
+    {"field": "base_url", "label": "Base URL", "placeholder": "https://auth.example.com", "hint": ""},
+    {"field": "app_slug", "label": "Application slug", "placeholder": "iceberg-ebs", "hint": ""},
+  ]},
+  {"key": "auth0", "name": "Auth0", "extras": [
+    {"field": "domain", "label": "Tenant domain", "placeholder": "your-tenant.eu.auth0.com", "hint": "Hostname only."},
+  ]},
+  {"key": "okta", "name": "Okta", "extras": [
+    {"field": "domain", "label": "Org domain", "placeholder": "your-org.okta.com", "hint": "Hostname only."},
+    {"field": "auth_server", "label": "Authorization server", "placeholder": "default",
+     "hint": "Empty uses the org authorization server; set it (often default) for a custom one."},
+  ]},
+] %}
+{% for p in provider_meta %}
+<div class="surface p-5 mb-4" style="max-width:640px">
+  <div class="flex items-center justify-between mb-3">
+    <h2 class="section-title" style="margin-bottom:0">{{ p.name }}</h2>
+    <div class="flex items-center gap-3">
+      {% if oidc_data.client_secrets_set[p.key] %}
+      <span class="pill" style="color:var(--c-ok)">secret set in env</span>
+      {% else %}
+      <span class="pill" style="color:var(--muted)">no secret in env</span>
+      {% endif %}
+      <label class="flex items-center gap-2 cursor-pointer text-[13px]" style="color:var(--ink-soft)">
+        <input type="checkbox" x-model="form.oidc_{{ p.key }}_enabled"> Enabled
+      </label>
+    </div>
+  </div>
+  <div class="flex flex-col gap-3" x-show="form.oidc_{{ p.key }}_enabled">
+    <div>
+      <label class="label-cap block mb-1.5">Client ID</label>
+      <input type="text" x-model="form.oidc_{{ p.key }}_client_id" class="font-mono">
+    </div>
+    {% for extra in p.extras %}
+    <div>
+      <label class="label-cap block mb-1.5">{{ extra.label }}</label>
+      <input type="text" x-model="form.oidc_{{ p.key }}_{{ extra.field }}" placeholder="{{ extra.placeholder }}" class="font-mono">
+      {% if extra.hint %}
+      <p class="text-[12px] mt-1" style="color:var(--muted)">{{ extra.hint }}</p>
+      {% endif %}
+    </div>
+    {% endfor %}
+    <div>
+      <label class="label-cap block mb-1.5">Scopes</label>
+      <input type="text" x-model="form.oidc_{{ p.key }}_scopes" class="font-mono">
+      <p class="text-[12px] mt-1" style="color:var(--muted)">Space-separated; must include <span class="font-mono">openid</span>.</p>
+    </div>
+    <div>
+      <label class="label-cap block mb-1.5">Group claim</label>
+      <input type="text" x-model="form.oidc_{{ p.key }}_role_claim" placeholder="groups" class="font-mono">
+      <p class="text-[12px] mt-1" style="color:var(--muted)">The token claim carrying the user's groups. Empty means no
+        group mapping — every SSO user signs in without admin privileges.</p>
+    </div>
+    <div>
+      <label class="label-cap block mb-1.5">Group → role map</label>
+      <input type="text" x-model="form.oidc_{{ p.key }}_role_map" placeholder="ebs-admins=admin,ebs-users=user" class="font-mono">
+      <p class="text-[12px] mt-1" style="color:var(--muted)">Comma-separated <span class="font-mono">group=admin|user</span>
+        pairs. Only groups mapped to <span class="font-mono">admin</span> grant admin; everyone else signs in as a regular
+        user (no self-elevation).</p>
+    </div>
+  </div>
+</div>
+{% endfor %}
+
+<div class="flex items-center gap-3 mb-8" style="max-width:640px">
+  <button class="btn btn-primary" @click="save()" :disabled="saving">
+    <span x-show="!saving">Save SSO settings</span>
+    <span x-show="saving">Saving…</span>
+  </button>
+  <span x-show="saveError" class="text-[12.5px]" style="color:var(--risk-critical)" x-text="saveError"></span>
+  <span x-show="saveOk" class="text-[12.5px]" style="color:var(--c-ok)">Saved. Applies to the next sign-in.</span>
+</div>
+
+</div>
+{% endblock %}
+
+{% block page_js %}
+<script defer src="/static/js/pages/admin-oidc.js"></script>
+{% endblock %}

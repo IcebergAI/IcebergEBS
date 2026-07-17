@@ -11,7 +11,7 @@ from sqlalchemy import and_, func
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from app import proxy_settings
+from app import oidc_settings, proxy_settings
 from app.alert_queries import get_alert_log
 from app.auth import authenticate_session, clear_session, get_current_user, set_session, verify_credentials
 from app.config import settings
@@ -27,6 +27,9 @@ from app.extension_queries import (
 from app.findings_view import group_detection_findings
 from app.inspector import PackageAnalysis
 from app.models import AlertDestination, AlertRule, ApiKey, Extension, FetchLog, InstallObservation, User
+from app.oidc import service as oidc_service
+from app.oidc.config import EDITABLE_FIELDS as OIDC_EDITABLE_FIELDS
+from app.oidc.config import client_secret_status
 from app.ratelimit import login_limiter
 from app.scoring import risk_level
 from app.threat_intel import build_threat_intel_indicators
@@ -104,6 +107,17 @@ def _render(request: Request, template: str, ctx: dict, user: User | None = None
 # ---------------------------------------------------------------------------
 
 
+def _login_context(error: str | None) -> dict:
+    """Shared login-page context: SSO buttons + which login paths are enabled (#32)."""
+    oidc_service.ensure_registered()
+    cfg = oidc_settings.get_config()
+    return {
+        "error": error,
+        "local_auth_enabled": cfg.local_auth_enabled,
+        "sso_providers": [(p.key, p.display_name) for p in oidc_service.registered_providers()],
+    }
+
+
 @router.get("/login", response_class=HTMLResponse)
 async def login_page(request: Request, session: SessionDep):
     # DB-backed validation, matching require_auth — a signature-valid cookie whose
@@ -111,8 +125,14 @@ async def login_page(request: Request, session: SessionDep):
     # to "/" (require_auth would bounce it straight back here → infinite loop, #73).
     if await authenticate_session(request, session):
         return RedirectResponse("/", status_code=303)
+    error = None
+    if request.query_params.get("error") == "sso":
+        # The OIDC callback redirects here on any auth failure; the detail is
+        # logged server-side only (it can name providers/reasons an anonymous
+        # visitor shouldn't see).
+        error = "Single sign-on failed. Try again or contact your administrator."
     # Clear any stale-but-signed cookie so it can't keep failing require_auth.
-    response = _render(request, "login.html", {"error": None})
+    response = _render(request, "login.html", _login_context(error))
     if get_current_user(request):
         clear_session(response)
     return response
@@ -125,6 +145,13 @@ async def login_post(
     password: Annotated[str, Form()],
     session: SessionDep,
 ):
+    # Break-glass gating (#32): in OIDC-only mode the password path is refused
+    # outright (the form isn't rendered either, but the endpoint must not trust that).
+    if not oidc_settings.get_config().local_auth_enabled:
+        response = _render(request, "login.html", _login_context("Local sign-in is disabled — use single sign-on."))
+        response.status_code = 403
+        return response
+
     # App-level brute-force throttle, independent of the edge proxy (M3 / #8).
     key = login_limiter.key(request.client.host if request.client else None, username)
     retry_after = login_limiter.retry_after(key)
@@ -132,7 +159,7 @@ async def login_post(
         response = _render(
             request,
             "login.html",
-            {"error": "Too many failed attempts — please try again later."},
+            _login_context("Too many failed attempts — please try again later."),
         )
         response.status_code = 429
         response.headers["Retry-After"] = str(retry_after)
@@ -145,7 +172,7 @@ async def login_post(
         set_session(response, user.username)
         return response
     login_limiter.record_failure(key)
-    return _render(request, "login.html", {"error": "Invalid credentials"})
+    return _render(request, "login.html", _login_context("Invalid credentials"))
 
 
 @router.post("/logout")
@@ -593,6 +620,7 @@ async def admin_users_page(
             "username": u.username,
             "email": u.email,
             "is_admin": u.is_admin,
+            "auth_provider": u.auth_provider,
             "created_at": u.created_at.isoformat(),
         }
         for u in users
@@ -632,6 +660,36 @@ async def admin_proxy_page(
                 "mode": row.mode,
                 "proxy_url": row.proxy_url,
                 "no_proxy": row.no_proxy,
+                "updated_at": row.updated_at.isoformat(),
+            },
+        },
+        user=current_user,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Admin — single sign-on (#32)
+# ---------------------------------------------------------------------------
+
+
+@router.get("/admin/oidc", response_class=HTMLResponse)
+async def admin_oidc_page(
+    request: Request,
+    current_user: AdminUserUI,
+    session: SessionDep,
+):
+    row = await oidc_settings.get_settings(session)
+    # Same trap as /admin/proxy: get_settings commits when it seeds the singleton,
+    # expiring current_user's attributes mid-request. Reload before rendering.
+    await session.refresh(current_user)
+    return _render(
+        request,
+        "admin_oidc.html",
+        {
+            "oidc_data": {
+                "settings": {f: getattr(row, f) for f in OIDC_EDITABLE_FIELDS},
+                # Booleans only — the secret values are env-only and never rendered.
+                "client_secrets_set": client_secret_status(),
                 "updated_at": row.updated_at.isoformat(),
             },
         },
@@ -742,7 +800,14 @@ async def account_password_page(
     request: Request,
     current_user: WebUser,
 ):
-    return _render(request, "account_password.html", {}, user=current_user)
+    # SSO-provisioned accounts have no local password to change (#32); the
+    # template swaps the form for an explanatory note.
+    return _render(
+        request,
+        "account_password.html",
+        {"has_local_password": bool(current_user.password_hash)},
+        user=current_user,
+    )
 
 
 # ---------------------------------------------------------------------------

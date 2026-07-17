@@ -33,6 +33,9 @@ class UserOut(BaseModel):
     username: str
     email: str | None
     is_admin: bool
+    # "local" for password accounts, else the SSO provider key (#32) — lets the
+    # admin UI tell SSO-provisioned accounts from local ones.
+    auth_provider: str = "local"
 
 
 class CreateUserIn(BaseModel):
@@ -63,7 +66,10 @@ async def list_users(
     session: SessionDep,
 ) -> list[UserOut]:
     users = (await session.exec(select(User).order_by(User.created_at))).all()
-    return [UserOut(id=u.id, username=u.username, email=u.email, is_admin=u.is_admin) for u in users]
+    return [
+        UserOut(id=u.id, username=u.username, email=u.email, is_admin=u.is_admin, auth_provider=u.auth_provider)
+        for u in users
+    ]
 
 
 @router.post("/users", status_code=201)
@@ -85,7 +91,9 @@ async def create_user(
     session.add(user)
     await session.commit()
     await session.refresh(user)
-    return UserOut(id=user.id, username=user.username, email=user.email, is_admin=user.is_admin)
+    return UserOut(
+        id=user.id, username=user.username, email=user.email, is_admin=user.is_admin, auth_provider=user.auth_provider
+    )
 
 
 @router.delete("/users/{user_id}")
@@ -126,6 +134,9 @@ async def change_password(
     current_user: CurrentUser,
     session: SessionDep,
 ):
+    if not current_user.password_hash:
+        # SSO-provisioned account (#32): no local password exists to change.
+        raise HTTPException(status_code=400, detail="This account signs in via SSO and has no local password")
     if not await verify_password(body.current_password, current_user.password_hash):
         raise HTTPException(status_code=400, detail="Current password is incorrect")
     current_user.password_hash = await hash_password(body.new_password)

@@ -65,6 +65,19 @@ release to diff against.
   connectivity test over server-known egress targets only. Proxy credentials are
   env-only — never persisted, returned by the API, or logged. Webhook delivery keeps its
   IP-pinning SSRF defence through the proxy (IP-literal `CONNECT`).
+- **Single sign-on via OIDC** (#32) — Authorization Code + PKCE (Authlib) against
+  **Microsoft Entra ID, Authentik, Auth0, or Okta**, with just-in-time account
+  provisioning keyed on the immutable provider subject (a mutable email claim can never
+  claim an existing account — collisions are denied, not auto-linked), and IdP
+  group→admin mapping via a per-provider `group=admin|user` allowlist (default
+  non-admin, no self-elevation; the flag re-syncs on every SSO login and revokes older
+  sessions on change). `ICEBERG_EBS_AUTH_MODE` gates the login paths
+  (`local`/`oidc`/`both`) with local accounts as break-glass — OIDC-only mode is refused
+  unless a complete provider is enabled. Non-secret provider config is env-seeded and
+  admin-editable at `/admin/oidc`; client secrets are env-only, never persisted,
+  returned, or logged. All IdP traffic routes through the #216 proxy layer. IdP
+  group→named-role mapping (`analyst` etc.) lands with RBAC (#33); SAML, an explicit
+  account-linking flow, and RP-initiated logout are follow-ups.
 
 ### Changed
 

@@ -23,14 +23,33 @@ def _tz_column(*, nullable: bool) -> Column[Any]:
 
 
 class User(SQLModel, table=True):
+    # SSO identity (#32): an OIDC account is keyed on the immutable
+    # (auth_provider, oidc_subject) pair — never on the mutable email claim.
+    # Postgres treats NULL oidc_subject values as distinct, so local rows
+    # ("local", NULL) never collide with each other.
+    __table_args__ = (UniqueConstraint("auth_provider", "oidc_subject", name="uq_user_provider_subject"),)
+
     id: Optional[int] = Field(default=None, primary_key=True)
     username: str = Field(unique=True, index=True)
-    password_hash: str
+    # NULL for SSO-provisioned accounts: they have no local password and are
+    # refused by the password login path (see auth.verify_credentials).
+    password_hash: Optional[str] = None
     email: Optional[str] = None
     is_admin: bool = False
+    # "local" for password accounts, else the OIDC provider key (#32).
+    auth_provider: str = Field(default="local", index=True)
+    oidc_subject: Optional[str] = None
+    # IdP tenant provenance (Entra `tid`). Immutable once set — a returning login
+    # from a different tenant is an identity conflict, not the same account.
+    auth_tenant: Optional[str] = None
+    # True only for JIT-provisioned SSO accounts: their is_admin flag is re-derived
+    # from IdP groups on every login. Locally-created users (incl. the seeded
+    # break-glass admin) keep False, so the IdP can never demote them.
+    role_managed_by_idp: bool = False
     created_at: datetime = Field(default_factory=_utcnow, sa_column=_tz_column(nullable=False))
-    # Bumped on password change; sessions/cookies signed before this instant are
-    # rejected, invalidating other-device sessions on reset (M1 / #6).
+    # Generic session-revocation cutoff (M1 / #6, widened by #32): bumped on
+    # password change AND on an IdP-driven authorization change (is_admin sync).
+    # Sessions/cookies signed before this instant are rejected.
     password_changed_at: Optional[datetime] = Field(default_factory=_utcnow, sa_column=_tz_column(nullable=True))
 
 
@@ -185,6 +204,48 @@ class ProxySettings(SQLModel, table=True):
     mode: str = "SYSTEM"  # "NONE" | "SYSTEM" | "EXPLICIT" (app/proxy.py ProxyMode)
     proxy_url: str = ""
     no_proxy: str = ""
+    updated_at: datetime = Field(default_factory=_utcnow, sa_column=_tz_column(nullable=False))
+
+
+class OIDCSettings(SQLModel, table=True):
+    # Singleton (id == 1): admin-editable SSO/OIDC configuration (#32), seeded from
+    # the ICEBERG_EBS_AUTH_MODE / ICEBERG_EBS_OIDC_* env on first read
+    # (app/oidc_settings.py). Holds NO secret — the per-provider client secrets are
+    # env-only (settings.oidc_<provider>_client_secret) and never persisted here.
+    id: Optional[int] = Field(default=None, primary_key=True)
+    auth_mode: str = "both"  # local | oidc | both
+    oidc_redirect_base_url: str = ""
+
+    oidc_entra_enabled: bool = False
+    oidc_entra_client_id: str = ""
+    oidc_entra_tenant_id: str = ""
+    oidc_entra_scopes: str = "openid email profile"
+    oidc_entra_role_claim: str = ""
+    oidc_entra_role_map: str = ""
+
+    oidc_authentik_enabled: bool = False
+    oidc_authentik_client_id: str = ""
+    oidc_authentik_base_url: str = ""
+    oidc_authentik_app_slug: str = ""
+    oidc_authentik_scopes: str = "openid email profile"
+    oidc_authentik_role_claim: str = "groups"
+    oidc_authentik_role_map: str = ""
+
+    oidc_auth0_enabled: bool = False
+    oidc_auth0_client_id: str = ""
+    oidc_auth0_domain: str = ""
+    oidc_auth0_scopes: str = "openid email profile"
+    oidc_auth0_role_claim: str = ""
+    oidc_auth0_role_map: str = ""
+
+    oidc_okta_enabled: bool = False
+    oidc_okta_client_id: str = ""
+    oidc_okta_domain: str = ""
+    oidc_okta_auth_server: str = ""
+    oidc_okta_scopes: str = "openid email profile"
+    oidc_okta_role_claim: str = "groups"
+    oidc_okta_role_map: str = ""
+
     updated_at: datetime = Field(default_factory=_utcnow, sa_column=_tz_column(nullable=False))
 
 
