@@ -28,7 +28,10 @@ class User(SQLModel, table=True):
     # the admin-configurable adapter key (which could be re-pointed at a different
     # issuer, letting a colliding `sub` inherit an account). A `sub` is unique only
     # within its issuer (OIDC spec). Postgres treats NULL values as distinct, so
-    # local rows (issuer/subject both NULL) never collide with each other.
+    # local rows (issuer/subject both NULL) never collide with each other. This pair
+    # is globally unique; `provision_oidc_user` additionally scopes its MATCH to
+    # `auth_provider` so a hostile provider that spoofs another's issuer can't inherit
+    # its account (#226) — this constraint is that rule's DB backstop.
     __table_args__ = (
         UniqueConstraint("oidc_issuer", "oidc_subject", name="uq_user_issuer_subject"),
         # SSO accounts must not share a (already-lowercased) email: JIT provisioning

@@ -205,6 +205,39 @@ async def test_cross_provider_takeover_refused(session):
     assert exc.value.reason == "account linking required"
 
 
+async def test_spoofed_issuer_from_other_provider_denied(session):
+    # #226: a hostile/compromised configured provider can publish another provider's
+    # issuer (Authlib only validates iss against the provider's OWN discovery metadata)
+    # and mint a token carrying that trust domain's (iss, sub). The provider-scoped
+    # match must refuse it — a DIFFERENT attacker email so the denial can only come from
+    # the issuer-scoping fix, not the email-collision path.
+    okta_cfg = replace(_cfg(), key="okta", display_name="Okta")
+    victim, _ = await provision_oidc_user(
+        session,
+        cfg=okta_cfg,
+        identity=_identity(issuer="https://okta.example/", subject="victim-sub", email="victim@corp.test"),
+    )
+    victim_id = victim.id
+    assert victim.auth_provider == "okta"
+
+    hostile_cfg = replace(_cfg(), key="authentik")  # a different configured provider
+    with pytest.raises(oidc_service.OIDCProvisionError) as exc:
+        await provision_oidc_user(
+            session,
+            cfg=hostile_cfg,
+            identity=_identity(issuer="https://okta.example/", subject="victim-sub", email="attacker@evil.test"),
+        )
+    assert exc.value.reason == "identity conflict"
+
+    # The victim account is untouched (no shadow row, no re-provision, still okta's).
+    from sqlmodel import select
+
+    rows = (await session.exec(select(User).where(User.oidc_subject == "victim-sub"))).all()
+    assert [r.id for r in rows] == [victim_id]
+    assert rows[0].auth_provider == "okta"
+    assert rows[0].email == "victim@corp.test"
+
+
 async def test_identity_keyed_on_issuer_not_adapter_key(session):
     # A colliding `sub` from a DIFFERENT issuer must NOT inherit the account — the
     # key is the validated (issuer, subject), not the admin-configurable adapter key.

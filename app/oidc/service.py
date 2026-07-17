@@ -234,12 +234,42 @@ async def _sync_returning_user(
         await session.refresh(user)
 
 
-async def _match_identity(session: AsyncSession, identity: OIDCIdentity, *, lock: bool) -> User | None:
-    """Look up the account keyed on the validated (issuer, subject) pair."""
-    stmt = select(User).where(User.oidc_issuer == identity.issuer, User.oidc_subject == identity.subject)
+async def _match_identity(session: AsyncSession, identity: OIDCIdentity, *, provider: str, lock: bool) -> User | None:
+    """Look up the account for a validated (issuer, subject) **within one provider**.
+
+    Scoping the match to ``auth_provider == provider`` is the #226 fix: Authlib only
+    validates the token's ``iss`` against *this* provider's own discovery metadata, so
+    a hostile/compromised configured provider can publish another provider's issuer,
+    serve its own JWKS, and mint a token carrying that trust domain's (iss, sub). An
+    unscoped match would resolve such a token to the other provider's account (a
+    cross-provider takeover). The issuer stays in the key (a re-pointed adapter still
+    changes it — the #218 protection), and the account row records the provider it was
+    provisioned through, so a spoofed token from a different provider never matches.
+    """
+    stmt = select(User).where(
+        User.auth_provider == provider,
+        User.oidc_issuer == identity.issuer,
+        User.oidc_subject == identity.subject,
+    )
     if lock:
         stmt = stmt.with_for_update()
     return (await session.exec(stmt)).first()
+
+
+async def _foreign_identity_exists(session: AsyncSession, identity: OIDCIdentity, *, provider: str) -> bool:
+    """True if this (issuer, subject) is already owned by a **different** provider.
+
+    A (issuer, subject) is globally unique (``uq_user_issuer_subject``) and owned by the
+    first provider to claim it. Because the issuer claim can be spoofed by another
+    configured provider (see ``_match_identity``), a second provider presenting the same
+    pair is refused as an identity conflict rather than inheriting or shadowing the row.
+    """
+    stmt = select(User).where(
+        User.oidc_issuer == identity.issuer,
+        User.oidc_subject == identity.subject,
+        User.auth_provider != provider,
+    )
+    return (await session.exec(stmt)).first() is not None
 
 
 async def _email_owner(session: AsyncSession, normalized_email: str) -> User | None:
@@ -255,9 +285,14 @@ async def provision_oidc_user(
     and email collisions that require an explicit link flow.
 
     Match order:
-      1. (oidc_issuer, subject) — returning OIDC user; validate tenant provenance
-         and synchronize the IdP-managed admin flag. The issuer is the validated
-         token authority, so a re-pointed adapter key can't inherit the account.
+      1. (auth_provider, oidc_issuer, subject) — returning OIDC user; validate tenant
+         provenance and synchronize the IdP-managed admin flag. The match is scoped to
+         the configured provider so a hostile provider spoofing another's issuer can't
+         inherit the account (#226); the issuer stays in the key so a re-pointed adapter
+         can't either (#218).
+      1b. the same (issuer, subject) owned by a DIFFERENT provider → deny ("identity
+         conflict"); the issuer claim alone can't distinguish trust domains, so a second
+         provider presenting it is refused rather than allowed to create/shadow a row.
       2. new identity with an UNVERIFIED email → deny; the account's username and
          email are derived from the email claim, so provisioning on an unverified
          claim would let a user squat an arbitrary address (locking out its real
@@ -271,10 +306,17 @@ async def provision_oidc_user(
     # 1. Returning OIDC identity. The row lock serialises concurrent callbacks for
     # the same identity so the admin-flag sync can't interleave. Verification is not
     # re-checked here: identity is already established by (issuer, subject).
-    existing = await _match_identity(session, identity, lock=True)
+    existing = await _match_identity(session, identity, provider=cfg.key, lock=True)
     if existing is not None:
         await _sync_returning_user(session, cfg=cfg, identity=identity, user=existing)
         return existing, False
+
+    # 1b. The (issuer, subject) is owned by another configured provider. Authlib only
+    # checks iss against THIS provider's discovery metadata, so the issuer claim can't
+    # distinguish trust domains — refuse rather than let a hostile provider create a
+    # shadow row or (via the global unique constraint) dead-end in a confusing conflict.
+    if await _foreign_identity_exists(session, identity, provider=cfg.key):
+        raise OIDCProvisionError("identity conflict")
 
     # 2. A brand-new identity must carry a verified email — the account is keyed on
     # it (username + collision denial), so an unverified claim is untrustworthy.
@@ -315,10 +357,15 @@ async def provision_oidc_user(
         # rollback rather than assuming which — assuming "username only" is what
         # would let case (b) create a second account for one email.
         await session.rollback()
-        existing = await _match_identity(session, identity, lock=True)
+        existing = await _match_identity(session, identity, provider=cfg.key, lock=True)
         if existing is not None:
             await _sync_returning_user(session, cfg=cfg, identity=identity, user=existing)
             return existing, False
+        # A concurrent callback from a different provider won this (issuer, subject)
+        # (the global unique constraint fired) — deny cleanly, as the pre-insert
+        # foreign-identity check would have (#226).
+        if await _foreign_identity_exists(session, identity, provider=cfg.key):
+            raise OIDCProvisionError("identity conflict") from None
         # A different identity took this email between our check and now — deny,
         # exactly as the initial collision check would have.
         if await _email_owner(session, normalized_email) is not None:
