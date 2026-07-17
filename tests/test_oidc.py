@@ -50,19 +50,24 @@ def _identity(**overrides) -> OIDCIdentity:
 class _FakeOIDCClient:
     """Stands in for an Authlib StarletteOAuth2App — no network."""
 
-    def __init__(self, claims=None, error=None, redirect="https://authentik.test/authorize?x=1"):
+    def __init__(self, claims=None, error=None, redirect="https://authentik.test/authorize?x=1", redirect_error=None):
         self._claims = claims
         self._error = error
         self._redirect = redirect
+        self._redirect_error = redirect_error
 
     async def authorize_redirect(self, request, redirect_uri):
         from fastapi.responses import RedirectResponse
 
+        if self._redirect_error:
+            raise self._redirect_error
         return RedirectResponse(self._redirect)
 
     async def authorize_access_token(self, request):
         if self._error:
             raise self._error
+        # token["userinfo"] carries the ID-token claims Authlib validated; None
+        # here models a token response Authlib could not ID-token-validate.
         return {"userinfo": self._claims}
 
 
@@ -231,9 +236,32 @@ async def test_tenant_backfill_and_conflict(session):
 
 
 async def test_sso_account_cannot_password_login(session):
-    session.add(User(username="ssoonly@sso.test", password_hash=None, email="ssoonly@sso.test"))
+    session.add(
+        User(
+            username="ssoonly@sso.test",
+            password_hash=None,
+            email="ssoonly@sso.test",
+            auth_provider="authentik",
+            oidc_subject="sub-ssoonly",
+        )
+    )
     await session.commit()
     assert await verify_credentials("ssoonly@sso.test", "anything", session) is None
+
+
+async def test_unverified_email_denied_on_jit(session):
+    with pytest.raises(oidc_service.OIDCProvisionError) as exc:
+        await provision_oidc_user(session, cfg=_cfg(), identity=_identity(email_verified=False))
+    assert exc.value.reason == "email not verified"
+
+
+async def test_returning_user_not_reverified(session):
+    # A returning identity (matched by subject) is not re-gated on email_verified —
+    # its identity is already established by (provider, subject).
+    user, _ = await provision_oidc_user(session, cfg=_cfg(), identity=_identity())
+    again, created = await provision_oidc_user(session, cfg=_cfg(), identity=_identity(email_verified=False))
+    assert created is False
+    assert again.id == user.id
 
 
 # --------------------------------------------------------------------------- #
@@ -340,11 +368,29 @@ def test_auth_mode_local_disables_providers():
         ({"oidc_authentik_role_map": "junkpair"}, "role map"),
         ({"oidc_authentik_app_slug": ""}, "incomplete"),
         ({"oidc_authentik_scopes": "email profile"}, "openid"),
+        # Shape validation must live in validate_config (the env-seed/startup path),
+        # not only in the PUT route — a scheme-less authentik base URL or a
+        # URL-shaped auth0/okta domain would otherwise build a garbage metadata URL.
+        ({"oidc_authentik_base_url": "authentik.internal"}, "authentik base URL"),
     ],
 )
 def test_validate_config_rejects(changes, message_part):
     with pytest.raises(ValueError, match=message_part):
         validate_config(replace(env_config(), **changes))
+
+
+def test_validate_config_rejects_url_shaped_domain(monkeypatch):
+    from pydantic import SecretStr
+
+    monkeypatch.setattr(settings, "oidc_auth0_client_secret", SecretStr("s"))
+    cfg = replace(
+        env_config(),
+        oidc_auth0_enabled=True,
+        oidc_auth0_client_id="c",
+        oidc_auth0_domain="https://tenant.eu.auth0.com",  # scheme pasted in by mistake
+    )
+    with pytest.raises(ValueError, match="auth0 domain must be a bare hostname"):
+        validate_config(cfg)
 
 
 def test_validate_config_requires_env_secret(monkeypatch):
@@ -472,15 +518,27 @@ async def test_callback_invalid_token_denies(anon_client, patch_oidc, caplog):
     assert secret_code not in app_logs
 
 
-async def test_callback_missing_claims_denies(anon_client, patch_oidc, monkeypatch):
-    client = _FakeOIDCClient(claims=None)
-
-    async def _no_userinfo(token=None):
-        raise RuntimeError("no userinfo endpoint")
-
-    client.userinfo = _no_userinfo
-    patch_oidc(client)
+async def test_callback_missing_validated_claims_denies(anon_client, patch_oidc):
+    # token["userinfo"] is None → Authlib could not ID-token-validate; the route
+    # must fail closed, NOT fall back to the userinfo endpoint (auth downgrade).
+    patch_oidc(_FakeOIDCClient(claims=None))
     r = await anon_client.get("/auth/oidc/authentik/callback?code=x&state=y")
+    assert r.status_code == 303
+    assert r.headers["location"] == "/login?error=sso"
+
+
+async def test_callback_network_error_redirects_not_500(anon_client, patch_oidc):
+    # The IdP/proxy is unreachable during the token exchange — httpx raises (not
+    # OAuthError). The user must land on /login?error=sso, never a raw 500.
+    patch_oidc(_FakeOIDCClient(error=httpx.ConnectError("token endpoint unreachable")))
+    r = await anon_client.get("/auth/oidc/authentik/callback?code=x&state=y")
+    assert r.status_code == 303
+    assert r.headers["location"] == "/login?error=sso"
+
+
+async def test_login_start_network_error_redirects_not_500(anon_client, patch_oidc):
+    patch_oidc(_FakeOIDCClient(redirect_error=httpx.ConnectError("discovery unreachable")))
+    r = await anon_client.get("/auth/oidc/authentik/login")
     assert r.status_code == 303
     assert r.headers["location"] == "/login?error=sso"
 
@@ -541,7 +599,7 @@ async def test_change_password_rejected_for_sso_account(anon_client, session):
     assert "SSO" in r.json()["detail"]
 
 
-async def test_oidc_paths_covered_by_login_rate_limit(anon_client, monkeypatch):
+async def test_oidc_login_start_covered_by_login_rate_limit(anon_client, monkeypatch):
     from app.ratelimit import login_request_limiter
 
     monkeypatch.setattr(settings, "login_rate_limit_enabled", True)
@@ -549,3 +607,16 @@ async def test_oidc_paths_covered_by_login_rate_limit(anon_client, monkeypatch):
     r = await anon_client.get("/auth/oidc/authentik/login")
     assert r.status_code == 429
     assert r.headers["Retry-After"] == "30"
+
+
+async def test_oidc_callback_not_rate_limited(anon_client, patch_oidc, monkeypatch):
+    # The callback must NEVER be throttled: a 429 there burns the single-use
+    # authorization code mid-flow. Even with the limiter tripped, the callback runs.
+    from app.ratelimit import login_request_limiter
+
+    monkeypatch.setattr(settings, "login_rate_limit_enabled", True)
+    monkeypatch.setattr(login_request_limiter, "check", lambda ip: 30)
+    patch_oidc(_FakeOIDCClient(claims=_claims()))
+    r = await anon_client.get("/auth/oidc/authentik/callback?code=x&state=y")
+    assert r.status_code == 303
+    assert r.headers["location"] == "/"  # provisioned + signed in, not 429

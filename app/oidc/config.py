@@ -71,7 +71,10 @@ class OIDCProviderConfig:
     key: str
     display_name: str
     client_id: str
-    client_secret: str
+    # repr=False so a stray log/exception/test diff on a provider config can't leak
+    # the client secret — the env-only rule (see app/config.py #32) forbids it in
+    # logs, and the default dataclass __repr__ would otherwise print it verbatim.
+    client_secret: str = field(repr=False)
     metadata_url: str
     scopes: str = "openid email profile"
     # Optional group claim → is_admin allowlist. Empty ⇒ nobody is elevated
@@ -221,6 +224,11 @@ def _valid_absolute_url(value: str) -> bool:
     return parsed.scheme in {"http", "https"} and bool(parsed.hostname)
 
 
+def _valid_domain(value: str) -> bool:
+    """A bare hostname — no scheme, no path (the auth0/okta domain fields)."""
+    return "://" not in value and "/" not in value and bool(urlsplit(f"https://{value}").hostname)
+
+
 def _validate_role_map(provider: str, raw: str) -> None:
     if not raw.strip():
         return
@@ -268,6 +276,16 @@ def validate_config(config: OIDCRuntimeConfig) -> None:
         enabled.append(key)
         if not all(value.strip() for value in requirements[key]):
             raise ValueError(f"{key} is enabled but its non-secret configuration is incomplete")
+        # Shape-validate the discovery inputs HERE (not only in the PUT route's
+        # pydantic validators) so the env-seed / startup path can't persist a
+        # malformed value that then builds a garbage metadata URL and 500s at the
+        # first login instead of failing fast — the two write paths must agree.
+        if key == "authentik" and not _valid_absolute_url(config.oidc_authentik_base_url):
+            raise ValueError("authentik base URL must be an absolute http(s) URL")
+        if key == "auth0" and not _valid_domain(config.oidc_auth0_domain):
+            raise ValueError("auth0 domain must be a bare hostname (no scheme or path)")
+        if key == "okta" and not _valid_domain(config.oidc_okta_domain):
+            raise ValueError("okta domain must be a bare hostname (no scheme or path)")
         scopes = set(getattr(config, f"oidc_{key}_scopes").split())
         if "openid" not in scopes:
             raise ValueError(f"{key} is enabled but its scopes do not include the required openid scope")

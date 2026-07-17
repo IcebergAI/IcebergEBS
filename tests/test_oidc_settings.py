@@ -4,6 +4,8 @@ Client secrets must never appear in any response; the PUT surface is a strict
 whitelist validated against the RESULTING config (lockout prevention).
 """
 
+import pytest
+
 from app import oidc_settings
 from app.oidc import service as oidc_service
 
@@ -75,8 +77,15 @@ async def test_put_normalizes_and_persists(client):
 
 
 async def test_put_rejects_domain_with_scheme(client):
-    r = await client.put("/api/oidc/settings", json={"oidc_okta_domain": "https://org.okta.com"})
+    # Shape validation lives in validate_config now, which only checks ENABLED
+    # providers — a URL-shaped domain on an enabled provider is a 422 (the disabled
+    # case is inert and harmless until enabled).
+    r = await client.put(
+        "/api/oidc/settings",
+        json={"oidc_okta_enabled": True, "oidc_okta_client_id": "c", "oidc_okta_domain": "https://org.okta.com"},
+    )
     assert r.status_code == 422
+    assert "bare hostname" in r.json()["detail"]
 
 
 async def test_put_resets_authlib_registration(client):
@@ -96,3 +105,51 @@ async def test_admin_oidc_page_renders(client):
     assert r.status_code == 200
     assert "Single sign-on" in r.text
     assert "test-client-secret" not in r.text
+
+
+async def test_no_op_put_does_not_reset_registration(client):
+    oidc_service.ensure_registered()
+    before = oidc_service.oauth
+    # Round-trip the current settings unchanged (what the admin JS does on a
+    # no-change Save) — the registry must NOT be rebound (that would discard every
+    # provider's cached discovery doc + JWKS).
+    current = (await client.get("/api/oidc/settings")).json()["settings"]
+    r = await client.put("/api/oidc/settings", json=current)
+    assert r.status_code == 200
+    assert oidc_service.oauth is before
+
+
+def test_update_model_fields_match_editable_fields():
+    # Drift guard (#164-style): the PUT model's fields must equal EDITABLE_FIELDS,
+    # or a new editable field is a silent 422 (extra="forbid") or silently dropped.
+    from app.oidc.config import EDITABLE_FIELDS
+    from app.routes.oidc_settings import OIDCSettingsUpdate
+
+    assert set(OIDCSettingsUpdate.model_fields) == set(EDITABLE_FIELDS)
+
+
+async def test_check_constraint_blocks_junk_auth_mode(session):
+    # Schema backstop: a writer bypassing update_settings can't persist a junk
+    # auth_mode (which fail-closed startup validation would then reject → boot loop).
+    from sqlalchemy import text
+    from sqlalchemy.exc import IntegrityError
+
+    await oidc_settings.get_settings(session)  # seed the singleton row
+    with pytest.raises(IntegrityError):
+        await session.execute(text("UPDATE oidcsettings SET auth_mode = 'nonsense' WHERE id = 1"))
+    await session.rollback()
+
+
+async def test_check_constraint_blocks_oidc_only_without_provider(session):
+    from sqlalchemy import text
+    from sqlalchemy.exc import IntegrityError
+
+    await oidc_settings.get_settings(session)
+    with pytest.raises(IntegrityError):
+        await session.execute(
+            text(
+                "UPDATE oidcsettings SET auth_mode = 'oidc', oidc_entra_enabled = false, "
+                "oidc_authentik_enabled = false, oidc_auth0_enabled = false, oidc_okta_enabled = false WHERE id = 1"
+            )
+        )
+    await session.rollback()

@@ -41,6 +41,10 @@ def upgrade() -> None:
         # An OIDC account is keyed on the immutable (provider, subject) pair;
         # Postgres treats NULL oidc_subject as distinct, so local rows never collide.
         batch_op.create_unique_constraint("uq_user_provider_subject", ["auth_provider", "oidc_subject"])
+        # Local-xor-subject: a row is local-with-no-subject or SSO-with-a-subject.
+        batch_op.create_check_constraint(
+            "ck_user_local_xor_subject", "(auth_provider = 'local') = (oidc_subject IS NULL)"
+        )
 
     # Admin-editable SSO config singleton (#32) — deliberately NO secret columns:
     # client secrets are env-only (see app/config.py).
@@ -77,12 +81,22 @@ def upgrade() -> None:
         sa.Column("oidc_okta_role_map", sqlmodel.sql.sqltypes.AutoString(), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
         sa.PrimaryKeyConstraint("id"),
+        # Backstops for the auth-mode enum + the oidc-requires-a-provider lockout
+        # invariant, so a writer bypassing oidc_settings.update_settings can't
+        # persist a config the fail-closed startup validation would reject.
+        sa.CheckConstraint("auth_mode IN ('local', 'oidc', 'both')", name="ck_oidcsettings_auth_mode"),
+        sa.CheckConstraint(
+            "auth_mode <> 'oidc' OR (oidc_entra_enabled OR oidc_authentik_enabled "
+            "OR oidc_auth0_enabled OR oidc_okta_enabled)",
+            name="ck_oidcsettings_oidc_requires_provider",
+        ),
     )
 
 
 def downgrade() -> None:
     op.drop_table("oidcsettings")
     with op.batch_alter_table("user", schema=None) as batch_op:
+        batch_op.drop_constraint("ck_user_local_xor_subject", type_="check")
         batch_op.drop_constraint("uq_user_provider_subject", type_="unique")
         batch_op.drop_index(batch_op.f("ix_user_auth_provider"))
     op.drop_column("user", "role_managed_by_idp")

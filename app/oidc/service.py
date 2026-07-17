@@ -174,15 +174,21 @@ def map_is_admin(cfg: OIDCProviderConfig, identity: OIDCIdentity) -> bool:
     return any(cfg.role_map.get(group) == "admin" for group in identity.groups)
 
 
-def _derive_username(email: str, cfg: OIDCProviderConfig, identity: OIDCIdentity) -> str:
+def _subject_hash(cfg: OIDCProviderConfig, identity: OIDCIdentity) -> str:
+    """Full hex digest of the immutable (provider, subject) pair."""
+    return hashlib.sha256(f"{cfg.key}:{identity.subject}".encode()).hexdigest()
+
+
+def _derive_username(email: str, cfg: OIDCProviderConfig, identity: OIDCIdentity, width: int = 8) -> str:
     """Deterministic fallback username when the email is taken as a username.
 
     Only reachable when a *different* account's username equals this identity's
     email (email collisions are denied outright before this). Suffix with a hash
-    of the immutable (provider, subject) pair so retries resolve to the same name.
+    of the immutable (provider, subject) pair so retries resolve to the same name;
+    ``width`` widens the suffix if even the derived name is already taken, so a
+    pre-existing squatter of the derived name can't permanently dead-end the login.
     """
-    suffix = hashlib.sha256(f"{cfg.key}:{identity.subject}".encode()).hexdigest()[:8]
-    return f"{email[:140]}-{suffix}"
+    return f"{email[:140]}-{_subject_hash(cfg, identity)[:width]}"
 
 
 async def _sync_returning_user(
@@ -239,14 +245,19 @@ async def provision_oidc_user(
     Match order:
       1. (auth_provider, stable subject) — returning OIDC user; validate tenant
          provenance and synchronize the IdP-managed admin flag.
-      2. any email collision → deny; mutable human-readable claims never link
+      2. new identity with an UNVERIFIED email → deny; the account's username and
+         email are derived from the email claim, so provisioning on an unverified
+         claim would let a user squat an arbitrary address (locking out its real
+         owner on their first login, and mislabelling the squatter in admin views).
+      3. any email collision → deny; mutable human-readable claims never link
          (an IdP email claim must not be able to claim a local admin account).
-      3. otherwise JIT-create an identity bound to the stable provider subject.
+      4. otherwise JIT-create an identity bound to the stable provider subject.
          The username is the normalized email (sessions are username-keyed); a
          residual username collision gets a deterministic hash suffix.
     """
     # 1. Returning OIDC identity. The row lock serialises concurrent callbacks
-    # for the same subject so the admin-flag sync can't interleave.
+    # for the same subject so the admin-flag sync can't interleave. Verification
+    # is not re-checked here: identity is already established by (provider, subject).
     existing = (
         await session.exec(
             select(User).where(User.auth_provider == cfg.key, User.oidc_subject == identity.subject).with_for_update()
@@ -256,13 +267,18 @@ async def provision_oidc_user(
         await _sync_returning_user(session, cfg=cfg, identity=identity, user=existing)
         return existing, False
 
-    # 2. Email is a mutable display/contact attribute, never an identity key.
+    # 2. A brand-new identity must carry a verified email — the account is keyed on
+    # it (username + collision denial), so an unverified claim is untrustworthy.
+    if not identity.email_verified:
+        raise OIDCProvisionError("email not verified")
+
+    # 3. Email is a mutable display/contact attribute, never an identity key.
     normalized_email = identity.email.strip().lower()
     by_email = (await session.exec(select(User).where(func.lower(User.email) == normalized_email))).first()
     if by_email is not None:
         raise OIDCProvisionError("account linking required")
 
-    # 3. JIT create. The stable provider subject authenticates this account; the
+    # 4. JIT create. The stable provider subject authenticates this account; the
     # email cannot claim an existing row because every collision above is denied.
     username = normalized_email
     username_taken = (await session.exec(select(User).where(User.username == username))).first()
@@ -284,7 +300,7 @@ async def provision_oidc_user(
     try:
         await session.commit()
     except IntegrityError:
-        # A unique race: either a concurrent callback JIT-created this same
+        # A unique violation: either a concurrent callback JIT-created this same
         # (provider, subject), or the derived username was taken in the gap.
         await session.rollback()
         existing = (
@@ -295,10 +311,21 @@ async def provision_oidc_user(
             )
         ).first()
         if existing is not None:
+            # Concurrent create of the same identity — adopt it.
             await _sync_returning_user(session, cfg=cfg, identity=identity, user=existing)
             return existing, False
-        logger.warning("OIDC JIT provisioning conflict for provider %s", cfg.key)
-        raise OIDCProvisionError("provisioning conflict") from None
+        # No subject match → it was the username that collided (the deterministic
+        # suffix is itself taken by a different account). Retry once with a wider,
+        # still-deterministic suffix so a pre-existing squatter of the short form
+        # can't permanently dead-end this identity's login.
+        user.username = _derive_username(normalized_email, cfg, identity, width=32)
+        session.add(user)
+        try:
+            await session.commit()
+        except IntegrityError:
+            await session.rollback()
+            logger.warning("OIDC JIT provisioning conflict for provider %s", cfg.key)
+            raise OIDCProvisionError("provisioning conflict") from None
     await session.refresh(user)
     logger.info("OIDC JIT-provisioned user %s via %s (admin=%s)", user.username, cfg.key, user.is_admin)
     return user, True

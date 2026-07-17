@@ -217,15 +217,19 @@ async def edge_rate_limit(request: Request, call_next) -> Response:
     Caddy-set canonical X-Forwarded-For (spoof-proof per #77).
     """
     limiter = None
-    is_login_path = (request.method == "POST" and request.url.path == "/login") or request.url.path.startswith(
-        "/auth/oidc/"
-    )
-    if settings.login_rate_limit_enabled and is_login_path:
-        # /auth/oidc/* joins the login zone (#32): the callback triggers an
-        # outbound token exchange and the login start writes handshake state —
-        # both deserve the tight per-IP cap, not the looser API one.
+    path = request.url.path
+    # The SSO login START (/auth/oidc/<provider>/login) joins the login zone (#32):
+    # it writes handshake state and is the only thing that can trigger the outbound
+    # token exchange (the callback is inert without a matching signed state cookie),
+    # so throttling the start bounds the exchange. The callback is DELIBERATELY not
+    # rate-limited: a 429 there would burn the IdP's single-use authorization code
+    # mid-flow, breaking a legitimate sign-in (e.g. several users behind one NAT IP),
+    # and it's retryable only by restarting the whole flow.
+    if settings.login_rate_limit_enabled and (
+        (request.method == "POST" and path == "/login") or (path.startswith("/auth/oidc/") and path.endswith("/login"))
+    ):
         limiter = login_request_limiter
-    elif settings.api_rate_limit_enabled and request.url.path.startswith("/api/"):
+    elif settings.api_rate_limit_enabled and path.startswith("/api/"):
         limiter = api_limiter
     if limiter is not None:
         client_ip = request.client.host if request.client else "-"

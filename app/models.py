@@ -27,7 +27,18 @@ class User(SQLModel, table=True):
     # (auth_provider, oidc_subject) pair — never on the mutable email claim.
     # Postgres treats NULL oidc_subject values as distinct, so local rows
     # ("local", NULL) never collide with each other.
-    __table_args__ = (UniqueConstraint("auth_provider", "oidc_subject", name="uq_user_provider_subject"),)
+    __table_args__ = (
+        UniqueConstraint("auth_provider", "oidc_subject", name="uq_user_provider_subject"),
+        # Schema backstop for the identity invariant the provisioning code relies
+        # on (the #217 pattern): a row is EITHER local-with-no-subject OR
+        # SSO-with-a-subject. A "local" row carrying a subject (or an SSO row with a
+        # NULL subject) is unresolvable by the (provider, subject) match and would
+        # let a duplicate be JIT-created — make it unrepresentable, not just avoided.
+        CheckConstraint(
+            "(auth_provider = 'local') = (oidc_subject IS NULL)",
+            name="ck_user_local_xor_subject",
+        ),
+    )
 
     id: Optional[int] = Field(default=None, primary_key=True)
     username: str = Field(unique=True, index=True)
@@ -212,6 +223,20 @@ class OIDCSettings(SQLModel, table=True):
     # the ICEBERG_EBS_AUTH_MODE / ICEBERG_EBS_OIDC_* env on first read
     # (app/oidc_settings.py). Holds NO secret — the per-provider client secrets are
     # env-only (settings.oidc_<provider>_client_secret) and never persisted here.
+    # Schema backstops for the invariants oidc_settings.update_settings enforces
+    # under a row lock (the #217 pattern): a writer that bypasses the helper — a
+    # migration backfill, manual SQL, a future code path — can't persist a junk
+    # auth_mode or an oidc-only config with no enabled provider, either of which
+    # would make the fail-closed startup validation abort boot with no repair path.
+    __table_args__ = (
+        CheckConstraint("auth_mode IN ('local', 'oidc', 'both')", name="ck_oidcsettings_auth_mode"),
+        CheckConstraint(
+            "auth_mode <> 'oidc' OR (oidc_entra_enabled OR oidc_authentik_enabled "
+            "OR oidc_auth0_enabled OR oidc_okta_enabled)",
+            name="ck_oidcsettings_oidc_requires_provider",
+        ),
+    )
+
     id: Optional[int] = Field(default=None, primary_key=True)
     auth_mode: str = "both"  # local | oidc | both
     oidc_redirect_base_url: str = ""

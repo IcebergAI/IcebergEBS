@@ -7,7 +7,6 @@ key is a 422, not silently dropped, and responses expose only per-provider
 """
 
 from datetime import datetime
-from urllib.parse import urlsplit
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, ConfigDict, field_validator
@@ -54,6 +53,9 @@ class OIDCSettingsUpdate(BaseModel):
     oidc_okta_role_claim: str | None = None
     oidc_okta_role_map: str | None = None
 
+    # Normalization only — shape/semantic validation is the single responsibility
+    # of app.oidc.config.validate_config (run inside update_settings AND on the
+    # env-seed/startup path), so the two write paths can't enforce different rules.
     @field_validator("*")
     @classmethod
     def _strip_strings(cls, value):
@@ -66,22 +68,8 @@ class OIDCSettingsUpdate(BaseModel):
 
     @field_validator("oidc_redirect_base_url", "oidc_authentik_base_url")
     @classmethod
-    def _absolute_url(cls, value: str | None) -> str | None:
-        if not value:
-            return value
-        parsed = urlsplit(value)
-        if parsed.scheme not in {"http", "https"} or not parsed.hostname:
-            raise ValueError("URL must be an absolute http(s) URL")
-        return value.rstrip("/")
-
-    @field_validator("oidc_auth0_domain", "oidc_okta_domain")
-    @classmethod
-    def _domain_only(cls, value: str | None) -> str | None:
-        if not value:
-            return value
-        if "://" in value or "/" in value or not urlsplit(f"https://{value}").hostname:
-            raise ValueError("Domain must contain a hostname only")
-        return value
+    def _trim_trailing_slash(cls, value: str | None) -> str | None:
+        return value.rstrip("/") if value else value
 
 
 class OIDCSettingsOut(BaseModel):

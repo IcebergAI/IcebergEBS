@@ -82,6 +82,13 @@ async def update_settings(session: AsyncSession, changes: dict[str, Any]) -> OID
     except ValueError:
         await session.rollback()  # discard the patch and release the row lock
         raise
+    if candidate == current:
+        # No-op save (the admin JS PUTs the whole form on every click). Skip the
+        # write, the commit, and — crucially — reset_registration(): rebinding the
+        # Authlib registry discards every provider's cached discovery doc + JWKS,
+        # forcing the next login per provider to re-fetch both over the network.
+        await session.rollback()  # release the row lock; nothing to persist
+        return row
     for f in EDITABLE_FIELDS:
         setattr(row, f, getattr(candidate, f))
     row.updated_at = _utcnow()

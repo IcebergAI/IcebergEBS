@@ -452,7 +452,19 @@ Operational notes:
 - SSO-provisioned accounts have **no local password** (username = their email); password login
   refuses them, and a password reset is the IdP's job. Accounts are keyed on the immutable
   provider subject — a changed email never links to a different account; a collision with an
-  existing account's email is denied ("account linking required") rather than auto-linked.
+  existing account's email is denied ("account linking required") rather than auto-linked. A
+  brand-new identity must present a **verified** email (the account name is derived from it), so
+  configure your IdP to assert email verification.
+- **The IdP is the access gate.** JIT provisioning means anyone your IdP authenticates for this
+  application gets an account, so control access with **IdP-side app assignment** (assign the app
+  to specific users/groups), not by deleting rows here: deleting an SSO user in `/admin/users` is
+  **not a ban** — their next sign-in re-provisions a fresh account. Off-board at the IdP.
+- **IdP-side credential resets don't propagate.** IcebergEBS learns of an IdP password reset or
+  account disable only on the next sign-in. A stolen session cookie stays valid until
+  `session_max_age`, and any API keys the account minted keep working, until the IdP-driven admin
+  re-sync bumps the session cutoff (only on an is_admin change) or an admin deletes the keys. For
+  immediate revocation of a specific session, delete the user's API keys and rely on the cookie
+  lifetime; back-channel / RP-initiated logout is a tracked follow-up.
 - All IdP traffic (discovery, JWKS, token, userinfo) routes through the **outbound proxy layer**
   above, like every other egress path.
 

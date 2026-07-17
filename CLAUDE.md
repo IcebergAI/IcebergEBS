@@ -138,6 +138,13 @@ Full production deployment instructions are in `DEPLOYMENT.md`. Two options are 
 
 **Kubernetes (Helm)** — chart under `helm/iceberg-ebs/` with Bitnami postgresql subchart. `replicaCount: 1` is mandatory for the same reason. Topology is **cluster nginx-ingress-controller (TLS via cert-manager, edge rate limiting) → in-pod Caddy sidecar (:8080) → app (localhost:8000)** (#188): the sidecar owns the canonical security headers via the `caddy` ConfigMap (a test-guarded mirror of `caddy/Caddyfile.k8s` + `caddy/headers.caddy` — Helm can't read files above the chart), so the ingress no longer carries a duplicated CSP snippet. Editing the edge config means editing `caddy/` and re-mirroring the ConfigMap; `tests/test_helm_caddy.py` + `tests/test_csp_strict.py` fail on drift.
 
+Quick start (Docker):
+```bash
+bash caddy/generate-dev-cert.sh
+cp .env.example .env && $EDITOR .env
+docker compose up --build
+```
+
 ## Versioning
 IcebergEBS carries **two** identifiers, shown together at the bottom of the left rail as `v{semver} · build N · sha` (e.g. `v0.1.0b1 · build 74 · 8823e7a`). They answer different questions and must not be conflated:
 - **SemVer** (`0.1.0b1`) is the **release** version — the only thing that can express a breaking change, and what an API/SOAR consumer pins. Single source of truth: **`[project].version` in `pyproject.toml`**, read at runtime by `app/version.py:_semver()` via stdlib `tomllib` (never hardcoded, never duplicated). Git tags use the **SemVer spelling** of the same value (`0.1.0b1` ⇄ tag `v0.1.0-beta.1`) — the PEP 440 / SemVer mapping and the release procedure live in **`docs/RELEASING.md`**; changes are recorded in **`CHANGELOG.md`** (Keep a Changelog).
