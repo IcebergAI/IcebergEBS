@@ -392,6 +392,101 @@ def test_entra_email_verified_honours_xms_edov():
     assert adapter.extract_identity(claims, "").email_verified is False
 
 
+def test_entra_groups_overage_denied():
+    # >~200 groups: Entra omits the inline `groups` array and emits the
+    # distributed-claims pointers instead. Reading that as "no groups" would
+    # demote an IdP-managed admin and revoke their sessions (#227), so the
+    # adapter must fail closed with a ValueError the callback turns into a
+    # logged /login?error=sso.
+    overage_claims = {
+        "iss": "https://i.test",
+        "sub": "s",
+        "tid": "t",
+        "email": "e@x.test",
+        "email_verified": True,
+        # note: no inline "groups" claim
+        "_claim_names": {"groups": "src1"},
+        "_claim_sources": {"src1": {"endpoint": "https://graph.microsoft.com/v1.0/me/getMemberObjects"}},
+    }
+    with pytest.raises(ValueError, match="overage"):
+        EntraAdapter().extract_identity(overage_claims, "groups")
+
+
+def test_entra_overage_ignored_without_role_claim():
+    # A deployment that doesn't map groups to roles (role_claim="") is
+    # unaffected: no group extraction is configured, so the overage pointers are
+    # irrelevant and login proceeds with empty groups (no false-positive deny).
+    overage_claims = {
+        "iss": "https://i.test",
+        "sub": "s",
+        "tid": "t",
+        "email": "e@x.test",
+        "email_verified": True,
+        "_claim_names": {"groups": "src1"},
+        "_claim_sources": {"src1": {"endpoint": "https://graph.microsoft.com/"}},
+    }
+    identity = EntraAdapter().extract_identity(overage_claims, "")
+    assert identity.groups == []
+    assert identity.email == "e@x.test"
+
+
+def test_entra_inline_groups_unaffected_by_overage_guard():
+    # Happy path: an inline groups array (no overage) still extracts normally —
+    # the guard only fires when the claim is displaced into _claim_names.
+    identity = EntraAdapter().extract_identity(
+        {
+            "iss": "https://i.test",
+            "sub": "s",
+            "tid": "t",
+            "email": "e@x.test",
+            "email_verified": True,
+            "groups": ["ebs-admins", "eng"],
+        },
+        "groups",
+    )
+    assert identity.groups == ["ebs-admins", "eng"]
+
+
+def test_entra_roles_overage_denied():
+    # emit_as_roles: group membership is emitted into the `roles` claim, but the
+    # overage indicator is STILL keyed on `groups` in _claim_names. A deployment
+    # with role_claim="roles" must also fail closed — otherwise the absent `roles`
+    # claim reads as "no groups" and demotes the admin (the review-bot finding on
+    # PR #241).
+    overage_claims = {
+        "iss": "https://i.test",
+        "sub": "s",
+        "tid": "t",
+        "email": "e@x.test",
+        "email_verified": True,
+        # no inline "roles" claim; overage pointer keyed on "groups"
+        "_claim_names": {"groups": "src1"},
+        "_claim_sources": {"src1": {"endpoint": "https://graph.microsoft.com/v1.0/me/getMemberObjects"}},
+    }
+    with pytest.raises(ValueError, match="overage"):
+        EntraAdapter().extract_identity(overage_claims, "roles")
+
+
+def test_entra_inline_roles_not_overaged():
+    # No false-positive deny: when the configured role_claim IS delivered inline
+    # (e.g. genuine app roles), an unrelated `_claim_names.groups` pointer must not
+    # trip the guard — the present role source is trusted.
+    identity = EntraAdapter().extract_identity(
+        {
+            "iss": "https://i.test",
+            "sub": "s",
+            "tid": "t",
+            "email": "e@x.test",
+            "email_verified": True,
+            "roles": ["ebs-admins"],
+            "_claim_names": {"groups": "src1"},
+            "_claim_sources": {"src1": {"endpoint": "https://graph.microsoft.com/"}},
+        },
+        "roles",
+    )
+    assert identity.groups == ["ebs-admins"]
+
+
 @pytest.mark.parametrize("key", ["authentik", "auth0", "okta"])
 def test_standard_adapters_share_claim_mapping(key):
     adapter = get_adapter(key)
