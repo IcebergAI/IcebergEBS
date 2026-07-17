@@ -39,21 +39,18 @@ async def lifespan(app: FastAPI):
     await seed_admin()
 
     # Load the admin-editable proxy routing config into the in-memory snapshot
-    # (#216), seeding it from the ICEBERG_EBS_PROXY_* env on first boot. Failure is
-    # non-fatal: an unloaded snapshot means every request goes direct (pre-feature
-    # behaviour) until the row can be read.
-    try:
-        from sqlmodel.ext.asyncio.session import AsyncSession
+    # (#216), seeding it from the ICEBERG_EBS_PROXY_* env on first boot. A failure
+    # here is FATAL by design: an unloaded snapshot routes everything direct, so
+    # swallowing the error would leave an EXPLICIT deployment silently failing
+    # open (all egress bypassing the mandated proxy) until a restart. Startup
+    # aborting is the fail-closed choice — the orchestrator retries, and init_db()
+    # above already proved the DB reachable moments ago.
+    from sqlmodel.ext.asyncio.session import AsyncSession
 
-        from app.database import engine
+    from app.database import engine
 
-        async with AsyncSession(engine) as session:
-            await proxy_settings.refresh_cache(session)
-    except Exception:
-        logging.getLogger(__name__).warning(
-            "Proxy settings unavailable at startup; outbound requests go direct until loaded",
-            exc_info=True,
-        )
+    async with AsyncSession(engine) as session:
+        await proxy_settings.refresh_cache(session)
 
     # Bound the outbound connection pool and wrap the transport chain so transient
     # store failures are retried with backoff instead of permanently failing a

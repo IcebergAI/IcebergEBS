@@ -27,7 +27,10 @@ the DB row, returned by the API, or logged.
 Routing is read from an in-memory snapshot (``get_config`` / ``set_config``)
 refreshed at startup and whenever an admin saves (single-process — the
 deployment mandates one uvicorn worker). A ``None`` snapshot means "not
-loaded": every request goes direct, byte-for-byte the pre-feature behaviour.
+loaded" and every request goes direct — in production that state cannot be
+reached (the lifespan fails startup if the config can't load, so an EXPLICIT
+deployment can never silently fail open); it exists for tests and tooling
+that exercise the transport without the app lifecycle.
 """
 
 from __future__ import annotations
@@ -66,7 +69,8 @@ class ProxyConfig:
 
 
 # In-memory routing snapshot. ``None`` means "not loaded" — every request goes
-# direct, preserving pre-feature behaviour during startup or if the DB read fails.
+# direct. Production never runs in this state (startup fails if the config
+# can't load); it exists for tests/tooling without the app lifecycle.
 _config: ProxyConfig | None = None
 
 
@@ -199,6 +203,13 @@ def validate_proxy_settings(s: Settings | None = None) -> None:
             raise RuntimeError(
                 "ICEBERG_EBS_PROXY_URL must be an absolute URL with scheme "
                 f"{'|'.join(PROXY_URL_SCHEMES)} and a host (e.g. http://proxy.corp:3128)."
+            )
+        if parsed.username or parsed.password:
+            # The URL seeds the admin-editable DB row and is echoed by the API —
+            # userinfo there would break the env-only credential guarantee.
+            raise RuntimeError(
+                "ICEBERG_EBS_PROXY_URL must not contain credentials — set "
+                "ICEBERG_EBS_PROXY_USERNAME / ICEBERG_EBS_PROXY_PASSWORD instead."
             )
 
 

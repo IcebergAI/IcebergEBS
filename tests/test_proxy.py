@@ -259,6 +259,15 @@ def test_validate_accepts_defaults():
     proxy.validate_proxy_settings()  # repo defaults: system mode, no URL
 
 
+def test_validate_rejects_userinfo_url_without_echoing_it(monkeypatch):
+    # Env-seeded URL flows onto the API-visible DB row — userinfo would leak.
+    monkeypatch.setattr(settings, "proxy_mode", "explicit")
+    monkeypatch.setattr(settings, "proxy_url", "http://bob:hunter2@proxy:3128")
+    with pytest.raises(RuntimeError, match="must not contain credentials") as excinfo:
+        proxy.validate_proxy_settings()
+    assert "hunter2" not in str(excinfo.value)
+
+
 def test_scrub_redacts_raw_and_encoded_credentials(monkeypatch):
     monkeypatch.setattr(settings, "proxy_username", "bob")
     monkeypatch.setattr(settings, "proxy_password", SecretStr("p@ss word"))
@@ -509,6 +518,37 @@ async def test_put_settings_allows_clearing_url(client):
     assert r.json()["proxy_url"] == ""
 
 
+async def test_put_settings_rejects_userinfo_in_url(client):
+    # Credentials are env-only: a userinfo URL would be persisted and echoed
+    # by every subsequent GET.
+    r = await client.put("/api/proxy/settings", json={"proxy_url": "http://bob:hunter2@proxy:3128"})
+    assert r.status_code == 422
+    r = await client.get("/api/proxy/settings")
+    assert "hunter2" not in r.text
+
+
+async def test_put_settings_rejects_explicit_without_url(client):
+    # Switching to EXPLICIT while no URL is stored must fail, not silently go direct.
+    r = await client.put("/api/proxy/settings", json={"mode": "EXPLICIT"})
+    assert r.status_code == 422
+
+
+async def test_put_settings_rejects_clearing_url_while_explicit(client):
+    r = await client.put("/api/proxy/settings", json={"mode": "EXPLICIT", "proxy_url": "http://proxy:3128"})
+    assert r.status_code == 200
+    # Clearing only the URL leaves the stored mode EXPLICIT — the resulting state
+    # is invalid and must be rejected (proxy-bypass, not partial update).
+    r = await client.put("/api/proxy/settings", json={"proxy_url": ""})
+    assert r.status_code == 422
+    assert (await client.get("/api/proxy/settings")).json()["proxy_url"] == "http://proxy:3128"
+
+
+async def test_put_settings_explicit_with_url_in_same_request(client):
+    r = await client.put("/api/proxy/settings", json={"mode": "explicit", "proxy_url": "http://proxy:3128"})
+    assert r.status_code == 200
+    assert r.json()["mode"] == "EXPLICIT"
+
+
 async def test_targets_are_labels_only(client, test_db, admin_user):
     async with AsyncSession(test_db) as s:
         s.add(
@@ -556,26 +596,64 @@ async def test_test_endpoint_success(client):
     assert data["via_proxy"] is False
 
 
-@respx.mock
-async def test_test_endpoint_webhook_target_dials_origin_only(client, test_db, admin_user):
+async def _add_destination(test_db, admin_user, **kwargs) -> int:
     dest = AlertDestination(
         user_id=admin_user.id,
-        label="SOC Slack",
-        target="https://hooks.slack.com/services/T000/B000/secrettoken",
+        label=kwargs.pop("label", "SOC Slack"),
+        target=kwargs.pop("target", "https://hooks.slack.com/services/T000/B000/secrettoken"),
+        **kwargs,
     )
     async with AsyncSession(test_db) as s:
         s.add(dest)
         await s.commit()
         await s.refresh(dest)
-    dest_id = dest.id
+    assert dest.id is not None
+    return dest.id
 
+
+@respx.mock
+async def test_test_endpoint_webhook_target_pins_ip_and_dials_origin_only(client, test_db, admin_user):
+    from unittest.mock import AsyncMock, patch
+
+    dest_id = await _add_destination(test_db, admin_user)
     await client.put("/api/proxy/settings", json={"mode": "NONE"})
-    route = respx.get("https://hooks.slack.com/").mock(return_value=httpx.Response(302))
-    r = await client.post("/api/proxy/test", json={"target": f"Webhook: SOC Slack (#{dest_id})"})
+    # The probe must apply the delivery-path SSRF treatment: resolve, validate,
+    # and dial the pinned public IP with the original hostname kept for Host/SNI.
+    route = respx.get("https://93.184.216.34/").mock(return_value=httpx.Response(302))
+    with patch("app.webhooks._resolve_host", new=AsyncMock(return_value=["93.184.216.34"])):
+        r = await client.post("/api/proxy/test", json={"target": f"Webhook: SOC Slack (#{dest_id})"})
     assert r.status_code == 200
+    # Redirects are never followed — a 3xx is reported, not chased.
+    assert r.json()["result"] == "ok: HTTP 302"
     assert route.called
-    # The capability path must never be dialled.
-    assert str(route.calls[0].request.url) == "https://hooks.slack.com/"
+    request = route.calls[0].request
+    # Pinned-IP netloc, capability path never dialled, hostname preserved for Host.
+    assert str(request.url) == "https://93.184.216.34/"
+    assert request.headers["host"] == "hooks.slack.com"
+
+
+async def test_test_endpoint_webhook_target_rejects_private_resolution(client, test_db, admin_user):
+    from unittest.mock import AsyncMock, patch
+
+    dest_id = await _add_destination(test_db, admin_user, label="Rebound", target="https://rebound.example.com/hook")
+    await client.put("/api/proxy/settings", json={"mode": "NONE"})
+    with patch("app.webhooks._resolve_host", new=AsyncMock(return_value=["10.0.0.5"])):
+        r = await client.post("/api/proxy/test", json={"target": f"Webhook: Rebound (#{dest_id})"})
+    assert r.status_code == 200
+    # Class name only — validation failure, nothing dialled.
+    assert r.json()["result"] == "error: WebhookValidationError"
+
+
+@respx.mock
+async def test_test_endpoint_never_follows_redirects(client):
+    await client.put("/api/proxy/settings", json={"mode": "NONE"})
+    respx.get("https://marketplace.visualstudio.com/").mock(
+        return_value=httpx.Response(302, headers={"Location": "https://10.0.0.5/internal"})
+    )
+    internal = respx.get("https://10.0.0.5/internal").mock(return_value=httpx.Response(200))
+    r = await client.post("/api/proxy/test", json={"target": "VS Code Marketplace"})
+    assert r.json()["result"] == "ok: HTTP 302"
+    assert not internal.called
 
 
 @respx.mock
