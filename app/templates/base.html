@@ -63,7 +63,7 @@
 
       {% if username %}
       <div class="rail-group">
-      <div class="rail-group-label">Account</div>
+      <div class="rail-group-label">Admin</div>
       <a href="/account" class="rail-link {% block nav_account %}{% endblock %}">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12a8 8 0 1 0 16 0 8 8 0 0 0-16 0Z"/><path d="M12 7v5l3 2"/></svg>
         Alerts &amp; webhooks
@@ -95,6 +95,33 @@
     </nav>
 
     <div class="rail-foot">
+      {% if username %}
+      <div class="rail-usermenu" x-data="userMenu">
+        <button type="button" @click="open=!open" class="rail-id rail-id-btn" :aria-expanded="open">
+          <span class="rail-avatar">{{ username[0]|upper }}</span>
+          <span class="rail-id-meta">
+            <span class="rail-id-name">{{ username }}</span>
+            <span class="rail-id-role">{% if is_admin %}workspace admin{% else %}member{% endif %}</span>
+          </span>
+          <svg class="rail-id-caret" :class="open && 'rotated'" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
+        </button>
+        <div x-show="open" @click.outside="open=false" x-cloak class="rail-menu surface py-1.5">
+          <div class="px-3 py-2">
+            <div class="text-[11px] mb-1.5" style="color:var(--muted)">Theme</div>
+            <div class="seg">
+              <button :class="theme === 'system' && 'active'" @click="setTheme('system')">System</button>
+              <button :class="theme === 'light' && 'active'" @click="setTheme('light')">Light</button>
+              <button :class="theme === 'dark' && 'active'" @click="setTheme('dark')">Dark</button>
+            </div>
+          </div>
+          <div class="rail-menu-sep"></div>
+          <a href="/account/password" class="rail-menu-item" @click="open=false">Change password</a>
+          <form method="post" action="/logout" class="m-0">
+            <button type="submit" class="rail-menu-item w-full text-left">Sign out</button>
+          </form>
+        </div>
+      </div>
+      {% endif %}
       {% block rail_footer %}
         <div class="rail-version" title="Running build">{{ app_version | default('', true) }}</div>
       {% endblock %}
@@ -109,37 +136,6 @@
       <div class="search">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="6"/><path d="m20 20-4-4"/></svg>
         <input type="text" placeholder="Search extensions, permissions, publishers…">
-      </div>
-
-      <div class="flex items-center gap-3" x-data="userMenu">
-        <button @click="open=!open" class="flex items-center gap-2 px-1.5 py-1 rounded-md hover:bg-[var(--surface-2)] transition">
-          <span class="avatar">{{ username[0]|upper }}</span>
-          <span class="hidden md:flex flex-col items-start">
-            <span class="text-[12.5px] font-medium leading-tight" style="color:var(--ink)">{{ username }}</span>
-            <span class="text-[11px] leading-tight" style="color:var(--muted)">{% if is_admin %}workspace admin{% else %}member{% endif %}</span>
-          </span>
-          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--muted)"><path d="m6 9 6 6 6-6"/></svg>
-        </button>
-        <div x-show="open" @click.outside="open=false" x-cloak
-             class="absolute right-7 top-12 surface py-1.5"
-             style="min-width:200px;box-shadow:var(--shadow-lift);z-index:20">
-          <a href="/account" class="block px-3 py-2 text-[13px] hover:bg-[var(--surface-2)]" style="color:var(--ink-soft)" @click="open=false">Alerts &amp; webhooks</a>
-          <a href="/account/keys" class="block px-3 py-2 text-[13px] hover:bg-[var(--surface-2)]" style="color:var(--ink-soft)" @click="open=false">API keys</a>
-          <a href="/account/password" class="block px-3 py-2 text-[13px] hover:bg-[var(--surface-2)]" style="color:var(--ink-soft)" @click="open=false">Change password</a>
-          <div class="my-1 mx-3 border-t" style="border-color:var(--line)"></div>
-          <div class="px-3 py-2">
-            <div class="text-[11px] mb-1.5" style="color:var(--muted)">Theme</div>
-            <div class="seg">
-              <button :class="theme === 'system' && 'active'" @click="setTheme('system')">System</button>
-              <button :class="theme === 'light' && 'active'" @click="setTheme('light')">Light</button>
-              <button :class="theme === 'dark' && 'active'" @click="setTheme('dark')">Dark</button>
-            </div>
-          </div>
-          <div class="my-1 mx-3 border-t" style="border-color:var(--line)"></div>
-          <form method="post" action="/logout" class="m-0">
-            <button type="submit" class="w-full text-left px-3 py-2 text-[13px] hover:bg-[var(--surface-2)]" style="color:var(--ink-soft)">Sign out</button>
-          </form>
-        </div>
       </div>
     </header>
     {% endif %}
