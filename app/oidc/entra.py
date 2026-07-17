@@ -14,6 +14,7 @@ from app.oidc.base import (
     OIDCIdentity,
     _groups_from,
     _require,
+    _role_claim_overaged,
     register_adapter,
 )
 
@@ -35,6 +36,19 @@ class EntraAdapter:
         # xms_edov/email_verified apply to an asserted email, not to the mutable
         # preferred_username fallback.
         email_verified = has_email_claim and email_verified
+        if _role_claim_overaged(claims, role_claim):
+            # Entra groups-overage (>~200 groups): the ID token carries
+            # _claim_names/_claim_sources instead of an inline groups array. Fail
+            # CLOSED rather than reading it as "no groups" — that would demote an
+            # IdP-managed admin and revoke their sessions on an otherwise-successful
+            # login (#227). The callback turns this into a logged /login?error=sso.
+            raise ValueError(
+                f"groups claim '{role_claim}' delivered as an Entra overage/"
+                "distributed claim (_claim_names); no inline groups in the ID "
+                "token — configure the Entra app to emit only assigned groups "
+                "(Token configuration -> Groups -> 'Groups assigned to the "
+                "application') to avoid the >200-group overage"
+            )
         display_name = str(claims.get("name") or email)
         return OIDCIdentity(
             issuer=issuer,
