@@ -233,6 +233,43 @@ async def _sync_returning_user(
         await session.commit()
         await session.refresh(user)
 
+    await _sync_email(session, identity=identity, user=user)
+
+
+async def _sync_email(session: AsyncSession, *, identity: OIDCIdentity, user: User) -> None:
+    """Refresh a returning SSO account's email from the verified claim (#233).
+
+    Kept a separate best-effort commit from the tenant/admin sync so an email that
+    collides with another SSO account can't undo the admin sync or break the login.
+    Without this, an account's email is frozen at first-login: if the IdP later
+    reassigns that address to a new person, their first login is permanently denied
+    ("account linking required") by the stale row, with no admin remediation path.
+
+    Only a **verified** email is adopted — an unverified claim is untrustworthy (same
+    rule as JIT provisioning). A collision with another SSO row (the partial unique
+    index ``uq_user_sso_email``) leaves the stale address in place rather than failing
+    the login or silently stealing the address; a genuine duplicate needs an admin.
+    """
+    if not identity.email_verified:
+        return
+    new_email = (identity.email or "").strip().lower()
+    if not new_email or new_email == user.email:
+        return
+    user.email = new_email
+    session.add(user)
+    try:
+        await session.commit()
+    except IntegrityError:
+        await session.rollback()
+        await session.refresh(user)  # discard the rejected in-memory change
+        logger.warning(
+            "OIDC email sync skipped for %s via %s: address already owned by another SSO account",
+            user.username,
+            user.auth_provider,
+        )
+        return
+    await session.refresh(user)
+
 
 async def _match_identity(session: AsyncSession, identity: OIDCIdentity, *, provider: str, lock: bool) -> User | None:
     """Look up the account for a validated (issuer, subject) **within one provider**.
@@ -286,10 +323,11 @@ async def provision_oidc_user(
 
     Match order:
       1. (auth_provider, oidc_issuer, subject) — returning OIDC user; validate tenant
-         provenance and synchronize the IdP-managed admin flag. The match is scoped to
-         the configured provider so a hostile provider spoofing another's issuer can't
-         inherit the account (#226); the issuer stays in the key so a re-pointed adapter
-         can't either (#218).
+         provenance, synchronize the IdP-managed admin flag, and refresh the verified
+         email (#233 — a stale address would otherwise block another user's JIT forever).
+         The match is scoped to the configured provider so a hostile provider spoofing
+         another's issuer can't inherit the account (#226); the issuer stays in the key
+         so a re-pointed adapter can't either (#218).
       1b. the same (issuer, subject) owned by a DIFFERENT provider → deny ("identity
          conflict"); the issuer claim alone can't distinguish trust domains, so a second
          provider presenting it is refused rather than allowed to create/shadow a row.

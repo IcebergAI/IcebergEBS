@@ -347,6 +347,55 @@ async def test_returning_user_not_reverified(session):
     assert again.id == user.id
 
 
+async def test_returning_email_resynced_frees_stale_address(session):
+    # #233: user A's IdP email changes; the returning-login sync must adopt the new
+    # verified address so A's *old* address is freed for whoever gets it next —
+    # otherwise B's first login is permanently denied "account linking required".
+    a1, _ = await provision_oidc_user(session, cfg=_cfg(), identity=_identity(subject="sub-a", email="a@old.test"))
+    a1_id = a1.id  # capture before later commits expire the instance
+    assert a1.email == "a@old.test"
+    a2, created = await provision_oidc_user(
+        session, cfg=_cfg(), identity=_identity(subject="sub-a", email="A@New.test")
+    )
+    assert created is False
+    assert a2.id == a1_id
+    assert a2.email == "a@new.test"  # normalized + adopted
+
+    # The old address is now free: a different identity JIT-provisions on it.
+    b, created_b = await provision_oidc_user(
+        session, cfg=_cfg(), identity=_identity(subject="sub-b", email="a@old.test")
+    )
+    assert created_b is True
+    assert b.id != a1_id
+    assert b.email == "a@old.test"
+
+
+async def test_returning_email_sync_skips_collision(session):
+    # Adopting an address already owned by another SSO account would violate
+    # uq_user_sso_email — keep the stale email and let the login proceed rather than
+    # 500 or silently steal the address (a real duplicate needs admin remediation).
+    a, _ = await provision_oidc_user(session, cfg=_cfg(), identity=_identity(subject="sub-a", email="a@corp.test"))
+    a_id = a.id  # capture before later commits expire the instance
+    await provision_oidc_user(session, cfg=_cfg(), identity=_identity(subject="sub-b", email="b@corp.test"))
+
+    a_again, created = await provision_oidc_user(
+        session, cfg=_cfg(), identity=_identity(subject="sub-a", email="b@corp.test")
+    )
+    assert created is False
+    assert a_again.id == a_id
+    assert a_again.email == "a@corp.test"  # unchanged — collision was declined
+
+
+async def test_returning_email_sync_ignores_unverified_claim(session):
+    # An unverified email is untrustworthy (same rule as JIT) — never adopt it.
+    a, _ = await provision_oidc_user(session, cfg=_cfg(), identity=_identity(subject="sub-a", email="a@old.test"))
+    a_again, created = await provision_oidc_user(
+        session, cfg=_cfg(), identity=_identity(subject="sub-a", email="a@new.test", email_verified=False)
+    )
+    assert created is False
+    assert a_again.email == "a@old.test"
+
+
 # --------------------------------------------------------------------------- #
 # Adapters
 # --------------------------------------------------------------------------- #
