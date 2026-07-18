@@ -3,17 +3,22 @@
 #   docker compose -f docker-compose.yml -f docker-compose.dev.yml up postgres app
 #
 # It publishes Postgres on localhost (so the test suite / a host-side uvicorn can
-# reach it), mounts the source for live reload, and supplies throwaway dev
-# credentials so you don't need a populated .env. The Caddy edge proxy is
-# intentionally not started in dev (run the two named services only, as above).
+# reach it), mounts the source for live reload, and relaxes cookie security. The
+# Caddy edge proxy is intentionally not started in dev (run the two named services
+# only, as above).
+#
+# Credentials deliberately come from .env via the BASE file, not from literals here.
+# This override used to hardcode POSTGRES_DB/USER/PASSWORD and a full DATABASE_URL,
+# which meant `make dev` worked even with a broken .env while a plain
+# `docker compose up` failed on the same machine — the two paths disagreed, and the
+# dev one silently papered over the misconfiguration. One credential source only.
+# Consequence: dev now needs a populated .env, same as production. Note that Compose
+# interpolates each file before merging, so the base file's `${VAR:?...}` guards fire
+# regardless of what this override sets.
 services:
   postgres:
     ports:
       - "5432:5432"
-    environment:
-      POSTGRES_DB: iceberg_ebs
-      POSTGRES_USER: iceberg_ebs
-      POSTGRES_PASSWORD: iceberg_ebs
 
   app:
     build: .
@@ -30,8 +35,7 @@ services:
     ports:
       - "8000:8000"
     environment:
-      ICEBERG_EBS_DATABASE_URL: postgresql+asyncpg://iceberg_ebs:iceberg_ebs@postgres:5432/iceberg_ebs
-      ICEBERG_EBS_ADMIN_USERNAME: ${ICEBERG_EBS_ADMIN_USERNAME:-admin}
-      ICEBERG_EBS_ADMIN_PASSWORD: ${ICEBERG_EBS_ADMIN_PASSWORD:-admin}
-      ICEBERG_EBS_SECRET_KEY: ${ICEBERG_EBS_SECRET_KEY:-dev-secret-key-not-for-production-use-only}
+      # DATABASE_URL / ADMIN_* / SECRET_KEY intentionally NOT set here — they come from
+      # the base file, built out of the same .env values. Only the genuine dev-vs-prod
+      # difference is overridden: cookies must not be Secure-only over plain http://.
       ICEBERG_EBS_SECURE_COOKIES: "false"

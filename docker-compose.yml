@@ -13,7 +13,12 @@ services:
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-iceberg_ebs}
       POSTGRES_USER: ${POSTGRES_USER:-iceberg_ebs}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      # `:?` (not a bare ${VAR}) so an unset/empty password ABORTS startup with this
+      # message. A bare ${POSTGRES_PASSWORD} interpolates to "" behind a warning that
+      # scrolls past in `up` output; the stack then comes up and only fails later, as
+      # an asyncpg InvalidPasswordError from the app — which reads like a code bug, not
+      # a missing variable. Matches the Helm chart's `| required` on the same secret.
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env - see .env.example, generate with 'openssl rand -hex 32'}"
     volumes:
       # Postgres 18+ images store data in a major-version subdirectory and want the
       # volume at /var/lib/postgresql (NOT .../data as ≤17 did) — mounting the old
@@ -41,10 +46,14 @@ services:
     tmpfs:
       - /tmp
     environment:
-      ICEBERG_EBS_DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-iceberg_ebs}:${POSTGRES_PASSWORD}@postgres/${POSTGRES_DB:-iceberg_ebs}
-      ICEBERG_EBS_ADMIN_USERNAME: ${ICEBERG_EBS_ADMIN_USERNAME}
-      ICEBERG_EBS_ADMIN_PASSWORD: ${ICEBERG_EBS_ADMIN_PASSWORD}
-      ICEBERG_EBS_SECRET_KEY: ${ICEBERG_EBS_SECRET_KEY}
+      # Every secret below uses `:?` so a missing value aborts `up` naming the variable,
+      # rather than silently starting with an empty credential. Only SECRET_KEY has an
+      # app-side validator (config.py enforces >=32 chars), so an empty ADMIN_PASSWORD
+      # would otherwise seed a passwordless admin without complaint.
+      ICEBERG_EBS_DATABASE_URL: "postgresql+asyncpg://${POSTGRES_USER:-iceberg_ebs}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres/${POSTGRES_DB:-iceberg_ebs}"
+      ICEBERG_EBS_ADMIN_USERNAME: "${ICEBERG_EBS_ADMIN_USERNAME:?set ICEBERG_EBS_ADMIN_USERNAME in .env}"
+      ICEBERG_EBS_ADMIN_PASSWORD: "${ICEBERG_EBS_ADMIN_PASSWORD:?set ICEBERG_EBS_ADMIN_PASSWORD in .env}"
+      ICEBERG_EBS_SECRET_KEY: "${ICEBERG_EBS_SECRET_KEY:?set ICEBERG_EBS_SECRET_KEY in .env - generate with 'python -c \"import secrets; print(secrets.token_hex(32))\"'}"
       ICEBERG_EBS_APP_BASE_URL: ${ICEBERG_EBS_APP_BASE_URL:-}
       ICEBERG_EBS_SECURE_COOKIES: "true"
       # Enable the app-side rate limiters (#188, #196): the edge equivalents of the old
@@ -203,7 +212,7 @@ services:
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-iceberg_ebs}
       POSTGRES_DB: ${POSTGRES_DB:-iceberg_ebs}
-      PGPASSWORD: ${POSTGRES_PASSWORD}
+      PGPASSWORD: "${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}"
       BACKUP_RETENTION_DAYS: ${BACKUP_RETENTION_DAYS:-7}
       BACKUP_INTERVAL_SECONDS: ${BACKUP_INTERVAL_SECONDS:-86400}
     # $$ escapes Compose interpolation so the shell (not Compose) expands these vars.

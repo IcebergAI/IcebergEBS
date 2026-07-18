@@ -335,6 +335,49 @@ ICEBERG_EBS_SECRET_KEY=<generate: python -c "import secrets; print(secrets.token
 ICEBERG_EBS_APP_BASE_URL=https://your-domain.example.com
 ```
 
+Every credential above is referenced from `docker-compose.yml` as `${VAR:?message}`, so an unset
+or empty value **aborts `docker compose up`** naming the variable. This is deliberate: Compose
+resolves a bare `${VAR}` to the empty string behind a warning that scrolls past in `up` output,
+and the stack then starts and fails later inside the app as an `asyncpg.InvalidPasswordError` —
+which looks like a code or networking fault rather than a missing variable. `tests/test_compose_secrets.py`
+fails if a credential reference loses its guard. The Helm equivalent is `| required` in
+`templates/secret.yaml`.
+
+Credentials live in `.env` and are referenced **only** from the base compose file.
+`docker-compose.dev.yml` deliberately defines none — it previously hardcoded
+`POSTGRES_PASSWORD: iceberg_ebs`, which meant `make dev` succeeded on a machine where a plain
+`docker compose up` failed with the same `.env`, hiding the misconfiguration behind the dev path.
+
+### Rotating the Postgres password
+
+> **`POSTGRES_PASSWORD` is only read when the data volume is first created.** The image's
+> entrypoint uses it to initialise the data directory; on an existing volume the value is
+> ignored. Editing `.env` alone therefore does **not** change the password — Postgres keeps
+> serving the old one, and you get an `InvalidPasswordError` while looking at a `.env` that
+> appears correct.
+
+Rotate the role itself, then update `.env` to match:
+
+```bash
+# 1. Change the stored password (non-destructive; preserves all data)
+printf "ALTER USER iceberg_ebs WITH PASSWORD '<new>';\n" \
+  | docker exec -i iceberg-ebs-postgres-1 psql -U iceberg_ebs -d iceberg_ebs -v ON_ERROR_STOP=1
+
+# 2. Set POSTGRES_PASSWORD=<new> in .env, then recreate the app so it picks up the new URL
+docker compose up -d
+```
+
+Piping the statement via stdin keeps the password out of the container's `ps` output. The
+alternative — deleting the volume so the entrypoint re-initialises — **destroys all data**; use it
+only on a throwaway dev database.
+
+For host-side work (`uv run pytest`, `uv run alembic`) also set `ICEBERG_EBS_DATABASE_URL` in
+`.env` to the rotated URL on `localhost:5432`. `tests/conftest.py` reads
+`os.environ["ICEBERG_EBS_TEST_DATABASE_URL"]` and otherwise falls back to `settings.database_url`;
+`.env` reaches `Settings` but **not** `os.environ`, so `ICEBERG_EBS_DATABASE_URL` is the key that
+actually takes effect for a bare `pytest` run. Containers are unaffected — the app service sets its
+own URL via `environment:`, and `.env` is excluded from the image by `.dockerignore`.
+
 ### Supported environment variables
 
 The deploy stacks forward the environment variables **listed below** into the app container. This
