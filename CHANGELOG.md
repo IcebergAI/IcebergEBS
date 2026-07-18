@@ -190,6 +190,15 @@ release to diff against.
 
 ### Fixed
 
+- **Proxy `mode` is now constrained to the exact enum, case-insensitively** (#230). The
+  `ProxySettings.mode` CHECK only enforced the EXPLICIT⇒URL rule and was case-sensitive, and
+  `update_settings` compared case-sensitively too — so a writer bypassing the route validator (raw
+  SQL, a migration backfill, or a direct `update_settings({"mode": "explicit"})`) could commit
+  `mode='explicit'` with an empty URL past both guards, which the resolver treats as EXPLICIT-with-
+  no-URL → **direct egress**, the fail-open state the guards exist to prevent. Added a
+  `CHECK (mode IN ('NONE','SYSTEM','EXPLICIT'))` constraint (new migration, with defensive
+  normalisation of any pre-existing bad rows) and made `update_settings` normalise/validate the mode
+  case-insensitively, mirroring the `OIDCSettings.auth_mode` guard (#218).
 - **`ICEBERG_EBS_TRUSTED_ORIGINS` is now configurable in both deploy stacks** (#153). The CSRF
   origin check's trusted-origins setting (#107) — for proxies that rewrite `Host` — was not
   forwarded by the Compose `app.environment` block, had no Helm value/ConfigMap entry, and was

@@ -13,7 +13,7 @@ from pydantic import SecretStr
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from app import proxy
+from app import proxy, proxy_settings
 from app.config import settings
 from app.fetchers.transport import ProxyRoutingTransport, RetryTransport
 from app.models import AlertDestination, ProxySettings, User
@@ -873,4 +873,51 @@ async def test_schema_check_constraint_backstops_invariant(test_db):
         await proxy_settings.get_settings(s)  # seed the singleton
         with pytest.raises(IntegrityError):
             await s.execute(sa_text("UPDATE proxysettings SET mode = 'EXPLICIT', proxy_url = '' WHERE id = 1"))
+        await s.rollback()
+
+
+# ── Mode enum + case-insensitivity (#230) ──────────────────────────────────
+# The mode CHECK was case-sensitive and didn't constrain the enum, and
+# update_settings compared case-sensitively — so a lowercase 'explicit' (from a
+# bypassing writer or a direct update_settings call) could commit an
+# EXPLICIT-with-no-URL row that the resolver treats as direct egress: the exact
+# fail-open state the guards exist to prevent.
+
+
+async def test_update_settings_normalises_lowercase_mode(test_db):
+    async with AsyncSession(test_db) as s:
+        row = await proxy_settings.update_settings(s, {"mode": "explicit", "proxy_url": "http://proxy:3128"})
+    assert row.mode == "EXPLICIT"  # normalised to the canonical spelling, not stored as 'explicit'
+    async with AsyncSession(test_db) as s:
+        assert (await proxy_settings.get_settings(s)).mode == "EXPLICIT"
+
+
+async def test_update_settings_lowercase_explicit_without_url_is_rejected(test_db):
+    """The fail-open case: 'explicit' + empty URL must not slip past the guards into a
+    silently-direct EXPLICIT row — it normalises to EXPLICIT and then hits the URL guard."""
+    async with AsyncSession(test_db) as s:
+        with pytest.raises(ValueError, match="explicit mode requires a proxy URL"):
+            await proxy_settings.update_settings(s, {"mode": "explicit"})
+    async with AsyncSession(test_db) as s:
+        assert (await proxy_settings.get_settings(s)).mode != "EXPLICIT"  # nothing committed
+
+
+async def test_update_settings_rejects_junk_mode(test_db):
+    async with AsyncSession(test_db) as s:
+        with pytest.raises(ValueError, match="invalid proxy mode"):
+            await proxy_settings.update_settings(s, {"mode": "nonsense"})
+    async with AsyncSession(test_db) as s:
+        assert (await proxy_settings.get_settings(s)).mode in ("NONE", "SYSTEM", "EXPLICIT")
+
+
+async def test_schema_check_constraint_blocks_non_enum_mode(test_db):
+    """DB backstop for a writer that bypasses update_settings entirely: the mode enum
+    CHECK rejects a lowercase/junk value at the schema level (#230)."""
+    from sqlalchemy import text as sa_text
+    from sqlalchemy.exc import IntegrityError
+
+    async with AsyncSession(test_db) as s:
+        await proxy_settings.get_settings(s)  # seed the singleton
+        with pytest.raises(IntegrityError):
+            await s.execute(sa_text("UPDATE proxysettings SET mode = 'explicit' WHERE id = 1"))
         await s.rollback()

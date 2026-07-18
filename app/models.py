@@ -227,11 +227,18 @@ class ProxySettings(SQLModel, table=True):
     # seeded from the ICEBERG_EBS_PROXY_* env on first read (app/proxy_settings.py).
     # Holds NO secret — proxy credentials are env-only and injected into the proxy
     # URL at resolution time (app/proxy.py), never persisted here.
-    # The CHECK backstops the EXPLICIT⇒URL invariant at the schema level: EXPLICIT
-    # with an empty URL silently falls back to direct egress (proxy bypass), and
-    # app-level validation alone is one forgotten writer away from that state —
-    # update_settings enforces it under a row lock, the constraint catches the rest.
+    # Two CHECKs backstop the routing invariants at the schema level, because
+    # app-level validation is one forgotten writer (raw SQL, a migration backfill,
+    # a direct update_settings call) away from a silent fail-open to direct egress:
+    #  - mode is constrained to the exact ProxyMode enum (case-sensitive), so a junk
+    #    or lowercase value ('explicit') can't be persisted — the resolver would read
+    #    an unknown mode as SYSTEM and an EXPLICIT-with-no-URL as direct (#230). This
+    #    mirrors the OIDCSettings.auth_mode CHECK added for the same reason (#218).
+    #  - EXPLICIT requires a non-empty proxy_url (EXPLICIT with an empty URL silently
+    #    falls back to direct egress / proxy bypass).
+    # update_settings enforces both under a row lock; the constraints catch the rest.
     __table_args__ = (
+        CheckConstraint("mode IN ('NONE', 'SYSTEM', 'EXPLICIT')", name="ck_proxysettings_mode"),
         CheckConstraint("mode != 'EXPLICIT' OR proxy_url != ''", name="ck_proxysettings_explicit_requires_url"),
     )
 
