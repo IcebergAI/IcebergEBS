@@ -37,19 +37,44 @@ def _seed_mode() -> str:
         return proxy.ProxyMode.SYSTEM.value
 
 
+async def ensure_seeded(session: AsyncSession) -> ProxySettings:
+    """Seed the singleton row from env defaults if missing; return it.
+
+    The single seed path (startup ``refresh_cache``, and ``update_settings`` so it's
+    robust standalone) — seeding no longer lives in the read path, so ``get_settings``
+    can't commit mid-request. Concurrency-safe: two first-readers racing the INSERT
+    both survive — the loser folds the ``IntegrityError`` into a re-read instead of
+    500ing, matching the IntegrityError discipline in ``update_settings``.
+    """
+    row = await session.get(ProxySettings, _SINGLETON_ID)
+    if row is not None:
+        return row
+    row = ProxySettings(
+        id=_SINGLETON_ID,
+        mode=_seed_mode(),
+        proxy_url=settings.proxy_url,
+        no_proxy=settings.proxy_no_proxy,
+    )
+    session.add(row)
+    try:
+        await session.commit()
+    except IntegrityError:
+        await session.rollback()
+        row = await session.get(ProxySettings, _SINGLETON_ID)
+        if row is None:  # a concurrent seed won then vanished — genuinely broken
+            raise
+        return row
+    await session.refresh(row)
+    return row
+
+
 async def get_settings(session: AsyncSession) -> ProxySettings:
-    """Return the singleton row, seeding it from env defaults on first read."""
+    """Return the singleton row. Read-only: it's seeded at startup by ``refresh_cache``
+    (and by ``update_settings``), so this never commits — a commit here would expire
+    every instance loaded in the request session, e.g. the admin page's current_user."""
     row = await session.get(ProxySettings, _SINGLETON_ID)
     if row is None:
-        row = ProxySettings(
-            id=_SINGLETON_ID,
-            mode=_seed_mode(),
-            proxy_url=settings.proxy_url,
-            no_proxy=settings.proxy_no_proxy,
-        )
-        session.add(row)
-        await session.commit()
-        await session.refresh(row)
+        raise RuntimeError("ProxySettings singleton missing — ensure_seeded must run at startup")
     return row
 
 
@@ -68,7 +93,7 @@ async def update_settings(session: AsyncSession, changes: dict[str, Any]) -> Pro
     any writer that bypasses this function; a constraint rejection is folded
     into the same error path. Raises ``ValueError`` on violation.
     """
-    await get_settings(session)  # ensure the singleton exists (seeds on first read)
+    await ensure_seeded(session)  # guarantee the singleton exists before locking it
     row = await session.get(ProxySettings, _SINGLETON_ID, with_for_update=True, populate_existing=True)
     if row is None:  # just seeded above and never deleted — unreachable in practice
         raise RuntimeError("ProxySettings singleton row missing")
@@ -93,6 +118,6 @@ async def update_settings(session: AsyncSession, changes: dict[str, Any]) -> Pro
 
 
 async def refresh_cache(session: AsyncSession) -> None:
-    """Load the singleton row into the in-memory snapshot (startup)."""
-    row = await get_settings(session)
+    """Seed (if missing) and load the singleton row into the in-memory snapshot (startup)."""
+    row = await ensure_seeded(session)
     proxy.set_config(_to_config(row))

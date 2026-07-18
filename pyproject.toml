@@ -119,10 +119,9 @@ module = [
     "app.retention",
     "app.database",
     "app.fetchers.*",
-    # ORM-touching SSO modules (#32); the pure OIDC core (app.oidc.base/config +
-    # the adapters) stays type-checked.
+    # ORM-touching SSO module (#32); the pure OIDC core (app.oidc.base/config +
+    # the adapters) and the settings mirror (app.oidc_settings, #234) stay type-checked.
     "app.oidc.service",
-    "app.oidc_settings",
 ]
 ignore_errors = true
 

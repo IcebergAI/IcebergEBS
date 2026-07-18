@@ -15,6 +15,7 @@ would otherwise fail open to... nothing — no working login path at all).
 
 from typing import Any
 
+from sqlalchemy.exc import IntegrityError
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.models import OIDCSettings, _utcnow
@@ -44,16 +45,41 @@ def _to_config(row: OIDCSettings) -> OIDCRuntimeConfig:
     return OIDCRuntimeConfig(**{f: getattr(row, f) for f in EDITABLE_FIELDS})
 
 
+async def ensure_seeded(session: AsyncSession) -> OIDCSettings:
+    """Seed the singleton row from the (validated) env if missing; return it.
+
+    The single seed path (startup ``refresh_cache``, and ``update_settings`` so it's
+    robust standalone) — seeding no longer lives in the read path, so ``get_settings``
+    can't commit mid-request. Concurrency-safe: two first-readers racing the INSERT
+    both survive — the loser folds the ``IntegrityError`` into a re-read instead of
+    500ing, matching ``update_settings``' IntegrityError discipline.
+    """
+    row = await session.get(OIDCSettings, _SINGLETON_ID)
+    if row is not None:
+        return row
+    candidate = env_config()
+    validate_config(candidate)
+    row = OIDCSettings(id=_SINGLETON_ID, **{f: getattr(candidate, f) for f in EDITABLE_FIELDS})
+    session.add(row)
+    try:
+        await session.commit()
+    except IntegrityError:
+        await session.rollback()
+        seeded = await session.get(OIDCSettings, _SINGLETON_ID)
+        if seeded is None:  # a concurrent seed won then vanished — genuinely broken
+            raise
+        return seeded
+    await session.refresh(row)
+    return row
+
+
 async def get_settings(session: AsyncSession) -> OIDCSettings:
-    """Return the singleton row, seeding it from the (validated) env on first read."""
+    """Return the singleton row. Read-only: it's seeded at startup by ``refresh_cache``
+    (and by ``update_settings``), so this never commits — a commit here would expire
+    every instance loaded in the request session, e.g. the admin page's current_user."""
     row = await session.get(OIDCSettings, _SINGLETON_ID)
     if row is None:
-        candidate = env_config()
-        validate_config(candidate)
-        row = OIDCSettings(id=_SINGLETON_ID, **{f: getattr(candidate, f) for f in EDITABLE_FIELDS})
-        session.add(row)
-        await session.commit()
-        await session.refresh(row)
+        raise RuntimeError("OIDCSettings singleton missing — ensure_seeded must run at startup")
     return row
 
 
@@ -69,7 +95,7 @@ async def update_settings(session: AsyncSession, changes: dict[str, Any]) -> OID
     writer that queued behind the lock would validate stale pre-commit state.
     Raises ``ValueError`` on an invalid result.
     """
-    await get_settings(session)  # ensure the singleton exists (seeds on first read)
+    await ensure_seeded(session)  # guarantee the singleton exists before locking it
     row = await session.get(OIDCSettings, _SINGLETON_ID, with_for_update=True, populate_existing=True)
     if row is None:  # just seeded above and never deleted — unreachable in practice
         raise RuntimeError("OIDCSettings singleton row missing")
@@ -93,7 +119,15 @@ async def update_settings(session: AsyncSession, changes: dict[str, Any]) -> OID
         setattr(row, f, getattr(candidate, f))
     row.updated_at = _utcnow()
     session.add(row)
-    await session.commit()
+    try:
+        await session.commit()
+    except IntegrityError as exc:
+        # A schema CHECK fired (junk auth_mode / oidc-only with no provider). Only
+        # reachable by a writer racing outside this function's validate+lock
+        # discipline; fold it into the same ValueError the route maps to 422, mirroring
+        # proxy_settings rather than surfacing a raw 500.
+        await session.rollback()
+        raise ValueError("invalid OIDC configuration") from exc
     await session.refresh(row)
     set_config(_to_config(row))
     # Deferred import: app/oidc/service.py reads get_config() from this module.
@@ -104,8 +138,9 @@ async def update_settings(session: AsyncSession, changes: dict[str, Any]) -> OID
 
 
 async def refresh_cache(session: AsyncSession) -> None:
-    """Load + validate the stored config into the snapshot (startup, fail-closed)."""
-    row = await get_settings(session)
+    """Seed (if missing), then load + validate the stored config into the snapshot
+    (startup, fail-closed)."""
+    row = await ensure_seeded(session)
     config = _to_config(row)
     validate_config(config)
     set_config(config)
