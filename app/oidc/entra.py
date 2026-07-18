@@ -52,13 +52,11 @@ class EntraAdapter:
                 "assigned groups (Token configuration -> Groups -> 'Groups "
                 "assigned to the application') to stay under the overage limit"
             )
-        display_name = str(claims.get("name") or email)
         return OIDCIdentity(
             issuer=issuer,
             subject=subject,
             email=email,
             email_verified=email_verified,
-            display_name=display_name,
             groups=_groups_from(claims, role_claim),
             tenant_id=tenant_id,
         )

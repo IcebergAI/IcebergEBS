@@ -174,21 +174,21 @@ def map_is_admin(cfg: OIDCProviderConfig, identity: OIDCIdentity) -> bool:
     return any(cfg.role_map.get(group) == "admin" for group in identity.groups)
 
 
-def _subject_hash(cfg: OIDCProviderConfig, identity: OIDCIdentity) -> str:
+def _subject_hash(identity: OIDCIdentity) -> str:
     """Full hex digest of the immutable (issuer, subject) identity."""
     return hashlib.sha256(f"{identity.issuer}:{identity.subject}".encode()).hexdigest()
 
 
-def _derive_username(email: str, cfg: OIDCProviderConfig, identity: OIDCIdentity, width: int = 8) -> str:
+def _derive_username(email: str, identity: OIDCIdentity, width: int = 8) -> str:
     """Deterministic fallback username when the email is taken as a username.
 
     Only reachable when a *different* account's username equals this identity's
     email (email collisions are denied outright before this). Suffix with a hash
-    of the immutable (provider, subject) pair so retries resolve to the same name;
+    of the immutable (issuer, subject) pair so retries resolve to the same name;
     ``width`` widens the suffix if even the derived name is already taken, so a
     pre-existing squatter of the derived name can't permanently dead-end the login.
     """
-    return f"{email[:140]}-{_subject_hash(cfg, identity)[:width]}"
+    return f"{email[:140]}-{_subject_hash(identity)[:width]}"
 
 
 async def _sync_returning_user(
@@ -372,7 +372,7 @@ async def provision_oidc_user(
     if (await session.exec(select(User).where(User.username == username))).first() is not None:
         # A local account whose username happens to be this email (with a
         # different/absent email of its own — same-email rows were denied above).
-        username = _derive_username(normalized_email, cfg, identity)
+        username = _derive_username(normalized_email, identity)
     user = User(
         username=username,
         password_hash=None,
@@ -410,7 +410,7 @@ async def provision_oidc_user(
             raise OIDCProvisionError("account linking required") from None
         # Pure username collision — retry once with a wider, still-deterministic
         # suffix so a pre-existing squatter of the short form can't dead-end login.
-        user.username = _derive_username(normalized_email, cfg, identity, width=32)
+        user.username = _derive_username(normalized_email, identity, width=32)
         session.add(user)
         try:
             await session.commit()

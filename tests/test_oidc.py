@@ -41,7 +41,6 @@ def _identity(**overrides) -> OIDCIdentity:
         "subject": "sub-1",
         "email": "new@sso.test",
         "email_verified": True,
-        "display_name": "New User",
         "groups": [],
     }
     base.update(overrides)
@@ -301,6 +300,107 @@ async def test_username_collision_gets_deterministic_suffix(session):
     assert again.id == user.id
 
 
+# --------------------------------------------------------------------------- #
+# IntegrityError recovery branch (the #218 review's concurrency handling, #235)
+# --------------------------------------------------------------------------- #
+
+
+async def test_recovery_returns_existing_on_concurrent_same_identity(session, monkeypatch):
+    # Models a concurrent callback that JIT-created THIS identity between our initial
+    # miss and our insert: the insert hits uq_user_issuer_subject, and the post-rollback
+    # re-match must resolve to that row rather than error.
+    existing = User(
+        username="taken@sso.test",
+        password_hash=None,
+        email="taken@sso.test",
+        auth_provider="authentik",
+        oidc_issuer="https://idp.test/",
+        oidc_subject="sub-race",
+    )
+    session.add(existing)
+    await session.commit()
+    await session.refresh(existing)
+    existing_id = existing.id
+
+    real_match = oidc_service._match_identity
+    calls = {"n": 0}
+
+    async def fake_match(session, identity, *, provider, lock):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return None  # the race window: the row isn't visible at our first check
+        return await real_match(session, identity, provider=provider, lock=lock)
+
+    monkeypatch.setattr(oidc_service, "_match_identity", fake_match)
+
+    user, created = await provision_oidc_user(
+        session, cfg=_cfg(), identity=_identity(subject="sub-race", email="other@sso.test")
+    )
+    assert created is False
+    assert user.id == existing_id
+
+
+async def test_recovery_denies_email_won_by_concurrent_identity(session, monkeypatch):
+    # A different SSO identity wins the same email between our pre-check and our insert:
+    # uq_user_sso_email fires, and the recovery path must re-deny (case b) rather than
+    # blindly retry the username and duplicate the address.
+    owner = User(
+        username="owner@sso.test",
+        password_hash=None,
+        email="shared@sso.test",
+        auth_provider="okta",
+        oidc_issuer="https://okta.test/",
+        oidc_subject="owner-sub",
+    )
+    session.add(owner)
+    await session.commit()
+
+    real_email_owner = oidc_service._email_owner
+    calls = {"n": 0}
+
+    async def fake_email_owner(session, normalized_email):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return None  # pre-insert check misses the concurrent winner
+        return await real_email_owner(session, normalized_email)
+
+    monkeypatch.setattr(oidc_service, "_email_owner", fake_email_owner)
+
+    with pytest.raises(oidc_service.OIDCProvisionError) as exc:
+        await provision_oidc_user(session, cfg=_cfg(), identity=_identity(subject="new-sub", email="shared@sso.test"))
+    assert exc.value.reason == "account linking required"
+
+
+async def test_recovery_widens_username_suffix_on_collision(session):
+    # Both the email-as-username AND the width-8 derived name are taken, so the first
+    # insert collides on username and the recovery retries with the width-32 suffix.
+    identity = _identity()
+    short = oidc_service._derive_username("new@sso.test", identity)  # width 8
+    session.add(User(username="new@sso.test", password_hash="x", email=None))
+    session.add(User(username=short, password_hash="x", email=None))
+    await session.commit()
+
+    user, created = await provision_oidc_user(session, cfg=_cfg(), identity=identity)
+    assert created is True
+    assert user.username == oidc_service._derive_username("new@sso.test", identity, width=32)
+    assert len(user.username.split("-")[-1]) == 32
+
+
+async def test_recovery_gives_up_with_provisioning_conflict(session):
+    # Email-as-username, width-8, AND width-32 derived names are all taken — the retry
+    # collides a second time and the login is refused with "provisioning conflict".
+    identity = _identity()
+    short = oidc_service._derive_username("new@sso.test", identity)
+    wide = oidc_service._derive_username("new@sso.test", identity, width=32)
+    for name in ("new@sso.test", short, wide):
+        session.add(User(username=name, password_hash="x", email=None))
+    await session.commit()
+
+    with pytest.raises(oidc_service.OIDCProvisionError) as exc:
+        await provision_oidc_user(session, cfg=_cfg(), identity=identity)
+    assert exc.value.reason == "provisioning conflict"
+
+
 async def test_tenant_backfill_and_conflict(session):
     entra_cfg = replace(_cfg(), key="entra", display_name="Entra")
     user, _ = await provision_oidc_user(session, cfg=entra_cfg, identity=_identity(tenant_id=None))
@@ -554,7 +654,6 @@ def test_standard_adapters_share_claim_mapping(key):
     assert identity.subject == "s"
     assert identity.email == "e@x.test"
     assert identity.email_verified is True
-    assert identity.display_name == "N"
     assert identity.groups == ["g1", "g2"]
 
 
@@ -642,6 +741,42 @@ def test_validate_config_rejects_url_shaped_domain(monkeypatch):
     )
     with pytest.raises(ValueError, match="auth0 domain must be a bare hostname"):
         validate_config(cfg)
+
+
+@pytest.mark.parametrize(
+    "value,ok",
+    [
+        ("tenant.eu.auth0.com", True),
+        ("org.okta.com", True),
+        ("my-org.okta.com", True),  # hyphen mid-label is valid
+        ("bücher.example", True),  # IDNA — judged on its punycode labels
+        ("", False),
+        ("https://tenant.auth0.com", False),  # scheme
+        ("tenant.auth0.com/path", False),  # path
+        ("tenant.auth0.com#frag", False),  # fragment
+        ("tenant.auth0.com?q=1", False),  # query
+        ("user@evil.com", False),  # userinfo — the metadata URL would target evil.com
+        ("tenant.auth0.com:8443", False),  # port
+        ("tenant.auth0.com ", False),  # trailing whitespace
+        # Non-hostnames the old metacharacter blocklist let through (bot #243 review):
+        (".", False),
+        ("-", False),
+        ("okta", False),  # single label — no TLD
+        ("foo..bar", False),  # empty label
+        ("foo-.bar", False),  # trailing hyphen in a label
+        ("-foo.bar", False),  # leading hyphen in a label
+        ("_foo.example", False),  # underscore is not a DNS-label char
+        ("foo%2fbar.com", False),  # percent-encoding is not decoded to a real host
+        ("a" * 64 + ".com", False),  # label over 63 chars
+        # A short Unicode input whose IDNA/punycode expansion exceeds the 253-char DNS
+        # limit — the length check must run on the ENCODED host, not the input (#243).
+        (".".join(["é" * 22] * 9), False),
+    ],
+)
+def test_valid_domain_rejects_metacharacters(value, ok):
+    from app.oidc.config import _valid_domain
+
+    assert _valid_domain(value) is ok
 
 
 def test_validate_config_requires_env_secret(monkeypatch):

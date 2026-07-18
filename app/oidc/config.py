@@ -11,6 +11,7 @@ building a provider config or reporting set/unset status.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from urllib.parse import urlsplit
 
@@ -224,9 +225,38 @@ def _valid_absolute_url(value: str) -> bool:
     return parsed.scheme in {"http", "https"} and bool(parsed.hostname)
 
 
+# One DNS label: 1–63 chars, ASCII letters/digits/hyphen, no leading/trailing hyphen.
+_DNS_LABEL = re.compile(r"(?!-)[A-Za-z0-9-]{1,63}(?<!-)$")
+
+
 def _valid_domain(value: str) -> bool:
-    """A bare hostname — no scheme, no path (the auth0/okta domain fields)."""
-    return "://" not in value and "/" not in value and bool(urlsplit(f"https://{value}").hostname)
+    """A syntactically valid DNS hostname (the auth0/okta domain fields).
+
+    Not a security boundary (admin input), but a malformed value here builds a
+    garbage metadata URL that only fails at first login — the "persist a malformed
+    value, fail later" case the caller's comment says this check prevents. So this
+    validates the hostname grammar directly rather than just excluding a few
+    metacharacters: at least two dot-separated labels (a public IdP domain always
+    has a TLD), each a valid DNS label. Unicode is IDNA-encoded to its punycode
+    form first, so an internationalized domain is judged on the labels actually put
+    on the wire. Everything the old scheme/path/port/userinfo checks caught is a
+    subset (those characters aren't valid in a label), plus `.`, `-`, `foo..bar`,
+    `_foo.example`, and similar non-hostnames the metacharacter list let through.
+    """
+    if not value or any(c.isspace() for c in value):
+        return False
+    try:
+        # ToASCII per label: normalises Unicode, and rejects empty/over-long labels.
+        ascii_value = value.encode("idna").decode("ascii")
+    except (UnicodeError, ValueError):
+        return False
+    # The 253-char total-length limit is checked on the ENCODED hostname: IDNA
+    # expansion (é → xn--…) can push a short Unicode input past the DNS limit on the
+    # wire, so checking the input length would let an overlong host through (#243).
+    if len(ascii_value) > 253:
+        return False
+    labels = ascii_value.split(".")
+    return len(labels) >= 2 and all(_DNS_LABEL.match(label) for label in labels)
 
 
 def _validate_role_map(provider: str, raw: str) -> None:
