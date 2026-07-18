@@ -22,10 +22,9 @@ import json
 import logging
 import os
 import time
-from datetime import datetime, timezone
 from pathlib import Path
 
-import requests
+import httpx
 
 logging.basicConfig(
     level=logging.INFO,
@@ -121,7 +120,7 @@ def save_state(state: dict) -> None:
 
 class IcebergEBSClient:
     def __init__(self) -> None:
-        self._session = requests.Session()
+        self._session = httpx.Client()
         self._session.headers["User-Agent"] = "icebergebs-alert-ingest/1.0"
         self._authenticated = False
 
@@ -129,7 +128,7 @@ class IcebergEBSClient:
         resp = self._session.post(
             f"{ICEBERG_EBS_URL}/login",
             data={"username": ICEBERG_EBS_USERNAME, "password": ICEBERG_EBS_PASSWORD},
-            allow_redirects=False,
+            follow_redirects=False,
             timeout=15,
         )
         # A successful login redirects to /; a failed login stays on /login.
@@ -173,7 +172,10 @@ class IcebergEBSClient:
 def poll(client: IcebergEBSClient, state: dict) -> None:
     try:
         alerts = client.fetch_alerts()
-    except requests.RequestException as exc:
+    except (httpx.HTTPError, json.JSONDecodeError) as exc:
+        # httpx.Response.json() raises json.JSONDecodeError (NOT an httpx.HTTPError)
+        # on a malformed/non-JSON 2xx body — catch it too so a bad response logs and
+        # retries on the next poll instead of terminating this long-running process.
         log.warning("Failed to fetch alerts: %s", exc)
         return
 
