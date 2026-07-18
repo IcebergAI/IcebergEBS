@@ -8,13 +8,14 @@ document.addEventListener('alpine:init', () => {
     loading: false,
     error: '',
     summary: null,
-    done: 0,
     total: 0,
     get lineCount() {
       return this.text.split('\n').map(l => l.trim()).filter(l => l && !l.startsWith('#')).length;
     },
     get progressLabel() {
-      return `Importing… (${this.done}/${this.total})`;
+      // One atomic POST — there's no per-item progress to report, so state what's
+      // being imported rather than a fake done/total counter that jumps 0→N (#237).
+      return `Importing ${this.total} extension${this.total === 1 ? '' : 's'}…`;
     },
     get lineCountLabel() {
       return `${this.lineCount} line${this.lineCount === 1 ? '' : 's'}`;
@@ -35,7 +36,6 @@ document.addEventListener('alpine:init', () => {
       if (lines > 100) { this.error = `Too many — max 100 per import (got ${lines})`; return; }
       this.loading = true;
       this.total = lines;
-      this.done = 0;
       try {
         const r = await fetch('/api/extensions/bulk', {
           method: 'POST',
@@ -46,7 +46,7 @@ document.addEventListener('alpine:init', () => {
         if (r.ok) this.summary = data;
         else this.error = data.detail || 'Import failed';
       } catch { this.error = 'Network error'; }
-      finally { this.loading = false; this.done = this.total; }
+      finally { this.loading = false; }
     },
   }));
 });

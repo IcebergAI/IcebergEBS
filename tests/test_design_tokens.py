@@ -14,6 +14,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]
 TEMPLATE_DIR = REPO / "app" / "templates"
 JS_DIR = REPO / "static" / "js"
+CSS_DIR = REPO / "static" / "css"
 
 _LEGACY_TOKEN = re.compile(r"var\(--(?:ink-[0-8]|accent-bg)\)")
 
@@ -22,10 +23,19 @@ def _first_party_js() -> list[Path]:
     return [p for p in sorted(JS_DIR.rglob("*.js")) if "vendor" not in p.parts]
 
 
-def test_no_legacy_tokens_in_templates_or_js() -> None:
+def _source_css() -> list[Path]:
+    # output.css is the gitignored Tailwind build artifact (may be absent in a clean
+    # checkout, and is generated, not authored) — scan only hand-authored source CSS.
+    return [p for p in sorted(CSS_DIR.glob("*.css")) if p.name != "output.css"]
+
+
+def test_no_legacy_tokens_in_templates_js_or_css() -> None:
+    # Includes the CSS (#237): a reintroduced var(--ink-3) or a resurrected alias bridge
+    # in app.css/iceberg.css would otherwise pass CI, contradicting frontend.md's claim
+    # that this test guards the #212 sweep.
     offenders = [
         f"{path.relative_to(REPO)}:{lineno}: {line.strip()[:120]}"
-        for path in [*sorted(TEMPLATE_DIR.glob("*.html")), *_first_party_js()]
+        for path in [*sorted(TEMPLATE_DIR.glob("*.html")), *_first_party_js(), *_source_css()]
         for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1)
         if _LEGACY_TOKEN.search(line)
     ]

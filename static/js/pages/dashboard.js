@@ -7,6 +7,7 @@
 document.addEventListener('alpine:init', () => {
   Alpine.data('dashboardData', () => ({
     extensions: readJSON('dashboard-data') || [],
+    error: '',
     scoreText(ext) {
       return ext.risk_score == null ? '—' : String(ext.risk_score);
     },
@@ -22,9 +23,15 @@ document.addEventListener('alpine:init', () => {
     openExt(ext) {
       window.location = '/extensions/' + ext.id;
     },
-    refreshExt(id) {
-      fetch('/api/extensions/' + id + '/refresh', { method: 'POST' })
-        .then(r => r.ok ? location.reload() : alert('Refresh failed'));
+    async refreshExt(id) {
+      this.error = '';
+      try {
+        const r = await fetch('/api/extensions/' + id + '/refresh', { method: 'POST' });
+        if (r.ok) { location.reload(); return; }
+        this.error = 'Refresh failed. Please try again.';
+      } catch {
+        this.error = 'Network error — could not reach the server.';
+      }
     },
   }));
 });

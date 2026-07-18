@@ -78,8 +78,8 @@ engine: AsyncEngine = create_async_engine(
 No third-party origin is contacted at runtime (`tests/test_no_third_party_origins.py` enforces it): the old Tailwind Play CDN, jsDelivr Alpine and Google Fonts dependencies are gone.
 
 - **Tailwind v4** is compiled by the standalone CLI from `static/css/input.css` into `static/css/output.css`. `output.css` is a **gitignored build artifact**: images build it in the Dockerfile `tailwind-builder` stage, which downloads the CLI straight from the tagged GitHub release and **verifies its sha256** before running it (nothing floating executes in the image build); local checkouts build it with `make css` (via `pytailwindcss`, a locked `dev`-group dependency; `make dev` runs it automatically). **A bare source-checkout deploy (uvicorn straight from `git pull`) must run `make css` after every pull** or `/static/css/output.css` 404s. The CLI version is pinned via `TAILWINDCSS_VERSION` in the Makefile and ci.yml and by the checksum table in the Dockerfile — bump together.
-- **Alpine.js** is vendored and version-pinned at `static/js/vendor/alpine-3.15.12.min.js`.
-- **Fonts** (IBM Plex Sans/Mono woff2) are served from `static/fonts/` via `static/css/fonts.css`.
+- **Alpine.js** is vendored and version-pinned at `static/js/vendor/alpine-csp-3.15.12.min.js` (the `@alpinejs/csp` build — #106).
+- **Fonts** (Archivo, JetBrains Mono, Spectral woff2 — the IcebergAI house set, #105) are served from `static/fonts/` via `static/css/fonts.css`.
 
 There are **no inline scripts** (#106): the theme/anti-flash bootstrap is the external `static/js/theme-boot.js`, loaded synchronously at the top of `<head>` so it still runs before first paint, and Alpine is the `@alpinejs/csp` build with all components registered from same-origin files (`static/js/app.js` + `static/js/pages/`). `tests/test_csp_strict.py` fails CI if an inline `<script>` or `on*=` handler reappears.
 

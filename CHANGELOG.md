@@ -104,6 +104,9 @@ release to diff against.
   attributes left from the pre-house design are swept to the house token names and the
   `app.css` alias bridge is deleted; `tests/test_design_tokens.py` guards against legacy
   tokens or stray oklch severity literals reappearing in templates/JS.
+- **Account menu moved to the rail foot; `/` focuses search** (#223): the user/theme menu
+  relocated from the topbar to the bottom of the left rail, and pressing `/` (outside a text
+  field) jumps to the topbar search box, with a `/` hint chip shown in it.
 - **Adopted the IcebergAI house design system** (#105): the shared family token sheet
   (`static/css/iceberg.css` — cool blue-grey oklch palette, fixed glacial-cyan accent, dark
   `.rail` / light `.workspace` / `.brandbar` shell) replaces the bespoke "Refined Operator"
@@ -198,6 +201,10 @@ release to diff against.
 
 ### Fixed
 
+- **Frontend polish** (#237): the `/` search shortcut no longer fires on a modifier combo
+  (Ctrl/Cmd/Alt+`/`) or mid-IME-composition; the dashboard's per-row **Refresh** reports a
+  failure inline instead of an unhandled promise rejection + `alert()`; and the bulk-import
+  button shows an honest "Importing N…" label instead of a fake `0/N` progress counter.
 - **Proxy `mode` is now constrained to the exact enum, case-insensitively** (#230). The
   `ProxySettings.mode` CHECK only enforced the EXPLICIT⇒URL rule and was case-sensitive, and
   `update_settings` compared case-sensitively too — so a writer bypassing the route validator (raw

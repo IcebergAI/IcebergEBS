@@ -62,9 +62,9 @@ function ebsCurrentTheme() {
 // ── Shell components ─────────────────────────────────────────────────────
 
 document.addEventListener('alpine:init', () => {
-  // Topbar user menu + theme picker (base.html). Formerly an inline x-data
-  // object literal with an inline @click writing localStorage — both are
-  // incompatible with the CSP build.
+  // Rail-foot user menu + theme picker (base.html — moved from the topbar in #223).
+  // Formerly an inline x-data object literal with an inline @click writing
+  // localStorage — both are incompatible with the CSP build.
   Alpine.data('userMenu', () => ({
     open: false,
     theme: ebsCurrentTheme(),
