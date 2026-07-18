@@ -228,7 +228,10 @@ def _build_iris_payload(alert: dict) -> dict:
 def poll(ebs: IcebergEBSClient, iris: IrisClient, state: dict) -> None:
     try:
         alerts = ebs.fetch_alerts()
-    except httpx.HTTPError as exc:
+    except (httpx.HTTPError, json.JSONDecodeError) as exc:
+        # httpx.Response.json() raises json.JSONDecodeError (NOT an httpx.HTTPError)
+        # on a malformed/non-JSON 2xx body — catch it too so a bad response logs and
+        # retries on the next poll instead of terminating this long-running process.
         log.warning("Failed to fetch IcebergEBS alerts: %s", exc)
         return
 

@@ -172,7 +172,10 @@ class IcebergEBSClient:
 def poll(client: IcebergEBSClient, state: dict) -> None:
     try:
         alerts = client.fetch_alerts()
-    except httpx.HTTPError as exc:
+    except (httpx.HTTPError, json.JSONDecodeError) as exc:
+        # httpx.Response.json() raises json.JSONDecodeError (NOT an httpx.HTTPError)
+        # on a malformed/non-JSON 2xx body — catch it too so a bad response logs and
+        # retries on the next poll instead of terminating this long-running process.
         log.warning("Failed to fetch alerts: %s", exc)
         return
 
