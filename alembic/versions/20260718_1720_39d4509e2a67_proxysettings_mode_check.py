@@ -23,17 +23,25 @@ def upgrade() -> None:
     #
     # Normalise existing data first, because the whole point of this CHECK is that a
     # writer bypassing the app layer (raw SQL, a direct update_settings before #230)
-    # may already have persisted a lowercase/junk mode:
-    #   1. uppercase + trim, so 'explicit'/' SYSTEM ' become canonical;
-    #   2. coerce anything still outside the enum to SYSTEM (the seed default, matching
-    #      resolve_proxy_url's fallback for an unknown mode);
-    #   3. coerce a pre-existing EXPLICIT-with-empty-URL — the fail-open state — to
-    #      SYSTEM so the existing ck_proxysettings_explicit_requires_url still holds
-    #      after step 1 turned a lowercase 'explicit' into 'EXPLICIT'.
-    op.execute("UPDATE proxysettings SET mode = UPPER(TRIM(mode))")
-    op.execute("UPDATE proxysettings SET mode = 'SYSTEM' WHERE mode NOT IN ('NONE', 'SYSTEM', 'EXPLICIT')")
+    # may already have persisted a lowercase/junk mode. This MUST be a single atomic
+    # UPDATE with a CASE, not a sequence of statements: canonicalising case first
+    # (`'explicit'` → `'EXPLICIT'`) on a legacy EXPLICIT-with-empty-URL row would write
+    # an intermediate value the existing ck_proxysettings_explicit_requires_url rejects
+    # mid-statement, aborting the migration before any repair could run (#230 review).
+    # The CASE computes each row's final, always-valid value in one write:
+    #   - uppercase + trim so 'explicit' / ' SYSTEM ' become canonical;
+    #   - a value still outside the enum → SYSTEM (the seed default, matching
+    #     resolve_proxy_url's fallback for an unknown mode);
+    #   - a would-be EXPLICIT with an empty proxy_url (the fail-open state) → SYSTEM,
+    #     so the EXPLICIT⇒URL constraint holds against the written value.
     op.execute(
-        "UPDATE proxysettings SET mode = 'SYSTEM' WHERE mode = 'EXPLICIT' AND COALESCE(TRIM(proxy_url), '') = ''"
+        """
+        UPDATE proxysettings SET mode = CASE
+            WHEN UPPER(TRIM(mode)) NOT IN ('NONE', 'SYSTEM', 'EXPLICIT') THEN 'SYSTEM'
+            WHEN UPPER(TRIM(mode)) = 'EXPLICIT' AND COALESCE(TRIM(proxy_url), '') = '' THEN 'SYSTEM'
+            ELSE UPPER(TRIM(mode))
+        END
+        """
     )
     op.create_check_constraint("ck_proxysettings_mode", "proxysettings", "mode IN ('NONE', 'SYSTEM', 'EXPLICIT')")
 
