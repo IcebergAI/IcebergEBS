@@ -35,6 +35,7 @@ dependencies = [
     # JWKS fetch and ID-token validation; the per-provider adapters live in
     # app/oidc/. Same floor as the sibling deep_thought project.
     "authlib>=1.6",
+    "tldextract>=5.3.1",
 ]
 
 [project.urls]

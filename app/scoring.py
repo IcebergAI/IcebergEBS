@@ -15,6 +15,7 @@ from app.permissions import (
 from app.permissions import (
     MEDIUM_PERMISSIONS as _MEDIUM_PERMISSIONS,
 )
+from app.utils import registrable_domain
 
 _FINDING_WEIGHTS = {
     "critical": 6,
@@ -128,7 +129,12 @@ def score_external_domains(analysis: PackageAnalysis | None) -> int:
     if analysis is None:
         return 5  # midpoint when package unavailable
 
-    count = len(analysis.external_domains)
+    # Count distinct registrable domains (eTLD+1), not raw hostnames: the signal
+    # is "how many third parties does this extension talk to", and a single party
+    # spraying subdomains (api./cdn./ws.evil.com) must not outscore six genuinely
+    # unrelated sites. Stored external_domains keep the full hostnames for
+    # display/threat-intel; only the score collapses them.
+    count = len({registrable_domain(d) for d in analysis.external_domains})
     if count == 0:
         return 0
     if count <= 2:

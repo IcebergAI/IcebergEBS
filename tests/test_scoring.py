@@ -258,6 +258,29 @@ def test_domains_no_analysis():
     assert score_external_domains(None) == 5  # midpoint
 
 
+def test_domains_subdomain_spray_counts_as_one_party():
+    # Six hostnames, one registrable domain (eTLD+1): a single party spraying
+    # subdomains must score like one external domain, not six (#254).
+    a = PackageAnalysis(
+        external_domains=[f"{sub}.evil.com" for sub in ("api", "cdn", "ws", "a", "b", "c")],
+    )
+    assert score_external_domains(a) == 3
+
+
+def test_domains_public_suffix_not_collapsed():
+    # co.uk is a public suffix, so these are three distinct registrable domains —
+    # PSL-aware counting must not fold them into "co.uk" (#254).
+    a = PackageAnalysis(external_domains=["one.co.uk", "two.co.uk", "three.co.uk"])
+    assert score_external_domains(a) == 6
+
+
+def test_domains_unknown_suffix_and_ip_fall_back_to_hostname():
+    # No registrable domain derivable (IP literal, single-label host): each entry
+    # still counts as itself rather than being dropped.
+    a = PackageAnalysis(external_domains=["10.1.2.3", "intranet-host"])
+    assert score_external_domains(a) == 3
+
+
 # ---------------------------------------------------------------------------
 # Full compute
 # ---------------------------------------------------------------------------

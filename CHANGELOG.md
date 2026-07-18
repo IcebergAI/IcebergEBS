@@ -81,6 +81,13 @@ release to diff against.
 
 ### Changed
 
+- **External-domain scoring now counts distinct registrable domains (eTLD+1)** via
+  the Public Suffix List (`tldextract`, pinned to its bundled offline snapshot — no
+  network or disk access), not raw hostnames (#254): a single party spraying
+  subdomains (`api.`/`cdn.`/`ws.evil.com`) no longer outscores genuinely unrelated
+  sites. Existing extensions may re-score lower on their next refresh, which can move
+  a `risk_level` band and fire a `risk_level_change` alert once. Stored/displayed
+  domain lists and threat-intel indicators still carry the full hostnames.
 - **Outbound `HTTP(S)_PROXY` env vars are now honoured by default** (#216): the shared
   httpx client previously ignored them entirely (custom transport). The new default
   proxy mode `system` applies them — set `ICEBERG_EBS_PROXY_MODE=none` to keep the old

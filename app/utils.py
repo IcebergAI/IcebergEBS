@@ -2,7 +2,17 @@ import json
 import logging
 from urllib.parse import urlparse
 
+import tldextract
+
 logger = logging.getLogger(__name__)
+
+# Public Suffix List matcher pinned to tldextract's bundled snapshot:
+# suffix_list_urls=() disables the default network fetch of a fresh PSL and
+# cache_dir=None disables its disk cache, so this never touches the network or
+# filesystem — a hard requirement for an SSRF-conscious app whose containers
+# must not grow surprise egress at import time. The snapshot refreshes with the
+# (Dependabot-managed) tldextract release cadence, which is plenty for scoring.
+_psl_extract = tldextract.TLDExtract(suffix_list_urls=(), cache_dir=None)
 
 
 def safe_json_loads(raw: str | None, default: str, field: str, ext_id: int | None):
@@ -45,3 +55,15 @@ def domain_from_url(url: str) -> str:
     except ValueError:
         return ""
     return hostname if "." in hostname else ""
+
+
+def registrable_domain(hostname: str) -> str:
+    """Collapse a hostname to its registrable domain (eTLD+1) via the Public
+    Suffix List: api.evil.com and cdn.evil.com both → evil.com, while
+    foo.co.uk stays foo.co.uk (string logic can't tell co.uk from evil.com).
+
+    Falls back to the hostname itself when the PSL yields no registrable domain
+    (IP literals, single-label hosts, unknown suffixes) so callers never lose an
+    entry by normalising it.
+    """
+    return _psl_extract(hostname).registered_domain or hostname
