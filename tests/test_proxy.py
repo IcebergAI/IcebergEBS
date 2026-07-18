@@ -14,10 +14,10 @@ from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app import proxy
-from app.auth import hash_password
 from app.config import settings
 from app.fetchers.transport import ProxyRoutingTransport, RetryTransport
 from app.models import AlertDestination, ProxySettings, User
+from tests.conftest import cached_password_hash
 
 _ENV_PROXY_VARS = [
     name.upper() if upper else name
@@ -436,7 +436,7 @@ async def test_proxy_api_requires_admin(client, test_db, method, path, body):
     from app.main import app
 
     async with AsyncSession(test_db) as s:
-        s.add(User(username="plainuser", password_hash=await hash_password("pw"), is_admin=False))
+        s.add(User(username="plainuser", password_hash=cached_password_hash("pw"), is_admin=False))
         await s.commit()
 
     async def override_session():

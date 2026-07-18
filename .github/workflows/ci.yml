@@ -15,9 +15,17 @@ on:
 permissions:
   contents: read
 
+# A push supersedes the previous run on the same ref — finishing the old run's
+# six jobs is pure waste, so cancel it. Pushes to main keep running to
+# completion (a cancelled main run would leave a commit with no green record).
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     services:
       postgres:
         image: postgres:18-alpine
@@ -44,10 +52,13 @@ jobs:
         with:
           enable-cache: true
       - run: uv sync --locked
-      - run: uv run pytest -q
+      # --durations keeps the slowest tests visible in the log so a suite-runtime
+      # regression is caught by inspection rather than by the timeout.
+      - run: uv run pytest -q --durations=10
 
   lint:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -77,6 +88,7 @@ jobs:
 
   types:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -92,6 +104,7 @@ jobs:
 
   security:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -116,6 +129,7 @@ jobs:
   # posture (#96) cannot silently regress. Both tools are blocking.
   lint-workflows:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: read
     steps:
@@ -151,6 +165,7 @@ jobs:
   # Python 3.14 pin isn't required just to run a browser against the running stack).
   ui:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     permissions:
       contents: read
     env:
@@ -177,6 +192,16 @@ jobs:
           } > .env
       - name: Start the stack
         run: docker compose up -d --build
+      # Installed while the detached stack is still booting (Postgres init +
+      # migrations + Caddy), so the ~2 min of pip + browser download overlaps the
+      # boot instead of adding to it — the readiness wait below runs after.
+      - name: Install Playwright + Chromium (ephemeral, outside uv.lock)
+        # Pinned to reviewed versions (like uvx vulture@/zizmor@) so the runner
+        # toolchain is reproducible; bump alongside a Chromium refresh.
+        run: |
+          python3 -m venv "${RUNNER_TEMP}/e2e"
+          "${RUNNER_TEMP}/e2e/bin/pip" install --quiet 'pytest==8.3.4' 'pytest-playwright==0.8.0' 'playwright==1.61.0'
+          "${RUNNER_TEMP}/e2e/bin/playwright" install --with-deps chromium
       - name: Wait for the app behind caddy
         run: |
           for _ in $(seq 1 60); do
@@ -186,13 +211,6 @@ jobs:
           echo "stack did not become ready" >&2
           docker compose logs
           exit 1
-      - name: Install Playwright + Chromium (ephemeral, outside uv.lock)
-        # Pinned to reviewed versions (like uvx vulture@/zizmor@) so the runner
-        # toolchain is reproducible; bump alongside a Chromium refresh.
-        run: |
-          python3 -m venv "${RUNNER_TEMP}/e2e"
-          "${RUNNER_TEMP}/e2e/bin/pip" install --quiet 'pytest==8.3.4' 'pytest-playwright==0.8.0' 'playwright==1.61.0'
-          "${RUNNER_TEMP}/e2e/bin/playwright" install --with-deps chromium
       - name: Run UI smoke
         run: |
           "${RUNNER_TEMP}/e2e/bin/pytest" e2e/ -v

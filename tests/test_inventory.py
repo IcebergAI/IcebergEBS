@@ -5,8 +5,8 @@ from unittest.mock import AsyncMock, patch
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from app.auth import hash_password
 from app.models import Extension, InstallObservation, User
+from tests.conftest import cached_password_hash
 from tests.test_api import _fake_metadata, _fake_vsix
 
 
@@ -231,7 +231,7 @@ async def test_inventory_is_user_scoped(client, test_db, admin_user):
     """Inventory enrolls under the caller. An identically-named extension owned by
     another user keeps its own (untouched) footprint."""
     async with AsyncSession(test_db) as s:
-        other = User(username="other", password_hash=await hash_password("x"))
+        other = User(username="other", password_hash=cached_password_hash("x"))
         s.add(other)
         await s.commit()
         await s.refresh(other)

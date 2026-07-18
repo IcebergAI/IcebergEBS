@@ -26,7 +26,7 @@ os.environ.setdefault("ICEBERG_EBS_OIDC_AUTHENTIK_APP_SLUG", "iceberg-ebs")
 os.environ.setdefault("ICEBERG_EBS_OIDC_AUTHENTIK_CLIENT_ID", "test-client-id")
 os.environ.setdefault("ICEBERG_EBS_OIDC_AUTHENTIK_CLIENT_SECRET", "test-client-secret")
 
-from app.auth import create_session_cookie, generate_api_key, hash_api_key, hash_password
+from app.auth import _hash_password_sync, create_session_cookie, generate_api_key, hash_api_key
 from app.config import settings
 from app.database import get_session
 from app.main import app
@@ -80,6 +80,21 @@ def make_fake_crx(manifest: dict | None = None) -> bytes:
             "permissions": ["tabs", "storage"],
         }
     return make_zip({"manifest.json": json.dumps(manifest), "background.js": "console.log('bg');"})
+
+
+# bcrypt at the production work factor (BCRYPT_ROUNDS=12) costs ~250ms of pure CPU
+# per call, and the admin_user fixture runs for most of the suite — re-hashing the
+# same literal password every test dominated runtime. The salt lives inside the
+# hash, so one hash per distinct password is a real production-cost hash that
+# verifies identically everywhere (login tests included).
+_password_hash_cache: dict[str, str] = {}
+
+
+def cached_password_hash(password: str) -> str:
+    """Bcrypt-hash *password* at the production work factor, once per session."""
+    if password not in _password_hash_cache:
+        _password_hash_cache[password] = _hash_password_sync(password)
+    return _password_hash_cache[password]
 
 
 @pytest.fixture(scope="session")
@@ -169,7 +184,7 @@ async def admin_user(test_db) -> User:
     async with AsyncSession(test_db) as s:
         user = User(
             username="testadmin",
-            password_hash=await hash_password("testpass"),
+            password_hash=cached_password_hash("testpass"),
             is_admin=True,
         )
         s.add(user)
