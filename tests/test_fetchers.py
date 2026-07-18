@@ -1,6 +1,5 @@
 import io
 import json
-import zipfile
 
 import httpx
 import pytest
@@ -11,6 +10,7 @@ from app.fetchers.chrome import ChromeFetcher
 from app.fetchers.edge import EdgeFetcher
 from app.fetchers.vscode import VSCodeFetcher
 from app.routes.api import normalise_extension_id
+from tests.conftest import make_zip
 
 # ---------------------------------------------------------------------------
 # URL normalisation
@@ -46,10 +46,7 @@ def test_normalise_edge_url():
 
 
 def _make_zip() -> bytes:
-    buf = io.BytesIO()
-    with zipfile.ZipFile(buf, "w") as zf:
-        zf.writestr("manifest.json", json.dumps({"manifest_version": 3, "name": "T", "version": "1"}))
-    return buf.getvalue()
+    return make_zip({"manifest.json": json.dumps({"manifest_version": 3, "name": "T", "version": "1"})})
 
 
 # ---------------------------------------------------------------------------

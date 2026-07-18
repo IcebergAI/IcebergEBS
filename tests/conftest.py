@@ -37,26 +37,26 @@ from app.models import ApiKey, User
 TEST_DATABASE_URL = os.environ.get("ICEBERG_EBS_TEST_DATABASE_URL", settings.database_url)
 
 
-def make_fake_vsix(manifest: dict | None = None) -> bytes:
-    """Build a minimal .vsix zip for testing."""
-    if manifest is None:
-        manifest = {
-            "name": "test-ext",
-            "displayName": "Test Extension",
-            "version": "1.2.3",
-            "publisher": {"publisherName": "testpublisher", "isDomainVerified": True},
-        }
+def make_zip(files: dict[str, str | bytes]) -> bytes:
+    """Build an in-memory zip from a {name: content} mapping.
+
+    The single fake-package builder for the suite — every VSIX/CRX test payload
+    (here, test_api, test_fetchers, test_inspector) is a thin wrapper over this,
+    so the zip-construction boilerplate lives in one place.
+    """
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w") as zf:
-        pkg = {
-            "name": "test-ext",
-            "version": "1.2.3",
-            "contributes": {},
-        }
-        zf.writestr("extension/package.json", json.dumps(pkg))
-        zf.writestr(
-            "extension/manifest.json",
-            json.dumps(
+        for name, content in files.items():
+            zf.writestr(name, content)
+    return buf.getvalue()
+
+
+def make_fake_vsix() -> bytes:
+    """Build a minimal .vsix zip for testing."""
+    return make_zip(
+        {
+            "extension/package.json": json.dumps({"name": "test-ext", "version": "1.2.3", "contributes": {}}),
+            "extension/manifest.json": json.dumps(
                 {
                     "manifest_version": 3,
                     "name": "Test Extension",
@@ -64,13 +64,14 @@ def make_fake_vsix(manifest: dict | None = None) -> bytes:
                     "permissions": ["storage"],
                 }
             ),
-        )
-        zf.writestr("extension/background.js", 'console.log("hello");')
-    return buf.getvalue()
+            "extension/background.js": 'console.log("hello");',
+        }
+    )
 
 
 def make_fake_crx(manifest: dict | None = None) -> bytes:
-    """Build a fake CRX (just a zip with a PK magic at start)."""
+    """Build a fake CRX (a bare zip — deliberately no CRX header; real
+    CRX-header stripping is exercised separately in test_fetchers)."""
     if manifest is None:
         manifest = {
             "manifest_version": 3,
@@ -78,11 +79,7 @@ def make_fake_crx(manifest: dict | None = None) -> bytes:
             "version": "2.0.0",
             "permissions": ["tabs", "storage"],
         }
-    buf = io.BytesIO()
-    with zipfile.ZipFile(buf, "w") as zf:
-        zf.writestr("manifest.json", json.dumps(manifest))
-        zf.writestr("background.js", "console.log('bg');")
-    return buf.getvalue()
+    return make_zip({"manifest.json": json.dumps(manifest), "background.js": "console.log('bg');"})
 
 
 @pytest.fixture(scope="session")

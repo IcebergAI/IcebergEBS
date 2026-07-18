@@ -1,21 +1,10 @@
-import io
 import json
-import zipfile
 from hashlib import sha256
 
 import pytest
 
 from app.inspector import InspectorError, PackageAnalysis, inspect_package
-
-
-def make_zip(files: dict[str, str | bytes]) -> bytes:
-    buf = io.BytesIO()
-    with zipfile.ZipFile(buf, "w") as zf:
-        for name, content in files.items():
-            if isinstance(content, str):
-                content = content.encode()
-            zf.writestr(name, content)
-    return buf.getvalue()
+from tests.conftest import make_zip
 
 
 def test_basic_manifest_permissions():
