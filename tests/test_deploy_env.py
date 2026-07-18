@@ -18,6 +18,9 @@ _FORWARDED_ENV = [
     "ICEBERG_EBS_FETCH_INTERVAL_MINUTES",
     "ICEBERG_EBS_SESSION_MAX_AGE",
     "ICEBERG_EBS_HTTPX_TIMEOUT",
+    # CSRF trusted origins for Host-rewriting proxies (#107, #153) — silently ignored
+    # before it was forwarded, 403-ing every browser POST including login.
+    "ICEBERG_EBS_TRUSTED_ORIGINS",
     # Rate-limit switches: the edge equivalents of the nginx api/login zones (#188, #196).
     # Login has its own switch so disabling API limiting can't silently drop it.
     "ICEBERG_EBS_API_RATE_LIMIT_ENABLED",
@@ -94,6 +97,7 @@ def test_helm_values_declare_forwarded_settings():
     values = yaml.safe_load((_ROOT / "helm/iceberg-ebs/values.yaml").read_text())
     ie = values["icebergEbs"]
     for key in (
+        "trustedOrigins",
         "retentionDays",
         "fetchIntervalMinutes",
         "sessionMaxAge",

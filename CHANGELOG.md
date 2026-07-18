@@ -190,6 +190,13 @@ release to diff against.
 
 ### Fixed
 
+- **`ICEBERG_EBS_TRUSTED_ORIGINS` is now configurable in both deploy stacks** (#153). The CSRF
+  origin check's trusted-origins setting (#107) — for proxies that rewrite `Host` — was not
+  forwarded by the Compose `app.environment` block, had no Helm value/ConfigMap entry, and was
+  absent from `.env.example`. Since `.env` is excluded from the image, an operator setting it got
+  nothing, and a proxy that rewrites `Host` would 403 every browser POST (including login) with no
+  supported fix. Wired through docker-compose, the Helm ConfigMap + `values.yaml`, and
+  `.env.example` (defaulting empty), guarded by `tests/test_deploy_env.py`.
 - **Following `.env.example` no longer crashes startup** (#214). The shared `.env` that
   `.env.example` tells operators to fill carries the Compose stack's non-prefixed
   `POSTGRES_DB`/`POSTGRES_USER`/`POSTGRES_PASSWORD` keys, which pydantic-settings rejected as
