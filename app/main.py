@@ -12,7 +12,7 @@ from app import oidc_settings, proxy, proxy_settings
 from app.config import settings
 from app.database import init_db
 from app.deps import WebUser
-from app.fetchers.transport import ProxyRoutingTransport, RetryTransport
+from app.fetchers.transport import build_egress_transport
 from app.logging_config import setup_logging
 from app.middleware import CSRFOriginMiddleware
 from app.oidc import service as oidc_service
@@ -62,27 +62,14 @@ async def lifespan(app: FastAPI):
         await oidc_settings.refresh_cache(session)
     oidc_service.register_providers()
 
-    # Bound the outbound connection pool and wrap the transport chain so transient
-    # store failures are retried with backoff instead of permanently failing a
-    # refresh (#108). Limits live on the innermost transports: httpx ignores
-    # AsyncClient(limits=...) when a custom transport is supplied. The routing layer
-    # (#216) picks direct vs proxied per request; retry wraps it so each attempt
-    # re-routes (an admin fixing a broken proxy takes effect mid-backoff, and proxy
-    # connect failures are TransportErrors that get the normal retry/backoff).
-    # Direct + proxied pools each carry `limits`, so the theoretical process-wide
-    # cap is 2x httpx_max_connections; in practice one pool is active per mode.
-    # follow_redirects stays True for store scraping; webhook delivery overrides it
-    # to False per-request in app/webhooks.py.
-    limits = httpx.Limits(
-        max_connections=settings.httpx_max_connections,
-        max_keepalive_connections=settings.httpx_max_keepalive_connections,
-    )
-    transport = RetryTransport(
-        ProxyRoutingTransport(limits=limits),
-        max_retries=settings.httpx_max_retries,
-        backoff_base=settings.httpx_backoff_base,
-        backoff_cap=settings.httpx_backoff_cap,
-    )
+    # The shared retry-over-proxy-routing egress chain (#108/#216), built by the one
+    # factory both this client and OIDC egress use (build_egress_transport, #231).
+    # This client's direct+proxied pools cap at 2× httpx_max_connections; the OIDC
+    # chain (oidc/service.py) adds its own two pools, so the process-wide cap is 4×
+    # (in practice one pool is active per routing mode). follow_redirects stays True
+    # for store scraping; webhook delivery overrides it to False per-request in
+    # app/webhooks.py.
+    transport = build_egress_transport(settings)
     client = httpx.AsyncClient(
         timeout=settings.httpx_timeout,
         headers={"User-Agent": "Mozilla/5.0 (compatible; IcebergEBS/1.0)"},

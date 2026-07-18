@@ -19,7 +19,7 @@ from sqlmodel import func, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.config import settings
-from app.fetchers.transport import ProxyRoutingTransport, RetryTransport
+from app.fetchers.transport import build_egress_transport
 from app.models import User, _utcnow
 from app.oidc import auth0 as _auth0  # noqa: F401 - registers adapter
 from app.oidc import authentik as _authentik  # noqa: F401 - registers adapter
@@ -77,16 +77,10 @@ def _shared_transport() -> httpx.AsyncBaseTransport:
     """
     global _transport_chain
     if _transport_chain is None:
-        limits = httpx.Limits(
-            max_connections=settings.httpx_max_connections,
-            max_keepalive_connections=settings.httpx_max_keepalive_connections,
-        )
-        _transport_chain = RetryTransport(
-            ProxyRoutingTransport(limits=limits),
-            max_retries=settings.httpx_max_retries,
-            backoff_base=settings.httpx_backoff_base,
-            backoff_cap=settings.httpx_backoff_cap,
-        )
+        # Same factory as the main HTTP client (#231) — one egress recipe, so a
+        # retry/limits change can't drift between the two, and OIDC egress is pinned
+        # to the proxy-routing chain by construction (#216).
+        _transport_chain = build_egress_transport(settings)
     return _NonClosingTransport(_transport_chain)
 
 

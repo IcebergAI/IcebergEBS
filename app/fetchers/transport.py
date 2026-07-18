@@ -20,7 +20,7 @@ import email.utils
 import logging
 import random
 from datetime import datetime, timezone
-from typing import Callable, Optional
+from typing import TYPE_CHECKING, Callable, Optional
 
 import httpx
 
@@ -206,3 +206,32 @@ class RetryTransport(httpx.AsyncBaseTransport):
 
     async def aclose(self) -> None:
         await self._inner.aclose()
+
+
+if TYPE_CHECKING:
+    from app.config import Settings
+
+
+def build_egress_transport(settings: "Settings") -> RetryTransport:
+    """The one egress transport recipe: retry over proxy-routing.
+
+    Shared by the main HTTP client (``app/main.py``) and OIDC egress
+    (``app/oidc/service.py``) so a retry/limits/backoff change lands in one place
+    instead of two hand-built copies that drift. ``limits`` go on the innermost
+    transport because httpx ignores ``AsyncClient(limits=...)`` when a custom
+    ``transport=`` is supplied; retry wraps routing so every attempt re-routes (an
+    admin fixing a broken proxy takes effect mid-backoff, and proxy connect failures
+    are ``TransportError``s that get the normal retry/backoff). Each call builds its
+    OWN direct+proxied pools, so N independent chains cap process-wide connections at
+    ``N × 2 × httpx_max_connections`` (the main client + the OIDC chain ⇒ 4×).
+    """
+    limits = httpx.Limits(
+        max_connections=settings.httpx_max_connections,
+        max_keepalive_connections=settings.httpx_max_keepalive_connections,
+    )
+    return RetryTransport(
+        ProxyRoutingTransport(limits=limits),
+        max_retries=settings.httpx_max_retries,
+        backoff_base=settings.httpx_backoff_base,
+        backoff_cap=settings.httpx_backoff_cap,
+    )

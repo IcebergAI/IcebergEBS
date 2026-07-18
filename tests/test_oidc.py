@@ -848,7 +848,27 @@ def test_registration_uses_shared_transport_and_pkce(patch_oidc):
     registered = oidc_service.oauth._registry["authentik"][1]
     client_kwargs = registered["client_kwargs"]
     assert client_kwargs["code_challenge_method"] == "S256"
-    assert isinstance(client_kwargs["transport"], _NonClosingTransport)
+    # Pin the whole composition, not just the outer wrapper (#231): OIDC egress must
+    # go through the proxy-routing chain (#216). Asserting only _NonClosingTransport
+    # would let a refactor swap the inner chain for a bare transport and stay green
+    # while SSO silently bypassed the mandated proxy.
+    from app.fetchers.transport import ProxyRoutingTransport, RetryTransport
+
+    wrapper = client_kwargs["transport"]
+    assert isinstance(wrapper, _NonClosingTransport)
+    assert isinstance(wrapper._inner, RetryTransport)
+    assert isinstance(wrapper._inner._inner, ProxyRoutingTransport)
+
+
+def test_build_egress_transport_composition():
+    # The one shared recipe (#231): retry wrapping proxy-routing, so both the main
+    # client and OIDC egress get resilience AND the mandated proxy by construction.
+    from app.config import settings
+    from app.fetchers.transport import ProxyRoutingTransport, RetryTransport, build_egress_transport
+
+    chain = build_egress_transport(settings)
+    assert isinstance(chain, RetryTransport)
+    assert isinstance(chain._inner, ProxyRoutingTransport)
 
 
 # --------------------------------------------------------------------------- #
