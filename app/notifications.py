@@ -1,9 +1,10 @@
 import json
 import logging
-from dataclasses import dataclass
 from typing import Any
 
 import httpx
+from pydantic import ConfigDict
+from pydantic.dataclasses import dataclass
 from sqlalchemy import or_
 from sqlalchemy.ext.asyncio import AsyncEngine
 from sqlmodel import select
@@ -17,8 +18,25 @@ from app.webhooks import send_webhook
 logger = logging.getLogger(__name__)
 
 
-@dataclass
+@dataclass(config=ConfigDict(extra="forbid"))
 class ChangeEvent:
+    """A detected extension change, also round-tripped through the durable
+    pending-alert marker (services._parse_pending_events).
+
+    A pydantic dataclass, not a plain one, so construction validates field
+    presence *and* types in one place: ``event_type`` must be a real string
+    (pydantic v2 does not coerce other types to str), because fire_alerts uses
+    it in sets and as a dict key — an unhashable value sneaking in from a
+    corrupt marker would crash delivery and re-loop forever (#197 review).
+
+    ``extra="forbid"`` keeps the plain dataclass's rejection of unexpected keys:
+    pydantic dataclasses *ignore* extra fields by default, so without this a
+    marker dict carrying a stray key would be silently accepted (and the extra
+    discarded) instead of raising — weakening the corrupt-marker contract the
+    parser depends on (#252 review). Stays a dataclass (not BaseModel) so
+    ``dataclasses.asdict()`` keeps working at the marker-serialization sites.
+    """
+
     event_type: str
     old_value: Any
     new_value: Any

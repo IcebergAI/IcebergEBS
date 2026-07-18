@@ -369,16 +369,23 @@ def test_parse_pending_events_drops_non_dict_and_malformed_entries():
             "junk",  # non-dict → dropped
             5,  # non-dict → dropped
             {"unexpected": "keys"},  # a dict, but not a well-formed event (wrong keys) → dropped
-            # A dict with the right keys but a non-string event_type. ChangeEvent is a plain
-            # dataclass and accepts it, but the unhashable list would crash fire_alerts' set/dict
-            # keying and re-loop forever — so it must be dropped here (#197 review).
+            # A dict with the right keys but a non-string event_type: the unhashable list
+            # would crash fire_alerts' set/dict keying and re-loop forever, so ChangeEvent
+            # (a validating pydantic dataclass) must reject it here (#197 review).
             {"event_type": [], "old_value": "low", "new_value": "high"},
+            # All required fields present but with an unexpected extra key. The plain
+            # dataclass raised TypeError on this; the pydantic dataclass only matches that
+            # rejection because it's configured extra="forbid" (#252 review) — otherwise the
+            # stray key is silently accepted and discarded, weakening the marker contract.
+            {"event_type": "new_version", "old_value": "1", "new_value": "2", "surprise": True},
         ]
     )
     assert _parse_pending_events(raw, 1) == [ChangeEvent("new_version", "1", "2")]
     assert _parse_pending_events("{}", 1) == []  # valid JSON, wrong shape (object not list)
     assert _parse_pending_events('["junk"]', 1) == []  # list of non-dicts
     assert _parse_pending_events('[{"event_type": 5, "old_value": "a", "new_value": "b"}]', 1) == []  # non-str type
+    # A well-typed event carrying an unexpected extra key is rejected, not silently trimmed.
+    assert _parse_pending_events('[{"event_type": "new_version", "old_value": "1", "new_value": "2", "x": 1}]', 1) == []
     assert _parse_pending_events("{bad", 1) == []  # unparsable
     assert _parse_pending_events(None, 1) == []  # absent
 
