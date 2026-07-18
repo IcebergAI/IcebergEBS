@@ -45,12 +45,10 @@ Ensure tests are added for major functionality changes and regression tests are 
 ### Running Tests
 The suite runs against a **real Postgres** (no SQLite). Install the locked dependency set (`uv sync`, or `make sync`), start the dev Postgres, then run pytest pointed at it:
 ```bash
-make db   # docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d postgres
-ICEBERG_EBS_TEST_DATABASE_URL=postgresql+asyncpg://iceberg_ebs:iceberg_ebs@localhost:5432/iceberg_ebs uv run pytest tests/ -v
-# or simply: make test
+make db     # docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d postgres
+make test   # derives the URL from the .env POSTGRES_* values, so it follows a password rotation
 ```
-`ICEBERG_EBS_TEST_DATABASE_URL` selects the test database (falls back to `ICEBERG_EBS_DATABASE_URL`).
-Host-side `uv run pytest` / `uv run alembic` / `make test` tolerate the Compose `POSTGRES_*` keys sitting in the shared `.env` since #214 (`Settings` uses `extra="ignore"`, so non-`ICEBERG_EBS_` dotenv keys are dropped instead of raising `extra_forbidden`) — no need to comment them out anymore.
+A **bare** `uv run pytest` works too, but only because `.env` sets `ICEBERG_EBS_DATABASE_URL` to the dev Postgres on `localhost:5432` — `conftest.py` reads `ICEBERG_EBS_TEST_DATABASE_URL` from `os.environ` (which `.env` never populates) and otherwise falls back to `settings.database_url`. Never hardcode the credentials in a command or doc; they rotate. Keep the Compose `POSTGRES_*` keys **uncommented** in the shared `.env` — since #214 `Settings` uses `extra="ignore"`, so host-side tools no longer choke on non-`ICEBERG_EBS_` dotenv keys. See `.claude/rules/config-startup.md`.
 
 `pytest.ini` sets `asyncio_mode = auto` so async tests run without extra decoration. It also pins `asyncio_default_fixture_loop_scope`/`asyncio_default_test_loop_scope` to `session` because the test DB is a single **session-scoped** Postgres engine (`tests/conftest.py`) shared by all tests — fixtures and tests must run on one event loop or asyncpg raises "attached to a different loop". Per-test isolation is the autouse `_clean_tables` fixture, which `TRUNCATE … RESTART IDENTITY CASCADE`s every table after each test.
 
@@ -98,6 +96,8 @@ The **IcebergAI house design system** (#105 — `iceberg.css` tokens/shell + `ap
 Full production deployment instructions are in `DEPLOYMENT.md`. Two options are covered:
 
 **Docker Compose** — three-service stack (postgres, app, caddy). **Caddy** (config in `caddy/`, #188 — replaced nginx) terminates TLS and proxies everything — including `/static`, served by the app's StaticFiles, since the built `output.css` exists only inside the app image (#85) — to the app; it does **not** rate-limit (stock Caddy has no `rate_limit` directive), so edge throttling moved app-side (`app/ratelimit.py`, enabled via `ICEBERG_EBS_API_RATE_LIMIT_ENABLED` for `/api/*` and `ICEBERG_EBS_LOGIN_RATE_LIMIT_ENABLED` for `POST /login`, #196). Caddy sets `X-Forwarded-For` to a single canonical `{client_ip}`, discarding a client-supplied XFF at the edge (#77). Single uvicorn worker required (APScheduler is per-process; multiple workers produce duplicate watchlist refreshes and `AlertLog` rows).
+
+**Credentials: one source, fail-fast.** All credentials live in `.env`, referenced **only** from `docker-compose.yml` as `${VAR:?message}` (never a bare `${VAR}` — Compose resolves that to `""`); `docker-compose.dev.yml` defines none, so dev and prod cannot disagree. Guarded by `tests/test_compose_secrets.py`. The full contract — plus the two traps that make a misconfiguration look like a code bug (the password is only read at **volume creation**; host-side pytest needs `ICEBERG_EBS_DATABASE_URL`, not `..._TEST_DATABASE_URL`) — lives in the path-scoped rule `.claude/rules/config-startup.md` (auto-loads when editing `docker-compose*.yml`, `Dockerfile`, `Makefile`, `.env*`, or `helm/**`).
 
 **Kubernetes (Helm)** — chart under `helm/iceberg-ebs/` with Bitnami postgresql subchart. `replicaCount: 1` is mandatory for the same reason. Topology is **cluster nginx-ingress-controller (TLS via cert-manager, edge rate limiting) → in-pod Caddy sidecar (:8080) → app (localhost:8000)** (#188): the sidecar owns the canonical security headers via the `caddy` ConfigMap (a test-guarded mirror of `caddy/Caddyfile.k8s` + `caddy/headers.caddy` — Helm can't read files above the chart), so the ingress no longer carries a duplicated CSP snippet. Editing the edge config means editing `caddy/` and re-mirroring the ConfigMap; `tests/test_helm_caddy.py` + `tests/test_csp_strict.py` fail on drift.
 

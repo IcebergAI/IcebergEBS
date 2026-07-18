@@ -201,6 +201,30 @@ release to diff against.
 
 ### Fixed
 
+- **A missing credential now aborts `docker compose up` instead of starting a broken stack.**
+  `docker-compose.yml` referenced `${POSTGRES_PASSWORD}` (and the admin/secret vars) bare, and
+  Compose resolves an unset variable to the empty string behind a warning that scrolls past in
+  `up` output — so the stack started and failed later, inside the app, as an
+  `asyncpg.InvalidPasswordError` that reads like a code or networking fault rather than a
+  missing variable. All credential references now use `${VAR:?message}` and name the variable
+  on failure, matching the Helm chart's existing `| required`. Note only `SECRET_KEY` had an
+  app-side validator, so an empty `ICEBERG_EBS_ADMIN_PASSWORD` previously seeded a passwordless
+  admin without complaint.
+- **`docker-compose.dev.yml` no longer hardcodes credentials**, so there is a single source.
+  It previously set `POSTGRES_PASSWORD: iceberg_ebs` and a full `ICEBERG_EBS_DATABASE_URL`,
+  which made `make dev` succeed on a machine where a plain `docker compose up` failed with the
+  same `.env` — the dev path silently masked the misconfiguration that broke every other path.
+  Dev now inherits `.env` through the base file and overrides only `ICEBERG_EBS_SECURE_COOKIES`.
+  Consequence: `make dev` now requires a populated `.env`.
+- **`make test` follows a rotated password.** The `Makefile` hardcoded
+  `iceberg_ebs:iceberg_ebs@localhost` in `TEST_DATABASE_URL`; it now derives the URL from the
+  `.env` `POSTGRES_*` values via `-include .env`.
+- Documented the two config traps that made this expensive to diagnose: `POSTGRES_PASSWORD` is
+  read **only when the data volume is first created** (editing `.env` against an existing volume
+  silently keeps the old password — rotate with `ALTER USER`, see `DEPLOYMENT.md`), and
+  host-side pytest needs `ICEBERG_EBS_DATABASE_URL` rather than `ICEBERG_EBS_TEST_DATABASE_URL`
+  in `.env`, because `conftest.py` reads the latter from `os.environ`, which `.env` never
+  populates. Guarded by the new `tests/test_compose_secrets.py`.
 - **Frontend polish** (#237): the `/` search shortcut no longer fires on a modifier combo
   (Ctrl/Cmd/Alt+`/`) or mid-IME-composition; the dashboard's per-row **Refresh** reports a
   failure inline instead of an unhandled promise rejection + `alert()`; and the bulk-import

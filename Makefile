@@ -2,7 +2,16 @@
 # (see docker-compose.dev.yml); SQLite is no longer supported.
 
 COMPOSE := docker compose -f docker-compose.yml -f docker-compose.dev.yml
-TEST_DATABASE_URL ?= postgresql+asyncpg://iceberg_ebs:iceberg_ebs@localhost:5432/iceberg_ebs
+
+# Pull the Postgres credentials out of .env so host-side pytest talks to the dev
+# container with the SAME creds Compose gave it. Previously this line hardcoded
+# iceberg_ebs:iceberg_ebs, which silently broke the moment the password was rotated.
+# `-include` (leading dash) so a missing .env is not a hard error — the defaults below
+# still let `make` parse; the compose guards are what enforce a real password.
+-include .env
+POSTGRES_USER ?= iceberg_ebs
+POSTGRES_DB ?= iceberg_ebs
+TEST_DATABASE_URL ?= postgresql+asyncpg://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@localhost:5432/$(POSTGRES_DB)
 PYTHON ?= uv run python
 # Tailwind standalone-CLI pin (#85) — keep in lockstep with the Dockerfile
 # tailwind-builder stage and the ci.yml lint job.
