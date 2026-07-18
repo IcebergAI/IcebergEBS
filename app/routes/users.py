@@ -2,7 +2,7 @@ from datetime import datetime, timezone
 from typing import Annotated
 
 from fastapi import APIRouter, HTTPException, Response
-from pydantic import BaseModel, Field, StringConstraints, field_validator
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_validator
 from sqlalchemy import delete as sa_delete
 from sqlalchemy import update as sa_update
 from sqlmodel import select
@@ -29,6 +29,8 @@ def _reject_over_long_password(v: str) -> str:
 
 
 class UserOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: int
     username: str
     email: str | None
@@ -66,10 +68,7 @@ async def list_users(
     session: SessionDep,
 ) -> list[UserOut]:
     users = (await session.exec(select(User).order_by(User.created_at))).all()
-    return [
-        UserOut(id=u.id, username=u.username, email=u.email, is_admin=u.is_admin, auth_provider=u.auth_provider)
-        for u in users
-    ]
+    return [UserOut.model_validate(u) for u in users]
 
 
 @router.post("/users", status_code=201)
@@ -91,9 +90,7 @@ async def create_user(
     session.add(user)
     await session.commit()
     await session.refresh(user)
-    return UserOut(
-        id=user.id, username=user.username, email=user.email, is_admin=user.is_admin, auth_provider=user.auth_provider
-    )
+    return UserOut.model_validate(user)
 
 
 @router.delete("/users/{user_id}")
