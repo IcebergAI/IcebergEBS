@@ -99,7 +99,7 @@
 
 {% macro sort_arrow(col) %}{% if sort == col %} <span class="text-meta">{{ '↑' if order == 'asc' else '↓' }}</span>{% endif %}{% endmacro %}
 {% macro sort_link(col) %}{{ qs(sort=col, order=('asc' if sort == col and order == 'desc' else 'desc'), page=1) }}{% endmacro %}
-{% set active_pill = 'background:var(--ink);color:white;border-color:var(--ink)' %}
+{% set active_pill = 'background:var(--ink);color:var(--paper);border-color:var(--ink)' %}
 
 {# Server data reaches the component via a JSON island (never the x-data
    attribute — the CSP build's parser doesn't decode |tojson's \uXXXX escapes). #}
