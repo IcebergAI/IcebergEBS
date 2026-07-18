@@ -81,6 +81,14 @@ release to diff against.
 
 ### Changed
 
+- **Two static-inspector false positives no longer inflate scores** (#151): a bare
+  `new XMLHttpRequest` constructor no longer counts as remote code (only a `.open(...)` to a
+  literal `http(s)://` URL does — matching how `fetch()` was already scored), and a *scoped*
+  wildcard-subdomain CSP source like `https://*.googleapis.com` is no longer flagged as a broad
+  wildcard (only a whole-host wildcard — bare `*`, `https://*`, `https://*:443`, `https://*/path`
+  — is). Benign extensions that hit either pattern re-score lower on their next refresh, which can
+  move a `risk_level` band. (The legacy duplicate `_REMOTE_FETCH_RE` — which drove the bare-XHR
+  path — is removed.)
 - **External-domain scoring now counts distinct registrable domains (eTLD+1)** via
   the Public Suffix List (`tldextract`, pinned to its bundled offline snapshot — no
   network or disk access), not raw hostnames (#254): a single party spraying

