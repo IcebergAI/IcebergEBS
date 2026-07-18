@@ -28,8 +28,8 @@ async def _resolve_host(hostname: str, port: int | None) -> list[str]:
 
     Isolated in its own function so tests can patch DNS resolution deterministically.
     """
-    loop = asyncio.get_event_loop()
-    infos = await loop.run_in_executor(None, lambda: socket.getaddrinfo(hostname, port, type=socket.SOCK_STREAM))
+    loop = asyncio.get_running_loop()
+    infos = await loop.getaddrinfo(hostname, port, type=socket.SOCK_STREAM)
     # Preserve order while dropping duplicates. info[4][0] is the resolved address.
     return list(dict.fromkeys(str(info[4][0]) for info in infos))
 
