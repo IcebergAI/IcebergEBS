@@ -128,7 +128,6 @@ _SAFE_DOMAINS = {
 _URL_LITERAL_TAIL = r'[^\s\'"`<>{}\\]+'
 _URL_RE = re.compile(r"https?://" + _URL_LITERAL_TAIL)
 _EVAL_RE = re.compile(r"\beval\s*\(|new\s+Function\s*\(")
-_REMOTE_FETCH_RE = re.compile(r'(?:fetch|XMLHttpRequest|xhr\.open)\s*\(\s*[\'"]https?://')
 _IDENTIFIER_RE = re.compile(r"\b[a-zA-Z_$][a-zA-Z0-9_$]*\b")
 
 _EVAL_CALL_RE = re.compile(r"\beval\s*\(")
@@ -138,8 +137,12 @@ _DYNAMIC_SCRIPT_RE = re.compile(r'\bcreateElement\s*\(\s*[\'"`]script[\'"`]\s*\)
 _REMOTE_SCRIPT_SRC_RE = re.compile(r'\.src\s*=\s*[\'"`]https?://')
 _IMPORT_SCRIPTS_REMOTE_RE = re.compile(r'\bimportScripts\s*\(\s*[\'"`]https?://')
 _FETCH_REMOTE_RE = re.compile(r'\bfetch\s*\(\s*[\'"`]https?://')
+# Only a remote .open(...) counts — a bare `new XMLHttpRequest` says nothing about
+# where the request goes, and flagging the constructor made an extension loading its
+# own bundled resources (x.open('GET','data/config.json')) score as remote code, while
+# the equivalent fetch('data/config.json') scored 0 (#151).
 _XHR_REMOTE_RE = re.compile(
-    r'\bnew\s+XMLHttpRequest\b|\.open\s*\(\s*[\'"`](?:GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)[\'"`]\s*,\s*[\'"`]https?://',
+    r'\.open\s*\(\s*[\'"`](?:GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)[\'"`]\s*,\s*[\'"`]https?://',
     re.IGNORECASE,
 )
 _WEBSOCKET_REMOTE_RE = re.compile(r'\bnew\s+WebSocket\s*\(\s*[\'"`]wss?://', re.IGNORECASE)
@@ -406,15 +409,13 @@ def _analyse_js(source: str, analysis: PackageAnalysis, filename: str) -> None:
         detail="setTimeout/setInterval with a string argument executes code dynamically.",
     )
 
-    if _REMOTE_FETCH_RE.search(source):
-        analysis.uses_remote_code = True
     for pattern, code, title, detail in (
         (_FETCH_REMOTE_RE, "remote_fetch", "Remote fetch call", "JavaScript fetches data from a remote URL."),
         (
             _XHR_REMOTE_RE,
             "remote_xhr",
-            "XMLHttpRequest usage",
-            "JavaScript uses XMLHttpRequest or opens a remote XHR URL.",
+            "Remote XMLHttpRequest",
+            "JavaScript opens an XMLHttpRequest to a remote URL.",
         ),
         (
             _WEBSOCKET_REMOTE_RE,
@@ -651,12 +652,19 @@ def _iter_csp_values(raw: object) -> list[str]:
     return []
 
 
+# A source is "broad" only when the wildcard is the WHOLE host — bare `*`, or a
+# scheme + `*` host optionally followed by a port/path (`https://*`, `https://*:443`,
+# `https://*/x`). A wildcard *subdomain* like `https://*.googleapis.com` is a legitimately
+# scoped, common historical MV2 pattern and must not be flagged as broad (#151).
+_BROAD_WILDCARD_SRC_RE = re.compile(r"^https?://\*(?:[:/]|$)")
+
+
 def _csp_allows_wildcard_script(csp_text: str) -> bool:
     for directive in csp_text.split(";"):
         directive = directive.strip()
         if not directive.startswith(("script-src", "default-src", "worker-src")):
             continue
         parts = directive.split()[1:]
-        if "*" in parts or any(part.startswith("https://*") or part.startswith("http://*") for part in parts):
+        if "*" in parts or any(_BROAD_WILDCARD_SRC_RE.match(part) for part in parts):
             return True
     return False
