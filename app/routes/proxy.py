@@ -19,7 +19,7 @@ from pydantic import BaseModel, ConfigDict, field_validator
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from app import proxy, proxy_settings
+from app import oidc_settings, proxy, proxy_settings
 from app.deps import AdminUser, SessionDep
 from app.models import AlertDestination
 from app.webhooks import _authority, validate_webhook_url
@@ -133,6 +133,12 @@ async def egress_targets(session: AsyncSession) -> dict[str, _EgressTarget]:
     )
     for dest in result.all():
         targets[f"Webhook: {dest.label} (#{dest.id})"] = _EgressTarget(_origin(dest.target), is_webhook=True)
+    # Enabled OIDC providers are a whole egress class (discovery/JWKS/token/userinfo
+    # all live on the IdP origin), added after the proxy shipped (#218/#232). The
+    # metadata-URL origin comes from server-side config, so it's a server-known label
+    # by construction — same SSRF footing as the fixed store set, not a webhook.
+    for provider in oidc_settings.get_config().enabled_providers():
+        targets[f"SSO: {provider.display_name} (IdP)"] = _EgressTarget(_origin(provider.metadata_url))
     return targets
 
 
