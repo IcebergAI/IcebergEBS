@@ -84,9 +84,9 @@ async def test_admin_ui_redirects_non_admin(test_db):
     from app.main import app
 
     async with AsyncSession(test_db) as s:
-        from app.auth import hash_password
+        from tests.conftest import cached_password_hash
 
-        regular = User(username="reg", password_hash=await hash_password("pw"), is_admin=False)
+        regular = User(username="reg", password_hash=cached_password_hash("pw"), is_admin=False)
         s.add(regular)
         await s.commit()
 
