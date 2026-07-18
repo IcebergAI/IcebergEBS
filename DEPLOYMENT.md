@@ -362,6 +362,7 @@ silently ignored — #87). All settings use the `ICEBERG_EBS_` prefix.
 | `ICEBERG_EBS_API_RATE_LIMIT_BURST` | `20` | `/api/*` back-to-back burst per client IP (#202) |
 | `ICEBERG_EBS_LOGIN_RATE_LIMIT_PER_MINUTE` | `5` | Sustained `POST /login` requests/min per client IP (#202) |
 | `ICEBERG_EBS_LOGIN_RATE_LIMIT_BURST` | `5` | `POST /login` back-to-back burst per client IP (#202) |
+| `ICEBERG_EBS_TRUSTED_ORIGINS` | `""` | Extra origins the CSRF check trusts, comma-separated — for a proxy that rewrites `Host` (#107, #153) |
 | `ICEBERG_EBS_PROXY_MODE` | `system` | Outbound proxy mode: `system` \| `none` \| `explicit` (#216) |
 | `ICEBERG_EBS_PROXY_URL` | `""` | Forward proxy for `explicit` mode — no credentials in the URL |
 | `ICEBERG_EBS_PROXY_NO_PROXY` | localhost + private ranges | Hosts/suffixes/IPs/CIDRs that bypass the explicit proxy |
@@ -374,7 +375,7 @@ silently ignored — #87). All settings use the `ICEBERG_EBS_` prefix.
 
 Settings **not** in this table (e.g. the login rate-limit tuning `ICEBERG_EBS_LOGIN_MAX_ATTEMPTS` /
 `…_LOGIN_ATTEMPT_WINDOW_SECONDS` / `…_LOGIN_LOCKOUT_SECONDS`, `ICEBERG_EBS_API_KEY_LAST_USED_THROTTLE_SECONDS`,
-`ICEBERG_EBS_SESSION_COOKIE_NAME`, `ICEBERG_EBS_TRUSTED_ORIGINS`, `ICEBERG_EBS_SHUTDOWN_DRAIN_SECONDS`,
+`ICEBERG_EBS_SESSION_COOKIE_NAME`, `ICEBERG_EBS_SHUTDOWN_DRAIN_SECONDS`,
 the outbound-HTTP retry/pool tuning `ICEBERG_EBS_HTTPX_MAX_RETRIES` / `…_HTTPX_BACKOFF_BASE` /
 `…_HTTPX_BACKOFF_CAP` / `…_HTTPX_MAX_CONNECTIONS` / `…_HTTPX_MAX_KEEPALIVE_CONNECTIONS`, and
 `ICEBERG_EBS_STORE_CIRCUIT_FAILURE_THRESHOLD`) run at their `app/config.py` defaults; to make one tunable in
