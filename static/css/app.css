@@ -207,7 +207,7 @@ tbody tr:hover td { background: var(--surface-2); }
   margin-bottom: 16px;
 }
 
-/* ── Avatar (topbar user menu) ────────────────────────────── */
+/* ── Avatar (admin users table) ───────────────────────────── */
 .avatar {
   width: 28px; height: 28px;
   border-radius: 999px;

@@ -106,6 +106,8 @@
 <script id="dashboard-data" type="application/json">{{ extensions | tojson }}</script>
 <div x-data="dashboardData">
 
+  <div x-show="error" x-cloak class="mb-3 text-[12.5px]" style="color:var(--risk-critical)" x-text="error"></div>
+
   {# Filter + search bar (server-driven via query params) #}
   <div class="flex items-center justify-between mb-3 flex-wrap gap-2">
     <div class="flex items-center gap-1.5 flex-wrap">

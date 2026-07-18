@@ -14,18 +14,33 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]
 TEMPLATE_DIR = REPO / "app" / "templates"
 JS_DIR = REPO / "static" / "js"
+CSS_DIR = REPO / "static" / "css"
 
-_LEGACY_TOKEN = re.compile(r"var\(--(?:ink-[0-8]|accent-bg)\)")
+# Matches a legacy custom-property name in EITHER a usage (`var(--ink-3)`) or a
+# DECLARATION (`--ink-3: …`, `--accent-bg: …`) — the latter is how the removed
+# alias bridge would be resurrected in the CSS, so a usage-only pattern would leave
+# the CSS scan toothless (#237 review). `\b` keeps the house tokens `--ink`,
+# `--ink-soft`, `--accent`, `--accent-soft` from matching (they have no `-<0-8>`).
+_LEGACY_TOKEN = re.compile(r"--(?:ink-[0-8]|accent-bg)\b")
 
 
 def _first_party_js() -> list[Path]:
     return [p for p in sorted(JS_DIR.rglob("*.js")) if "vendor" not in p.parts]
 
 
-def test_no_legacy_tokens_in_templates_or_js() -> None:
+def _source_css() -> list[Path]:
+    # output.css is the gitignored Tailwind build artifact (may be absent in a clean
+    # checkout, and is generated, not authored) — scan only hand-authored source CSS.
+    return [p for p in sorted(CSS_DIR.glob("*.css")) if p.name != "output.css"]
+
+
+def test_no_legacy_tokens_in_templates_js_or_css() -> None:
+    # Includes the CSS (#237): a reintroduced var(--ink-3) or a resurrected alias bridge
+    # in app.css/iceberg.css would otherwise pass CI, contradicting frontend.md's claim
+    # that this test guards the #212 sweep.
     offenders = [
         f"{path.relative_to(REPO)}:{lineno}: {line.strip()[:120]}"
-        for path in [*sorted(TEMPLATE_DIR.glob("*.html")), *_first_party_js()]
+        for path in [*sorted(TEMPLATE_DIR.glob("*.html")), *_first_party_js(), *_source_css()]
         for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1)
         if _LEGACY_TOKEN.search(line)
     ]
@@ -34,6 +49,18 @@ def test_no_legacy_tokens_in_templates_or_js() -> None:
         "custom property silently drops the declaration. Use the house tokens from "
         "static/css/iceberg.css instead:\n" + "\n".join(offenders)
     )
+
+
+def test_legacy_token_pattern_catches_declarations_and_usages() -> None:
+    """The guard must catch a resurrected alias bridge, which is a DECLARATION
+    (`--ink-3: …`), not only a `var(--ink-3)` usage (#237 review) — while leaving the
+    house tokens (`--ink`, `--ink-soft`, `--accent`, `--accent-soft`) alone."""
+    assert _LEGACY_TOKEN.search("--ink-3: var(--line);")  # resurrected alias bridge declaration
+    assert _LEGACY_TOKEN.search("--accent-bg: var(--accent-soft);")
+    assert _LEGACY_TOKEN.search("color: var(--ink-7)")  # usage
+    assert not _LEGACY_TOKEN.search("--ink-soft: oklch(0.5 0 0);")  # house token
+    assert not _LEGACY_TOKEN.search("color: var(--ink)")
+    assert not _LEGACY_TOKEN.search("background: var(--accent-soft)")
 
 
 def test_no_oklch_literals_outside_the_stylesheets() -> None:
