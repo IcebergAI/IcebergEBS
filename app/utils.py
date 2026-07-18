@@ -2,7 +2,23 @@ import json
 import logging
 from urllib.parse import urlparse
 
+import tldextract
+
 logger = logging.getLogger(__name__)
+
+# Public Suffix List matcher pinned to tldextract's bundled snapshot:
+# suffix_list_urls=() disables the default network fetch of a fresh PSL and
+# cache_dir=None disables its disk cache, so this never touches the network or
+# filesystem — a hard requirement for an SSRF-conscious app whose containers
+# must not grow surprise egress at import time. The snapshot refreshes with the
+# (Dependabot-managed) tldextract release cadence, which is plenty for scoring.
+#
+# include_psl_private_domains=True honours the PSL *private* section (github.io,
+# blogspot.com, s3-style buckets, …) so independently-controlled tenants under a
+# hosting suffix — alice.github.io vs bob.github.io — count as distinct parties
+# rather than both collapsing to github.io, which is exactly the undercount this
+# score guards against (#254 review).
+_psl_extract = tldextract.TLDExtract(suffix_list_urls=(), cache_dir=None, include_psl_private_domains=True)
 
 
 def safe_json_loads(raw: str | None, default: str, field: str, ext_id: int | None):
@@ -45,3 +61,18 @@ def domain_from_url(url: str) -> str:
     except ValueError:
         return ""
     return hostname if "." in hostname else ""
+
+
+def registrable_domain(hostname: str) -> str:
+    """Collapse a hostname to its registrable domain (eTLD+1) via the Public
+    Suffix List: api.evil.com and cdn.evil.com both → evil.com, while
+    foo.co.uk stays foo.co.uk (string logic can't tell co.uk from evil.com).
+
+    Falls back to the hostname itself when the PSL yields no registrable domain
+    (IP literals, single-label hosts, unknown suffixes) so callers never lose an
+    entry by normalising it.
+    """
+    # top_domain_under_public_suffix is the non-deprecated spelling of the old
+    # registered_domain, and (with private domains enabled above) is private-suffix
+    # aware — the eTLD+1 under the full public suffix.
+    return _psl_extract(hostname).top_domain_under_public_suffix or hostname
