@@ -369,9 +369,9 @@ def test_parse_pending_events_drops_non_dict_and_malformed_entries():
             "junk",  # non-dict → dropped
             5,  # non-dict → dropped
             {"unexpected": "keys"},  # a dict, but not a well-formed event (wrong keys) → dropped
-            # A dict with the right keys but a non-string event_type. ChangeEvent is a plain
-            # dataclass and accepts it, but the unhashable list would crash fire_alerts' set/dict
-            # keying and re-loop forever — so it must be dropped here (#197 review).
+            # A dict with the right keys but a non-string event_type: the unhashable list
+            # would crash fire_alerts' set/dict keying and re-loop forever, so ChangeEvent
+            # (a validating pydantic dataclass) must reject it here (#197 review).
             {"event_type": [], "old_value": "low", "new_value": "high"},
         ]
     )
