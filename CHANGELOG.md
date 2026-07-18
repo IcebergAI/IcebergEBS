@@ -190,6 +190,12 @@ release to diff against.
 
 ### Fixed
 
+- **Following `.env.example` no longer crashes startup** (#214). The shared `.env` that
+  `.env.example` tells operators to fill carries the Compose stack's non-prefixed
+  `POSTGRES_DB`/`POSTGRES_USER`/`POSTGRES_PASSWORD` keys, which pydantic-settings rejected as
+  forbidden extras — breaking bare-uvicorn / `make test` local runs (Compose was unaffected, as
+  it passes explicit `ICEBERG_EBS_*` env). `Settings` now uses `extra="ignore"`, so non-app dotenv
+  keys are dropped instead of aborting import.
 - **SSO no longer silently demotes IdP-managed admins in large Entra tenants** (#227). When an
   Entra user is in more than ~200 groups, the ID token omits the `groups` claim and emits the
   distributed-claims pointers `_claim_names`/`_claim_sources` instead (the "groups overage"
