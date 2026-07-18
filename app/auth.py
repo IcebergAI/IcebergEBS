@@ -119,6 +119,21 @@ def _session_after_password_change(user, issued_at: datetime) -> bool:
     return issued_at >= changed - timedelta(seconds=1)
 
 
+def _session_within_sso_max_age(user, issued_at: datetime) -> bool:
+    """True unless ``user`` is an SSO account whose cookie is older than the shorter
+    SSO session lifetime (#221).
+
+    An IdP-side disable/reset can't be pushed to us, so SSO sessions expire faster
+    than local ones and force re-authentication through the IdP (which fails for a
+    disabled account) — bounding how long a stale session or stolen cookie lives.
+    Local accounts (no ``oidc_subject``) keep the full ``session_max_age``.
+    """
+    if user.oidc_subject is None:
+        return True
+    age = (datetime.now(timezone.utc) - issued_at).total_seconds()
+    return age <= settings.oidc_session_max_age
+
+
 # Pre-computed dummy hash used when the username doesn't exist, so the bcrypt
 # work factor is always paid regardless of whether the username is valid.
 # This prevents username enumeration via response-time differences.
@@ -155,6 +170,8 @@ async def authenticate_session(request: Request, session: AsyncSession) -> User 
     username, issued_at = claims
     user = (await session.exec(select(User).where(User.username == username))).first()
     if user is None or not _session_after_password_change(user, issued_at):
+        return None
+    if not _session_within_sso_max_age(user, issued_at):
         return None
     return user
 
@@ -233,7 +250,7 @@ async def require_admin_ui(current_user: Annotated[User, Depends(require_auth)])
     return current_user
 
 
-def set_session(response, username: str) -> None:
+def set_session(response, username: str, *, max_age: int | None = None) -> None:
     # CSRF stance (#16): protection is SameSite=Lax (+ Secure in prod), not tokens.
     # This is a deliberate decision, not an oversight — see the CSRF note in
     # CLAUDE.md. SameSite=Lax stops cross-site cookies on unsafe top-level
@@ -242,10 +259,12 @@ def set_session(response, username: str) -> None:
     # supports a Bearer token as the primary M2M credential. If a cookie-authed
     # state-changing browser flow ever needs stronger defense-in-depth, add
     # per-request CSRF tokens here + a matching hidden field in the templates.
+    # max_age overrides the default for SSO logins (the shorter oidc_session_max_age,
+    # #221); the server-side age check in authenticate_session is authoritative.
     response.set_cookie(
         key=settings.session_cookie_name,
         value=create_session_cookie(username),
-        max_age=settings.session_max_age,
+        max_age=settings.session_max_age if max_age is None else max_age,
         httponly=True,
         samesite="lax",
         secure=settings.secure_cookies,
@@ -254,6 +273,27 @@ def set_session(response, username: str) -> None:
 
 def clear_session(response) -> None:
     response.delete_cookie(key=settings.session_cookie_name)
+
+
+def set_oidc_id_token(response, id_token: str, *, max_age: int) -> None:
+    """Persist the IdP's id_token (HttpOnly) as the id_token_hint for RP-initiated
+    logout (#221). Only the user's own token; never logged, never read by JS."""
+    response.set_cookie(
+        key=settings.oidc_id_token_cookie_name,
+        value=id_token,
+        max_age=max_age,
+        httponly=True,
+        samesite="lax",
+        secure=settings.secure_cookies,
+    )
+
+
+def get_oidc_id_token(request: Request) -> str | None:
+    return request.cookies.get(settings.oidc_id_token_cookie_name)
+
+
+def clear_oidc_id_token(response) -> None:
+    response.delete_cookie(key=settings.oidc_id_token_cookie_name)
 
 
 async def seed_admin() -> None:

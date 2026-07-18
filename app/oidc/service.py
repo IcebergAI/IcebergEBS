@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+from urllib.parse import urlencode
 
 import httpx
 from authlib.integrations.starlette_client import OAuth
@@ -155,6 +156,39 @@ def registered_providers() -> list[OIDCProviderConfig]:
 
 def get_provider(key: str) -> OIDCProviderConfig | None:
     return _registered.get(key)
+
+
+async def end_session_url(provider: str, *, post_logout_redirect_uri: str, id_token: str | None) -> str | None:
+    """RP-initiated logout URL for ``provider`` (#221), or None to fall back to a
+    local-only logout.
+
+    Returns None when the provider isn't registered or its discovery document has no
+    ``end_session_endpoint`` (not all IdPs support RP-initiated logout), or when the
+    discovery fetch is unreachable — logout must always clear the local cookie and
+    never 500. The ``id_token_hint`` lets the IdP end the session without a confirm
+    prompt; ``post_logout_redirect_uri`` must be registered at the IdP.
+    """
+    ensure_registered()
+    cfg = get_provider(provider)
+    client = oauth.create_client(provider)
+    if cfg is None or client is None:
+        return None
+    try:
+        metadata = await client.load_server_metadata()
+        endpoint = metadata.get("end_session_endpoint")
+    except Exception:
+        # Genuinely best-effort: ANY failure fetching or parsing the discovery document
+        # — network/OAuthError, malformed JSON (ValueError/JSONDecodeError), or a non-dict
+        # body (TypeError/AttributeError) — falls back to a local-only logout, which always
+        # clears the local cookies and never 500s. CancelledError is a BaseException, so
+        # cooperative cancellation still propagates rather than being swallowed here.
+        return None
+    if not endpoint:
+        return None
+    params = {"post_logout_redirect_uri": post_logout_redirect_uri, "client_id": cfg.client_id}
+    if id_token:
+        params["id_token_hint"] = id_token
+    return f"{endpoint}?{urlencode(params)}"
 
 
 def map_is_admin(cfg: OIDCProviderConfig, identity: OIDCIdentity) -> bool:

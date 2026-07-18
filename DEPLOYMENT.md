@@ -459,12 +459,18 @@ Operational notes:
   application gets an account, so control access with **IdP-side app assignment** (assign the app
   to specific users/groups), not by deleting rows here: deleting an SSO user in `/admin/users` is
   **not a ban** — their next sign-in re-provisions a fresh account. Off-board at the IdP.
-- **IdP-side credential resets don't propagate.** IcebergEBS learns of an IdP password reset or
-  account disable only on the next sign-in. A stolen session cookie stays valid until
-  `session_max_age`, and any API keys the account minted keep working, until the IdP-driven admin
-  re-sync bumps the session cutoff (only on an is_admin change) or an admin deletes the keys. For
-  immediate revocation of a specific session, delete the user's API keys and rely on the cookie
-  lifetime; back-channel / RP-initiated logout is a tracked follow-up.
+- **Logout ends the IdP session too (RP-initiated logout).** Logging out of an SSO account
+  redirects to the provider's `end_session_endpoint` (from its discovery document) with the
+  `id_token_hint`, so the IdP session is terminated, not just the local cookie. The IdP must have
+  the app's post-logout redirect (`<base>/login`) registered. Providers without an
+  `end_session_endpoint` fall back to a local-only logout.
+- **IdP-side credential resets propagate within the SSO session window.** IcebergEBS can't be
+  pushed an IdP password reset or account disable, so **SSO sessions use a shorter lifetime**
+  (`ICEBERG_EBS_OIDC_SESSION_MAX_AGE`, default 1h) than local password sessions (`session_max_age`):
+  once it lapses the browser must re-authenticate through the IdP, which fails for a disabled
+  account — bounding how long a stale session or stolen cookie survives. Set it shorter for faster
+  propagation. Continuous back-channel logout and API-key revocation on IdP change remain tracked
+  follow-ups; for immediate revocation delete the user's API keys.
 - All IdP traffic (discovery, JWKS, token, userinfo) routes through the **outbound proxy layer**
   above, like every other egress path.
 

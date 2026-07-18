@@ -13,6 +13,14 @@ class Settings(BaseSettings):
     database_url: str = "postgresql+asyncpg://iceberg_ebs:iceberg_ebs@localhost:5432/iceberg_ebs"
     session_cookie_name: str = "iceberg_ebs_session"
     session_max_age: int = 86400
+    # SSO sessions expire faster than local ones (#221): an IdP-side disable/reset
+    # can't be pushed to us, so a short lifetime forces re-authentication through the
+    # IdP — which fails for a disabled account — bounding how long a stale SSO session
+    # (or a stolen cookie) survives. Local password sessions keep session_max_age.
+    oidc_session_max_age: int = 3600
+    # Holds the IdP's id_token as the id_token_hint for RP-initiated logout (#221);
+    # HttpOnly, set at OIDC login, cleared on logout.
+    oidc_id_token_cookie_name: str = "iceberg_ebs_idt"
     secure_cookies: bool = True
     fetch_interval_minutes: int = 60
     httpx_timeout: float = 15.0

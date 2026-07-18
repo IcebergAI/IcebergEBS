@@ -16,7 +16,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import RedirectResponse
 
 from app import oidc_settings
-from app.auth import set_session
+from app.auth import set_oidc_id_token, set_session
 from app.config import settings
 from app.deps import SessionDep
 from app.oidc import service as oidc_service
@@ -105,8 +105,13 @@ async def oidc_callback(provider: str, request: Request, session: SessionDep):
         return RedirectResponse("/login?error=sso", status_code=303)
 
     # Same cookie as the password flow — downstream auth is identical, including
-    # the password_changed_at session-revocation cutoff.
+    # the password_changed_at session-revocation cutoff — but with the shorter SSO
+    # session lifetime (#221) so an IdP-side disable/reset propagates via forced
+    # re-auth. The id_token is stashed (HttpOnly) as the RP-initiated-logout hint.
     response = RedirectResponse("/", status_code=303)
-    set_session(response, user.username)
+    set_session(response, user.username, max_age=settings.oidc_session_max_age)
+    id_token = token.get("id_token")
+    if id_token:
+        set_oidc_id_token(response, id_token, max_age=settings.oidc_session_max_age)
     logger.info("OIDC login: user=%s provider=%s", user.username, provider)
     return response
