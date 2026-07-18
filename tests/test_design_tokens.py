@@ -52,3 +52,32 @@ def test_no_oklch_literals_outside_the_stylesheets() -> None:
         "oklch colour literals belong in the CSS token blocks (iceberg.css / "
         "app.css --risk-*), not in templates or JS (#105):\n" + "\n".join(offenders)
     )
+
+
+# A raw neutral keyword (white/black) or hex neutral as a *colour* value hard-codes
+# a colour that doesn't flip with the theme — #229 was `color:white` on the active
+# filter pill, which rendered white-on-near-white in dark mode. The house rule is
+# "never hard-code a neutral colour; use the --paper/--ink/... tokens". Anchored on
+# colour-type properties so it can't trip on `white-space`.
+_RAW_NEUTRAL_COLOUR = re.compile(
+    r"(?:color|background|background-color|border-color)\s*:\s*"
+    r"(?:white|black|#(?:fff|000|ffffff|000000))\b",
+    re.IGNORECASE,
+)
+
+
+def test_no_raw_neutral_colour_in_templates() -> None:
+    """Inline styles must use the house neutral tokens (var(--paper)/var(--ink)/…),
+    never a raw white/black keyword or #fff/#000 — those don't flip with the theme
+    and produce unreadable contrast in one mode (#229)."""
+    offenders = [
+        f"{path.relative_to(REPO)}:{lineno}: {line.strip()[:120]}"
+        for path in sorted(TEMPLATE_DIR.glob("*.html"))
+        for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1)
+        if _RAW_NEUTRAL_COLOUR.search(line)
+    ]
+    assert not offenders, (
+        "Hard-coded neutral colours don't flip with html[data-theme] and break "
+        "contrast in one mode (#229). Use var(--paper)/var(--ink)/var(--surface) "
+        "from iceberg.css:\n" + "\n".join(offenders)
+    )
