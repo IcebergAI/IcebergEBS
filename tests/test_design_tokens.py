@@ -16,7 +16,12 @@ TEMPLATE_DIR = REPO / "app" / "templates"
 JS_DIR = REPO / "static" / "js"
 CSS_DIR = REPO / "static" / "css"
 
-_LEGACY_TOKEN = re.compile(r"var\(--(?:ink-[0-8]|accent-bg)\)")
+# Matches a legacy custom-property name in EITHER a usage (`var(--ink-3)`) or a
+# DECLARATION (`--ink-3: …`, `--accent-bg: …`) — the latter is how the removed
+# alias bridge would be resurrected in the CSS, so a usage-only pattern would leave
+# the CSS scan toothless (#237 review). `\b` keeps the house tokens `--ink`,
+# `--ink-soft`, `--accent`, `--accent-soft` from matching (they have no `-<0-8>`).
+_LEGACY_TOKEN = re.compile(r"--(?:ink-[0-8]|accent-bg)\b")
 
 
 def _first_party_js() -> list[Path]:
@@ -44,6 +49,18 @@ def test_no_legacy_tokens_in_templates_js_or_css() -> None:
         "custom property silently drops the declaration. Use the house tokens from "
         "static/css/iceberg.css instead:\n" + "\n".join(offenders)
     )
+
+
+def test_legacy_token_pattern_catches_declarations_and_usages() -> None:
+    """The guard must catch a resurrected alias bridge, which is a DECLARATION
+    (`--ink-3: …`), not only a `var(--ink-3)` usage (#237 review) — while leaving the
+    house tokens (`--ink`, `--ink-soft`, `--accent`, `--accent-soft`) alone."""
+    assert _LEGACY_TOKEN.search("--ink-3: var(--line);")  # resurrected alias bridge declaration
+    assert _LEGACY_TOKEN.search("--accent-bg: var(--accent-soft);")
+    assert _LEGACY_TOKEN.search("color: var(--ink-7)")  # usage
+    assert not _LEGACY_TOKEN.search("--ink-soft: oklch(0.5 0 0);")  # house token
+    assert not _LEGACY_TOKEN.search("color: var(--ink)")
+    assert not _LEGACY_TOKEN.search("background: var(--accent-soft)")
 
 
 def test_no_oklch_literals_outside_the_stylesheets() -> None:
