@@ -50,11 +50,23 @@ def _identity(**overrides) -> OIDCIdentity:
 class _FakeOIDCClient:
     """Stands in for an Authlib StarletteOAuth2App — no network."""
 
-    def __init__(self, claims=None, error=None, redirect="https://authentik.test/authorize?x=1", redirect_error=None):
+    def __init__(
+        self,
+        claims=None,
+        error=None,
+        redirect="https://authentik.test/authorize?x=1",
+        redirect_error=None,
+        id_token=None,
+        metadata=None,
+        metadata_error=None,
+    ):
         self._claims = claims
         self._error = error
         self._redirect = redirect
         self._redirect_error = redirect_error
+        self._id_token = id_token
+        self._metadata = metadata or {}
+        self._metadata_error = metadata_error
 
     async def authorize_redirect(self, request, redirect_uri):
         from fastapi.responses import RedirectResponse
@@ -68,7 +80,15 @@ class _FakeOIDCClient:
             raise self._error
         # token["userinfo"] carries the ID-token claims Authlib validated; None
         # here models a token response Authlib could not ID-token-validate.
-        return {"userinfo": self._claims}
+        token = {"userinfo": self._claims}
+        if self._id_token is not None:
+            token["id_token"] = self._id_token
+        return token
+
+    async def load_server_metadata(self):
+        if self._metadata_error is not None:
+            raise self._metadata_error
+        return self._metadata
 
 
 @pytest.fixture(name="patch_oidc")
@@ -909,6 +929,154 @@ async def test_callback_second_login_reuses_account(anon_client, patch_oidc, ses
     assert first.status_code == second.status_code == 303
     users = (await session.exec(select(User).where(User.email == "route@sso.test"))).all()
     assert len(users) == 1
+
+
+# --------------------------------------------------------------------------- #
+# RP-initiated logout + shorter SSO session lifetime (#221)
+# --------------------------------------------------------------------------- #
+
+
+def test_sso_session_lifetime_helper(monkeypatch):
+    from datetime import timedelta
+
+    from app.auth import _session_within_sso_max_age
+
+    monkeypatch.setattr(settings, "oidc_session_max_age", 3600)
+    now = datetime.now(timezone.utc)
+    sso = User(username="s", oidc_subject="sub", auth_provider="authentik", oidc_issuer="https://idp.test/")
+    local = User(username="l", password_hash="x")
+    assert _session_within_sso_max_age(sso, now) is True
+    assert _session_within_sso_max_age(sso, now - timedelta(seconds=7200)) is False  # > 1h old
+    # A local account is never subject to the SSO lifetime.
+    assert _session_within_sso_max_age(local, now - timedelta(days=30)) is True
+
+
+async def test_sso_session_expired_is_rejected(anon_client, session, monkeypatch):
+    # An SSO session older than oidc_session_max_age no longer authenticates, so the
+    # dashboard bounces to /login (an IdP-side disable propagates via forced re-auth).
+    session.add(
+        User(
+            username="ssouser",
+            password_hash=None,
+            oidc_subject="sub-1",
+            auth_provider="authentik",
+            oidc_issuer="https://idp.test/",
+            role_managed_by_idp=True,
+        )
+    )
+    await session.commit()
+    monkeypatch.setattr(settings, "oidc_session_max_age", 0)  # any cookie is instantly stale
+    cookie = create_session_cookie("ssouser")
+    r = await anon_client.get("/", cookies={settings.session_cookie_name: cookie})
+    assert r.status_code == 303
+    assert "/login" in r.headers["location"]
+
+
+async def test_callback_sets_short_session_and_id_token(anon_client, patch_oidc, monkeypatch):
+    monkeypatch.setattr(settings, "oidc_session_max_age", 1800)
+    patch_oidc(_FakeOIDCClient(claims=_claims(), id_token="header.payload.sig"))
+    r = await anon_client.get("/auth/oidc/authentik/callback?code=x&state=y")
+    assert r.status_code == 303
+    set_cookie = " ".join(r.headers.get_list("set-cookie"))
+    # Session cookie carries the shorter SSO max-age, and the id_token is stashed HttpOnly.
+    assert f"{settings.session_cookie_name}=" in set_cookie
+    assert "Max-Age=1800" in set_cookie
+    assert f"{settings.oidc_id_token_cookie_name}=header.payload.sig" in set_cookie
+    assert settings.oidc_id_token_cookie_name in r.cookies
+
+
+async def test_logout_sso_redirects_to_idp_end_session(anon_client, session, patch_oidc):
+    session.add(
+        User(
+            username="ssouser",
+            password_hash=None,
+            oidc_subject="sub-1",
+            auth_provider="authentik",
+            oidc_issuer="https://idp.test/",
+            role_managed_by_idp=True,
+        )
+    )
+    await session.commit()
+    patch_oidc(_FakeOIDCClient(metadata={"end_session_endpoint": "https://idp.test/end-session"}))
+    r = await anon_client.post(
+        "/logout",
+        cookies={
+            settings.session_cookie_name: create_session_cookie("ssouser"),
+            settings.oidc_id_token_cookie_name: "the-id-token",
+        },
+    )
+    assert r.status_code == 303
+    loc = r.headers["location"]
+    assert loc.startswith("https://idp.test/end-session?")
+    assert "id_token_hint=the-id-token" in loc
+    assert "post_logout_redirect_uri=http" in loc
+    assert "client_id=" in loc
+    # Both local cookies are cleared regardless.
+    set_cookie = " ".join(r.headers.get_list("set-cookie"))
+    assert settings.session_cookie_name in set_cookie
+    assert settings.oidc_id_token_cookie_name in set_cookie
+
+
+async def test_logout_sso_without_end_session_endpoint_falls_back_local(anon_client, session, patch_oidc):
+    session.add(
+        User(
+            username="ssouser",
+            password_hash=None,
+            oidc_subject="sub-1",
+            auth_provider="authentik",
+            oidc_issuer="https://idp.test/",
+            role_managed_by_idp=True,
+        )
+    )
+    await session.commit()
+    # Provider discovery advertises no end_session_endpoint — logout stays local.
+    patch_oidc(_FakeOIDCClient(metadata={}))
+    r = await anon_client.post("/logout", cookies={settings.session_cookie_name: create_session_cookie("ssouser")})
+    assert r.status_code == 303
+    assert r.headers["location"] == "/login"
+
+
+async def test_logout_local_user_stays_local(client):
+    # The seeded testadmin is a local account (no oidc_subject) — logout never touches
+    # an IdP even when SSO is configured.
+    r = await client.post("/logout")
+    assert r.status_code == 303
+    assert r.headers["location"] == "/login"
+
+
+@pytest.mark.parametrize(
+    "err",
+    [ValueError("malformed discovery JSON"), TypeError("metadata not a dict")],
+)
+async def test_logout_survives_malformed_discovery(anon_client, session, patch_oidc, err):
+    # Discovery fetch/parse can raise beyond httpx/OAuthError (a bad JSON body →
+    # ValueError, a non-dict body → TypeError). RP logout is best-effort: any such
+    # failure must still fall back to a local logout that clears both cookies and
+    # never 500s — a 500 here would leave the local session active (#247 review).
+    session.add(
+        User(
+            username="ssouser",
+            password_hash=None,
+            oidc_subject="sub-1",
+            auth_provider="authentik",
+            oidc_issuer="https://idp.test/",
+            role_managed_by_idp=True,
+        )
+    )
+    await session.commit()
+    patch_oidc(_FakeOIDCClient(metadata_error=err))
+    r = await anon_client.post(
+        "/logout",
+        cookies={
+            settings.session_cookie_name: create_session_cookie("ssouser"),
+            settings.oidc_id_token_cookie_name: "the-id-token",
+        },
+    )
+    assert r.status_code == 303
+    assert r.headers["location"] == "/login"
+    set_cookie = " ".join(r.headers.get_list("set-cookie"))
+    assert settings.session_cookie_name in set_cookie
+    assert settings.oidc_id_token_cookie_name in set_cookie
 
 
 async def test_callback_invalid_token_denies(anon_client, patch_oidc, caplog):

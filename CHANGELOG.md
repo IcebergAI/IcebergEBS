@@ -392,6 +392,14 @@ release to diff against.
 
 ### Security
 
+- **SSO: RP-initiated logout + shorter SSO session lifetime** (#221). Logging out of an SSO account
+  now redirects to the IdP's `end_session_endpoint` (with the `id_token_hint`) so the provider
+  session is terminated, not just the local cookie — falling back to a local-only logout when the
+  provider has no such endpoint. SSO sessions also expire on a shorter, configurable lifetime
+  (`ICEBERG_EBS_OIDC_SESSION_MAX_AGE`, default 1h) than local password sessions: an IdP-side
+  disable/reset can't be pushed to us, so a short lifetime forces re-authentication through the IdP
+  — which fails for a disabled account — bounding how long a stale session or stolen cookie survives.
+  Continuous back-channel logout and an explicit IdP block/allowlist remain tracked follow-ups.
 - **SSO: closed a cross-provider identity-spoofing hole** (#226). OIDC provisioning matched an
   account on the validated `(oidc_issuer, oidc_subject)` pair *globally*, but Authlib only checks a
   token's `iss` against the *originating* provider's own discovery metadata — so a hostile or

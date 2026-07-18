@@ -166,6 +166,9 @@
         available as break-glass in <strong>both</strong> mode.</li>
       <li>Accounts are keyed on the provider's immutable subject, never the (mutable) email — an
         SSO login whose email matches an existing account is denied rather than auto-linked.</li>
+      <li>SSO sessions are shorter-lived than password sessions and re-authenticate through the
+        identity provider on expiry, so an IdP-side disable or password reset takes effect without an
+        admin. Signing out also ends the session at the provider (RP-initiated logout).</li>
     </ul>
   </div>
 

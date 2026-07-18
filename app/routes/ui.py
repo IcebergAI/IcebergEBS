@@ -13,7 +13,15 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app import oidc_settings, proxy_settings
 from app.alert_queries import get_alert_log
-from app.auth import authenticate_session, clear_session, get_current_user, set_session, verify_credentials
+from app.auth import (
+    authenticate_session,
+    clear_oidc_id_token,
+    clear_session,
+    get_current_user,
+    get_oidc_id_token,
+    set_session,
+    verify_credentials,
+)
 from app.config import settings
 from app.deps import AdminUserUI, SessionDep, WebUser
 from app.extension_queries import (
@@ -175,10 +183,33 @@ async def login_post(
     return _render(request, "login.html", _login_context("Invalid credentials"))
 
 
+def _post_logout_redirect_uri(request: Request) -> str:
+    """Absolute /login URL the IdP returns to after RP-initiated logout — the same
+    base resolution as the OIDC callback (configured base, else the request)."""
+    base = oidc_settings.get_config().oidc_redirect_base_url or settings.app_base_url
+    base = base.rstrip("/") if base else str(request.base_url).rstrip("/")
+    return f"{base}/login"
+
+
 @router.post("/logout")
-async def logout(request: Request, _: WebUser):
-    response = RedirectResponse("/login", status_code=303)
+async def logout(request: Request, user: WebUser):
+    # For an SSO account, additionally end the session at the IdP (RP-initiated
+    # logout, #221) so logout isn't merely local. Best-effort: if the provider has
+    # no end_session_endpoint or is unreachable, fall through to the local logout —
+    # the local cookies are always cleared, and logout never 500s.
+    id_token = get_oidc_id_token(request)
+    target = "/login"
+    if user.oidc_subject is not None:
+        idp_url = await oidc_service.end_session_url(
+            user.auth_provider,
+            post_logout_redirect_uri=_post_logout_redirect_uri(request),
+            id_token=id_token,
+        )
+        if idp_url:
+            target = idp_url
+    response = RedirectResponse(target, status_code=303)
     clear_session(response)
+    clear_oidc_id_token(response)
     return response
 
 
