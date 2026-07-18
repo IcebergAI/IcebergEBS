@@ -580,6 +580,31 @@ async def test_targets_are_labels_only(client, test_db, admin_user):
     assert "secrettoken" not in joined
 
 
+async def test_targets_include_enabled_idp(client):
+    # #232: SSO egress (OIDC discovery/JWKS/token/userinfo) is a probeable target too.
+    # conftest enables the Authentik provider, so its IdP origin must be listed —
+    # by label only, never the metadata URL.
+    r = await client.get("/api/proxy/targets")
+    assert r.status_code == 200
+    targets = r.json()["targets"]
+    assert any(t.startswith("SSO: Authentik") for t in targets)
+    assert "http" not in " ".join(targets)
+    assert "authentik.test" not in " ".join(targets)
+
+
+@respx.mock
+async def test_idp_target_is_probeable(client):
+    # The SSO label resolves through the server-built map (never a body URL), so the
+    # /test endpoint accepts and dials it — exactly the tool an admin needs to check
+    # IdP reachability. Probes the discovery origin, not the capability-free store path.
+    await client.put("/api/proxy/settings", json={"mode": "NONE"})
+    route = respx.get("https://authentik.test/").mock(return_value=httpx.Response(200))
+    r = await client.post("/api/proxy/test", json={"target": "SSO: Authentik (IdP)"})
+    assert r.status_code == 200
+    assert r.json()["result"] == "ok: HTTP 200"
+    assert route.called
+
+
 async def test_test_endpoint_rejects_unknown_target(client):
     r = await client.post("/api/proxy/test", json={"target": "https://evil.internal/"})
     assert r.status_code == 400
