@@ -145,7 +145,14 @@ class Settings(BaseSettings):
     # Same-origin requests are always allowed with no configuration.
     trusted_origins: str = ""
 
-    model_config = SettingsConfigDict(env_file=".env", env_prefix="ICEBERG_EBS_")
+    # extra="ignore" so the shared .env (which .env.example tells operators to fill
+    # with the Compose stack's POSTGRES_DB / POSTGRES_USER / POSTGRES_PASSWORD) doesn't
+    # crash app startup: without it pydantic-settings treats every non-ICEBERG_EBS_ key
+    # in the dotenv as a forbidden extra (#214). The ICEBERG_EBS_ prefix is deliberately
+    # shared with consumers outside this class — the per-provider OIDC secrets are read
+    # straight from os.environ in app/oidc/config.py — so this class can't own an
+    # exhaustive "known keys" set anyway.
+    model_config = SettingsConfigDict(env_file=".env", env_prefix="ICEBERG_EBS_", extra="ignore")
 
     @field_validator("secret_key")
     @classmethod

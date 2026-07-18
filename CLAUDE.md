@@ -50,7 +50,7 @@ ICEBERG_EBS_TEST_DATABASE_URL=postgresql+asyncpg://iceberg_ebs:iceberg_ebs@local
 # or simply: make test
 ```
 `ICEBERG_EBS_TEST_DATABASE_URL` selects the test database (falls back to `ICEBERG_EBS_DATABASE_URL`).
-**Host-side `uv run pytest` / `uv run alembic` / `make test` fails while `.env` carries the `POSTGRES_*` keys** (pydantic `extra_forbidden`, bug #214): comment those three lines out before the first host-side run, keep them commented for the whole work session (don't restore between rounds), and restore them when done — `docker compose up` needs them.
+Host-side `uv run pytest` / `uv run alembic` / `make test` tolerate the Compose `POSTGRES_*` keys sitting in the shared `.env` since #214 (`Settings` uses `extra="ignore"`, so non-`ICEBERG_EBS_` dotenv keys are dropped instead of raising `extra_forbidden`) — no need to comment them out anymore.
 
 `pytest.ini` sets `asyncio_mode = auto` so async tests run without extra decoration. It also pins `asyncio_default_fixture_loop_scope`/`asyncio_default_test_loop_scope` to `session` because the test DB is a single **session-scoped** Postgres engine (`tests/conftest.py`) shared by all tests — fixtures and tests must run on one event loop or asyncpg raises "attached to a different loop". Per-test isolation is the autouse `_clean_tables` fixture, which `TRUNCATE … RESTART IDENTITY CASCADE`s every table after each test.
 
