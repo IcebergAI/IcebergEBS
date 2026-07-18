@@ -2,7 +2,7 @@ from datetime import datetime
 from typing import Optional
 
 from fastapi import APIRouter
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from sqlmodel import select
 
 from app.auth import generate_api_key, hash_api_key
@@ -13,6 +13,8 @@ router = APIRouter(prefix="/api", tags=["api-keys"])
 
 
 class ApiKeyOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: int
     label: str
     key_prefix: str
@@ -39,18 +41,7 @@ async def list_keys(
     keys = (
         await session.exec(select(ApiKey).where(ApiKey.user_id == current_user.id).order_by(ApiKey.created_at))
     ).all()
-    return [
-        ApiKeyOut(
-            id=k.id,
-            label=k.label,
-            key_prefix=k.key_prefix,
-            key_suffix=k.key_suffix,
-            readonly=k.readonly,
-            created_at=k.created_at,
-            last_used_at=k.last_used_at,
-        )
-        for k in keys
-    ]
+    return [ApiKeyOut.model_validate(k) for k in keys]
 
 
 @router.post("/keys", status_code=201)
@@ -73,16 +64,9 @@ async def create_key(
     session.add(api_key)
     await session.commit()
     await session.refresh(api_key)
-    return ApiKeyCreateOut(
-        id=api_key.id,
-        label=api_key.label,
-        key_prefix=api_key.key_prefix,
-        key_suffix=api_key.key_suffix,
-        readonly=api_key.readonly,
-        created_at=api_key.created_at,
-        last_used_at=api_key.last_used_at,
-        raw_key=raw_key,
-    )
+    # raw_key is not an ORM attribute (returned once, never stored), so graft it
+    # onto the from_attributes conversion rather than hand-copying every column.
+    return ApiKeyCreateOut(**ApiKeyOut.model_validate(api_key).model_dump(), raw_key=raw_key)
 
 
 @router.delete("/keys/{key_id}")
