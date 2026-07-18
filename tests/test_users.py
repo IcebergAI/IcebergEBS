@@ -1,8 +1,8 @@
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from app.auth import hash_password
 from app.models import User
+from tests.conftest import cached_password_hash
 
 
 async def test_list_users_admin(client):
@@ -16,7 +16,7 @@ async def test_list_users_admin(client):
 async def test_list_users_requires_admin(client, test_db):
     # Create a regular (non-admin) user and log in as them
     async with AsyncSession(test_db) as s:
-        regular = User(username="regularuser", password_hash=await hash_password("pw"), is_admin=False)
+        regular = User(username="regularuser", password_hash=cached_password_hash("pw"), is_admin=False)
         s.add(regular)
         await s.commit()
 
@@ -162,7 +162,7 @@ async def test_delete_user_preserves_history(client, test_db, admin_user):
     )
 
     async with AsyncSession(test_db) as s:
-        victim = User(username="victim", password_hash=await hash_password("pw"), is_admin=False)
+        victim = User(username="victim", password_hash=cached_password_hash("pw"), is_admin=False)
         s.add(victim)
         await s.commit()
         await s.refresh(victim)
@@ -256,7 +256,7 @@ async def test_user_isolation(client, test_db):
 
     # Create user B
     async with AsyncSession(test_db) as s:
-        user_b = User(username="userb", password_hash=await hash_password("pw"), is_admin=False)
+        user_b = User(username="userb", password_hash=cached_password_hash("pw"), is_admin=False)
         s.add(user_b)
         await s.commit()
         await s.refresh(user_b)
