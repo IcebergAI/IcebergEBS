@@ -49,7 +49,7 @@ class VSCodeFetcher(BaseFetcher):
         last_updated = None
         if raw_date := latest.get("lastUpdated"):
             try:
-                last_updated = datetime.fromisoformat(raw_date.replace("Z", "+00:00"))
+                last_updated = datetime.fromisoformat(raw_date)
             except ValueError:
                 pass
 
