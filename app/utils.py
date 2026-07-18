@@ -12,7 +12,13 @@ logger = logging.getLogger(__name__)
 # filesystem — a hard requirement for an SSRF-conscious app whose containers
 # must not grow surprise egress at import time. The snapshot refreshes with the
 # (Dependabot-managed) tldextract release cadence, which is plenty for scoring.
-_psl_extract = tldextract.TLDExtract(suffix_list_urls=(), cache_dir=None)
+#
+# include_psl_private_domains=True honours the PSL *private* section (github.io,
+# blogspot.com, s3-style buckets, …) so independently-controlled tenants under a
+# hosting suffix — alice.github.io vs bob.github.io — count as distinct parties
+# rather than both collapsing to github.io, which is exactly the undercount this
+# score guards against (#254 review).
+_psl_extract = tldextract.TLDExtract(suffix_list_urls=(), cache_dir=None, include_psl_private_domains=True)
 
 
 def safe_json_loads(raw: str | None, default: str, field: str, ext_id: int | None):
@@ -66,4 +72,7 @@ def registrable_domain(hostname: str) -> str:
     (IP literals, single-label hosts, unknown suffixes) so callers never lose an
     entry by normalising it.
     """
-    return _psl_extract(hostname).registered_domain or hostname
+    # top_domain_under_public_suffix is the non-deprecated spelling of the old
+    # registered_domain, and (with private domains enabled above) is private-suffix
+    # aware — the eTLD+1 under the full public suffix.
+    return _psl_extract(hostname).top_domain_under_public_suffix or hostname

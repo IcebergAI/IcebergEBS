@@ -274,6 +274,23 @@ def test_domains_public_suffix_not_collapsed():
     assert score_external_domains(a) == 6
 
 
+def test_domains_psl_private_suffix_tenants_are_distinct():
+    # github.io / blogspot.com are PSL *private* suffixes: independently-controlled
+    # tenants under them are distinct third parties, not one (#254 review). Six
+    # tenants must score as six domains, not collapse to github.io / blogspot.com.
+    a = PackageAnalysis(
+        external_domains=[
+            "alice.github.io",
+            "bob.github.io",
+            "carol.github.io",
+            "x.blogspot.com",
+            "y.blogspot.com",
+            "z.blogspot.com",
+        ],
+    )
+    assert score_external_domains(a) == 10  # >5 distinct parties
+
+
 def test_domains_unknown_suffix_and_ip_fall_back_to_hostname():
     # No registrable domain derivable (IP literal, single-label host): each entry
     # still counts as itself rather than being dropped.
