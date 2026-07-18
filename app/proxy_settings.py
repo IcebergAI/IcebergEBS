@@ -99,7 +99,19 @@ async def update_settings(session: AsyncSession, changes: dict[str, Any]) -> Pro
         raise RuntimeError("ProxySettings singleton row missing")
     for key in EDITABLE_FIELDS:
         if key in changes and changes[key] is not None:
-            setattr(row, key, changes[key])
+            value = changes[key]
+            if key == "mode":
+                # Normalise to the canonical uppercase ProxyMode, rejecting junk/lowercase
+                # up front. Without this a 'explicit' slips past the case-sensitive CHECK
+                # and the EXPLICIT⇒URL guard below (which compared against 'EXPLICIT'),
+                # committing an EXPLICIT-with-no-URL row the resolver treats as direct
+                # egress — the fail-open state both guards exist to prevent (#230).
+                try:
+                    value = proxy.ProxyMode(str(value).strip().upper()).value
+                except ValueError:
+                    await session.rollback()  # discard the patch and release the row lock
+                    raise ValueError("invalid proxy mode") from None
+            setattr(row, key, value)
     if row.mode == proxy.ProxyMode.EXPLICIT.value and not row.proxy_url.strip():
         await session.rollback()  # discard the patch and release the row lock
         raise ValueError("explicit mode requires a proxy URL")
@@ -108,10 +120,11 @@ async def update_settings(session: AsyncSession, changes: dict[str, Any]) -> Pro
     try:
         await session.commit()
     except IntegrityError as exc:
-        # The CHECK constraint fired — only reachable by a writer racing outside
-        # this function's lock discipline. Same client-facing error either way.
+        # A CHECK constraint fired (mode enum or EXPLICIT⇒URL) — only reachable by a
+        # writer racing outside this function's lock discipline, since both are validated
+        # above pre-commit. Generic client-facing error either way.
         await session.rollback()
-        raise ValueError("explicit mode requires a proxy URL") from exc
+        raise ValueError("invalid proxy settings") from exc
     await session.refresh(row)
     proxy.set_config(_to_config(row))
     return row

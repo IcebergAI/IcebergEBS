@@ -75,6 +75,20 @@ async def _migrate(db_name: str) -> None:
     await engine.dispose()
 
 
+def _upgrade_to(db_name: str, revision: str) -> None:
+    """Run Alembic to a specific revision on ``db_name`` (sync), reusing a connection
+    the way ``app.database._run_migrations`` does."""
+    engine = create_engine(_sync_url(db_name))
+    try:
+        with engine.connect() as conn:
+            cfg = _alembic_config()
+            cfg.attributes["connection"] = conn
+            command.upgrade(cfg, revision)
+            conn.commit()
+    finally:
+        engine.dispose()
+
+
 def _tables(db_name: str) -> set[str]:
     engine = create_engine(_sync_url(db_name))
     try:
@@ -342,3 +356,35 @@ def test_head_matches_models(temp_db):
         diffs = compare_metadata(ctx, SQLModel.metadata)
     engine.dispose()
     assert diffs == [], f"Models drifted from migrations head: {diffs}"
+
+
+def test_proxysettings_mode_check_repairs_legacy_explicit_empty_url(temp_db):
+    """A pre-#230 fail-open ProxySettings row (mode='explicit', proxy_url='') seeded at the
+    parent revision must be REPAIRED to SYSTEM by the mode-CHECK migration, not abort the
+    upgrade. Canonicalising the case first ('explicit'→'EXPLICIT') would write an
+    EXPLICIT-with-empty-URL value that the existing ck_proxysettings_explicit_requires_url
+    rejects mid-statement — the migration must coerce it atomically (#230 review)."""
+    _upgrade_to(temp_db, "b7c8d9e0f1a2")  # parent: only the case-sensitive EXPLICIT⇒URL CHECK
+
+    engine = create_engine(_sync_url(temp_db))
+    try:
+        with engine.begin() as conn:
+            # Lowercase 'explicit' passes the parent CHECK (mode != 'EXPLICIT' is true).
+            conn.execute(
+                text(
+                    "INSERT INTO proxysettings (id, mode, proxy_url, no_proxy, updated_at) "
+                    "VALUES (1, 'explicit', '', '', now())"
+                )
+            )
+    finally:
+        engine.dispose()
+
+    _upgrade_to(temp_db, "head")  # must not raise on the fail-open row
+
+    engine = create_engine(_sync_url(temp_db))
+    try:
+        with engine.connect() as conn:
+            mode = conn.execute(text("SELECT mode FROM proxysettings WHERE id = 1")).scalar()
+    finally:
+        engine.dispose()
+    assert mode == "SYSTEM"  # coerced away from the fail-open EXPLICIT+empty state
