@@ -456,10 +456,24 @@ async def test_proxy_api_requires_admin(client, test_db, method, path, body):
     assert r.status_code == 403
 
 
-async def test_get_settings_seeds_from_env_without_credentials(client, monkeypatch):
+async def _reseed_proxy(test_db):
+    """Drop the conftest default-seed and re-seed from the current (monkeypatched)
+    env — the seed reads env only when the row is missing (#234)."""
+    from app import proxy_settings
+
+    async with AsyncSession(test_db) as s:
+        existing = await s.get(ProxySettings, 1)
+        if existing is not None:
+            await s.delete(existing)
+            await s.commit()
+        await proxy_settings.ensure_seeded(s)
+
+
+async def test_get_settings_seeds_from_env_without_credentials(client, test_db, monkeypatch):
     monkeypatch.setattr(settings, "proxy_mode", "explicit")
     monkeypatch.setattr(settings, "proxy_url", "http://seeded:3128")
     monkeypatch.setattr(settings, "proxy_no_proxy", "localhost")
+    await _reseed_proxy(test_db)
     r = await client.get("/api/proxy/settings")
     assert r.status_code == 200
     data = r.json()
@@ -720,13 +734,15 @@ async def test_admin_proxy_page_redirects_anonymous(anon_client):
 # ---------------------------------------------------------------------------
 
 
-async def test_singleton_row_created_once(test_db, monkeypatch):
+async def test_ensure_seeded_idempotent_and_from_env(test_db, monkeypatch):
     from app import proxy_settings
 
     monkeypatch.setattr(settings, "proxy_mode", "none")
+    await _reseed_proxy(test_db)
     async with AsyncSession(test_db) as s:
-        row1 = await proxy_settings.get_settings(s)
-        row2 = await proxy_settings.get_settings(s)
+        # Idempotent: a second call reuses the row rather than inserting a duplicate.
+        row1 = await proxy_settings.ensure_seeded(s)
+        row2 = await proxy_settings.ensure_seeded(s)
     assert row1.id == 1
     assert row2.id == 1
     assert row1.mode == "NONE"
@@ -740,6 +756,7 @@ async def test_junk_seed_mode_normalises_to_system(test_db, monkeypatch):
     from app import proxy_settings
 
     monkeypatch.setattr(settings, "proxy_mode", "garbage")
+    await _reseed_proxy(test_db)
     async with AsyncSession(test_db) as s:
         row = await proxy_settings.get_settings(s)
     assert row.mode == "SYSTEM"
@@ -749,7 +766,9 @@ async def test_refresh_cache_loads_snapshot(test_db, monkeypatch):
     from app import proxy_settings
 
     monkeypatch.setattr(settings, "proxy_mode", "none")
-    assert proxy.get_config() is None
+    # The conftest seeds the row from the default env; re-seed from the monkeypatched
+    # env so refresh_cache loads NONE into the snapshot.
+    await _reseed_proxy(test_db)
     async with AsyncSession(test_db) as s:
         await proxy_settings.refresh_cache(s)
     cfg = proxy.get_config()

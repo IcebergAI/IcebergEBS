@@ -648,10 +648,6 @@ async def admin_proxy_page(
     session: SessionDep,
 ):
     row = await proxy_settings.get_settings(session)
-    # get_settings commits when it seeds the singleton (first read), which expires
-    # every instance in this request session — including current_user, whose
-    # attributes _render reads. Reload it or the template render dies lazy-loading.
-    await session.refresh(current_user)
     return _render(
         request,
         "admin_proxy.html",
@@ -679,9 +675,6 @@ async def admin_oidc_page(
     session: SessionDep,
 ):
     row = await oidc_settings.get_settings(session)
-    # Same trap as /admin/proxy: get_settings commits when it seeds the singleton,
-    # expiring current_user's attributes mid-request. Reload before rendering.
-    await session.refresh(current_user)
     return _render(
         request,
         "admin_oidc.html",

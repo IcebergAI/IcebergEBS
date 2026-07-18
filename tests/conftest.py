@@ -144,6 +144,22 @@ async def _clean_tables(test_db):
         await conn.execute(text(f"TRUNCATE TABLE {table_list} RESTART IDENTITY CASCADE"))
 
 
+@pytest_asyncio.fixture(autouse=True, loop_scope="session")
+async def _seed_settings_singletons(test_db):
+    """Seed the proxy/OIDC settings singletons before each test (#234).
+
+    Production seeds them in the lifespan (``refresh_cache``); the ASGITransport test
+    client doesn't run lifespan, and ``get_settings`` is now read-only (seeding moved
+    out of the request path), so the row must exist up front. Runs after the prior
+    test's ``_clean_tables`` TRUNCATE, mirroring a fresh startup."""
+    from app import oidc_settings, proxy_settings
+
+    async with AsyncSession(test_db) as s:
+        await proxy_settings.ensure_seeded(s)
+        await oidc_settings.ensure_seeded(s)
+    yield
+
+
 @pytest_asyncio.fixture
 async def session(test_db):
     async with AsyncSession(test_db) as s:
