@@ -87,6 +87,17 @@ release to diff against.
 
 ### Changed
 
+- **Security headers are now owned by the app, not the edge.** The FastAPI `security_headers`
+  middleware emits the full canonical set on every response — CSP (`script-src 'self'`), HSTS
+  (`max-age=63072000; includeSubDomains; preload`, upgraded from the app's old 1-year no-preload
+  value), `Permissions-Policy` (previously edge-only), `X-Content-Type-Options`, `X-Frame-Options`,
+  `Referrer-Policy` — so the same strict policy reaches clients on every deployment path, proxied
+  or not. `caddy/headers.caddy` shrinks to a minimal static **set-if-absent** (`?`) fallback
+  covering only Caddy-generated responses (its own 502, the :80→HTTPS redirect); a hard edge SET
+  would clobber the app's canonical values and is now test-forbidden. While relocating, the CSP
+  was tightened: `style-src-elem 'self'` + `style-src-attr 'unsafe-inline'` (with
+  `style-src 'self' 'unsafe-inline'` kept as the legacy-browser fallback), and the unused `data:`
+  source dropped from `img-src`.
 - **Two static-inspector false positives no longer inflate scores** (#151): a bare
   `new XMLHttpRequest` constructor no longer counts as remote code (only a `.open(...)` to a
   literal `http(s)://` URL does — matching how `fetch()` was already scored), and a *scoped*

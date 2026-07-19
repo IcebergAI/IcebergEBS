@@ -92,9 +92,10 @@ The chart is at
 [`helm/iceberg-ebs/`](https://github.com/IcebergAI/IcebergEBS/tree/main/helm/iceberg-ebs).
 
 **Topology:** cluster ingress-nginx (TLS via cert-manager, edge rate limiting) →
-**in-pod Caddy sidecar** on `:8080` → app on `localhost:8000`. The sidecar owns the
-canonical security headers, mirrored into a ConfigMap from the same `caddy/` files
-the Compose stack mounts — a test fails the build if the two drift.
+**in-pod Caddy sidecar** on `:8080` → app on `localhost:8000`. The app owns the
+canonical security headers; the sidecar carries a minimal set-if-absent fallback,
+mirrored into a ConfigMap from the same `caddy/` files the Compose stack mounts —
+a test fails the build if the two drift.
 
 ```bash
 helm upgrade --install icebergebs helm/iceberg-ebs \

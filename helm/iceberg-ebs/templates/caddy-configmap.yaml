@@ -8,15 +8,17 @@ metadata:
 # caddy/Caddyfile.k8s and caddy/headers.caddy. Helm's .Files.Get cannot read files above
 # the chart directory, so the K8s edge config is embedded here rather than referenced.
 # tests/test_helm_caddy.py compares each block byte-for-byte with the canonical file, and
-# tests/test_csp_hash.py checks the CSP pin here too — so the "single source" guarantee
-# is enforced by CI, not by hand (#188). Edit caddy/ and re-mirror, never edit only here.
+# tests/test_csp_strict.py + tests/test_security_headers.py guard the header contract —
+# so the "single source" guarantee is enforced by CI, not by hand (#188). Edit caddy/ and
+# re-mirror, never edit only here.
 data:
   # Mirror of caddy/Caddyfile.k8s (mounted as /etc/caddy/Caddyfile — the default config path).
   Caddyfile: |
     # In-pod reverse proxy for the Kubernetes deployment (#188). Topology: cluster ingress
     # (TLS termination via cert-manager, edge rate limiting) → THIS Caddy sidecar → app on
-    # localhost:8000. Caddy owns the canonical security headers here too (imported from the
-    # same headers.caddy), so the ingress no longer has to duplicate the CSP snippet.
+    # localhost:8000. The app owns the canonical security headers (app/main.py:
+    # security_headers); the sidecar imports the same headers.caddy set-if-absent fallback
+    # as Compose, and the ingress still doesn't duplicate any CSP snippet.
     #
     # Delivered to the pod as a ConfigMap mounted at /etc/caddy (see the Helm chart), so the
     # `import headers.caddy` path resolves next to this file exactly as it does in Compose.
@@ -52,7 +54,8 @@ data:
     		respond "ok" 200
     	}
 
-    	# Canonical security headers (single source of truth, shared with Compose).
+    	# Fallback security headers (set-if-absent, shared with Compose) — the app owns
+    	# the canonical set; these only apply to Caddy-generated responses.
     	import headers.caddy
 
     	# Everything (including /static, which the app serves via StaticFiles) → the app in the
@@ -70,42 +73,33 @@ data:
     }
   # Mirror of caddy/headers.caddy (imported by the Caddyfile above via `import headers.caddy`).
   headers.caddy: |
-    # Canonical security headers — the SINGLE source of truth, imported by both the
-    # Compose Caddyfile and the Kubernetes Caddyfile (caddy/Caddyfile{,.k8s}). This is
-    # what replaced the old two-places duplication (nginx/security_headers.conf AND the
-    # Helm ingress configuration-snippet) that #188 set out to remove.
+    # MINIMAL STATIC FALLBACK security headers — the app (app/main.py:security_headers)
+    # is the canonical owner of every security header on every response it generates.
+    # This block exists only for responses Caddy itself generates and the app never sees:
+    # Caddy's own 502 when the app is down, and the :80 → HTTPS redirect. Imported by both
+    # the Compose Caddyfile and the Kubernetes Caddyfile (caddy/Caddyfile{,.k8s}).
     #
-    # The app emits a *baseline* copy of these too (app/main.py:security_headers, #66) —
-    # deliberately without script-src/default-src so it can never intersect and break
-    # this fuller policy. Caddy SETs (replaces) each header here, so exactly one
-    # canonical value reaches the client even though the upstream sent its baseline.
+    # Every op here uses `?` (set-if-absent): on a proxied response the app's canonical
+    # header already exists, so nothing here applies. A hard SET must NEVER reappear in
+    # this file — it would clobber the app's canonical value (the #201 double-header bug
+    # class, inverted); tests/test_security_headers.py enforces ?-only ops.
     #
-    # Every asset is self-hosted (#85), so no third-party origin appears in any
-    # directive: script-src/style-src/font-src are same-origin only.
+    # The fallback CSP is deliberately a tiny static deny-all — Caddy's own error/redirect
+    # responses render no content — so it never needs syncing with the app policy.
     #
-    # `defer` is REQUIRED for that "exactly one" guarantee: it runs these header ops AFTER
-    # reverse_proxy has copied the upstream (app baseline) response headers, so each SET
-    # overrides the upstream's copy instead of being applied first and then coexisting with
-    # it — which would ship two CSP / HSTS values. The block also happens to defer implicitly
-    # because it contains a delete op (`-Server`), but relying on that is fragile: removing
-    # `-Server` would silently reintroduce the duplicate headers. The explicit `defer` makes
-    # the guarantee robust to future edits (#201).
-    #
-    # script-src is a strict 'self' — no hash, no unsafe-inline, no unsafe-eval (#106).
-    # There are NO inline scripts anywhere: the app ships the @alpinejs/csp build, the
-    # theme bootstrap is the external static/js/theme-boot.js, and every component is
-    # registered from same-origin files (tests/test_csp_strict.py enforces all of this).
-    # style-src keeps 'unsafe-inline' deliberately: the templates use inline style=
-    # attributes (dynamic widths, token-var colours), and style injection is not a
-    # script-execution vector.
+    # `defer` is REQUIRED: it runs these ops AFTER reverse_proxy has copied the upstream
+    # (app) response headers, which is what lets `?` see the app's canonical values and
+    # stand down. Without it the fallback would be applied first and the app's header
+    # copied in afterwards — two CSP values, and the browser enforces the intersection
+    # (default-src 'none'), breaking every page (#201).
     header {
     	defer
-    	Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; object-src 'none'; form-action 'self'"
-    	Strict-Transport-Security "max-age=63072000; includeSubDomains; preload"
-    	X-Content-Type-Options "nosniff"
-    	X-Frame-Options "DENY"
-    	Referrer-Policy "same-origin"
-    	Permissions-Policy "accelerometer=(), camera=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), payment=(), usb=()"
+    	?Content-Security-Policy "default-src 'none'; frame-ancestors 'none'"
+    	?Strict-Transport-Security "max-age=63072000; includeSubDomains; preload"
+    	?X-Content-Type-Options "nosniff"
+    	?X-Frame-Options "DENY"
+    	?Referrer-Policy "same-origin"
+    	?Permissions-Policy "accelerometer=(), camera=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), payment=(), usb=()"
     	# Don't advertise the server software (parity with nginx `server_tokens off`).
     	-Server
     }

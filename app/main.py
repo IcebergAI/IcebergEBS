@@ -4,7 +4,7 @@ from contextlib import asynccontextmanager
 import httpx
 from fastapi import FastAPI, Request
 from fastapi.openapi.docs import get_redoc_html, get_swagger_ui_html
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 
@@ -178,14 +178,34 @@ async def readyz() -> JSONResponse:
     )
 
 
-# Conservative app-layer security-header floor (#66, defence-in-depth). In production
-# the reverse proxy (Caddy — caddy/headers.caddy) is the source of truth: it SETs
-# (replaces) these with its own canonical CSP + HSTS, so exactly one value reaches the
-# client. This floor only matters on a non-proxied path (or if the proxy header config
-# regresses). script-src/default-src are deliberately omitted so that on any path where
-# both the app and proxy CSPs are enforced, the app policy can never intersect with —
-# and break — the proxy's CDN asset loading.
-_BASELINE_CSP = "frame-ancestors 'none'; base-uri 'self'; object-src 'none'; form-action 'self'"
+# Canonical security headers — the app is the SINGLE source of truth (inverting the
+# old #66 design where Caddy SET the full policy over an app-side floor). Emitting the
+# canonical set here means every deployment path gets the same strict policy — proxied
+# (Compose/Helm Caddy), bare uvicorn, and local dev — instead of the strict CSP
+# evaporating off-proxy. Caddy keeps only a minimal set-if-absent (`?`) fallback in
+# caddy/headers.caddy for responses the app never generates (its own 502, the :80
+# redirect); a hard edge SET must never reappear there or it clobbers these values
+# (the #201 double-header bug class, inverted — tests/test_security_headers.py guards).
+#
+# Every asset is self-hosted (#85), so no third-party origin appears in any directive.
+# script-src is a strict 'self' — no hash, no unsafe-inline, no unsafe-eval (#106):
+# there are NO inline scripts anywhere (the @alpinejs/csp build, the external
+# theme-boot.js bootstrap; tests/test_csp_strict.py enforces it on real responses).
+# style-src-elem is 'self' (no runtime <style> injection exists) while style-src-attr
+# keeps 'unsafe-inline' for the pervasive inline style= attributes — style injection
+# is not a script-execution vector. The plain style-src keeps 'unsafe-inline' too as
+# the pre-CSP3 fallback: browsers without -elem/-attr support would otherwise fall
+# through to default-src 'self' and drop every inline style= attribute.
+_CANONICAL_CSP = (
+    "default-src 'self'; script-src 'self'; "
+    "style-src 'self' 'unsafe-inline'; style-src-elem 'self'; style-src-attr 'unsafe-inline'; "
+    "font-src 'self'; img-src 'self'; connect-src 'self'; "
+    "frame-ancestors 'none'; base-uri 'self'; object-src 'none'; form-action 'self'"
+)
+_HSTS = "max-age=63072000; includeSubDomains; preload"
+_PERMISSIONS_POLICY = (
+    "accelerometer=(), camera=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), payment=(), usb=()"
+)
 
 
 @app.middleware("http")
@@ -230,19 +250,43 @@ async def edge_rate_limit(request: Request, call_next) -> Response:
     return await call_next(request)
 
 
-@app.middleware("http")
-async def security_headers(request: Request, call_next) -> Response:
-    response = await call_next(request)
+def _apply_security_headers(response: Response) -> Response:
+    # Hard-set (not setdefault): the app is the canonical owner, so nothing inner may
+    # shadow these values.
+    response.headers["Content-Security-Policy"] = _CANONICAL_CSP
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["X-Frame-Options"] = "DENY"
     response.headers["Referrer-Policy"] = "same-origin"
-    response.headers.setdefault("Content-Security-Policy", _BASELINE_CSP)
+    response.headers["Permissions-Policy"] = _PERMISSIONS_POLICY
     # HSTS only when the deployment is HTTPS (secure_cookies is the prod signal).
     # Sending it over plain-HTTP dev is meaningless and could poison a later
     # localhost HTTPS listener.
     if settings.secure_cookies:
-        response.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+        response.headers["Strict-Transport-Security"] = _HSTS
     return response
+
+
+@app.middleware("http")
+async def security_headers(request: Request, call_next) -> Response:
+    # Registered last → outermost of the user middleware, so every response built
+    # inside the stack gets the headers: CSRF 403s, rate-limit 429s, HTTPException
+    # handlers, and StaticFiles.
+    return _apply_security_headers(await call_next(request))
+
+
+async def _unhandled_exception_response(request: Request, exc: Exception) -> Response:
+    # An UNHANDLED exception propagates out of the middleware above before it can set
+    # any header: Starlette's ServerErrorMiddleware sits OUTSIDE all user middleware
+    # and builds the 500 response itself. Registering a generic-Exception handler is
+    # the supported hook into that boundary — Starlette passes it to
+    # ServerErrorMiddleware, which sends this response and then still re-raises the
+    # exception, so uvicorn's error log keeps the traceback. Without this, a bare
+    # 500 ships headerless on exactly the non-proxied paths the app-canonical
+    # design is meant to cover (behind Caddy the edge fallback would mask it).
+    return _apply_security_headers(PlainTextResponse("Internal Server Error", status_code=500))
+
+
+app.add_exception_handler(Exception, _unhandled_exception_response)
 
 
 app.mount("/static", StaticFiles(directory="static"), name="static")

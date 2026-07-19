@@ -1,7 +1,9 @@
 # Edge reverse proxy for the Docker Compose stack (#188 — replaces nginx).
-# Caddy terminates TLS, sets the canonical security headers (imported from
-# headers.caddy — the single CSP home), and proxies everything — including
-# /static, which the app serves via StaticFiles (#85) — to the app. Rate limiting is NOT done here: stock Caddy has no
+# Caddy terminates TLS and proxies everything — including /static, which the app
+# serves via StaticFiles (#85) — to the app. The app owns the canonical security
+# headers (app/main.py:security_headers); headers.caddy carries only a minimal
+# set-if-absent fallback for responses Caddy itself generates (its own 502, the
+# :80 redirect). Rate limiting is NOT done here: stock Caddy has no
 # rate_limit directive, so edge throttling moved app-side (app/ratelimit.py) with the
 # cluster ingress covering it in production (#188).
 {
@@ -13,8 +15,11 @@
 }
 
 # Plain-HTTP :80 — a local liveness endpoint for the container healthcheck (answered
-# without redirecting), everything else bounced to HTTPS.
+# without redirecting), everything else bounced to HTTPS. The redirect responses are
+# Caddy-generated (the app never sees them), so import the fallback headers here too.
 :80 {
+	import headers.caddy
+
 	handle /caddy-health {
 		respond "ok" 200
 	}
@@ -38,8 +43,8 @@
 		max_size 2MB
 	}
 
-	# Canonical security headers (single source of truth) — applies to every response,
-	# exactly as nginx included security_headers.conf in every location.
+	# Fallback security headers (set-if-absent) — the app owns the canonical set;
+	# these only apply to Caddy-generated responses, e.g. the 502 when the app is down.
 	import headers.caddy
 
 	# Everything — including /static — → the app (same topology as Caddyfile.k8s).

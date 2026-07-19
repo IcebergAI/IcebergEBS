@@ -62,9 +62,10 @@ spec:
           emptyDir: {}
       containers:
         # Edge reverse proxy (#188): the cluster ingress terminates TLS and forwards HTTP
-        # here on 8080; Caddy sets the canonical security headers and proxies to the app on
-        # localhost:8000 in this same pod. Owning the headers here is what lets the ingress
-        # drop its duplicated CSP snippet.
+        # here on 8080; Caddy proxies to the app on localhost:8000 in this same pod. The
+        # app owns the canonical security headers (app/main.py:security_headers); Caddy
+        # carries only the set-if-absent fallback for its own responses (e.g. a 502 when
+        # the app is down), and the ingress still duplicates no CSP snippet.
         - name: caddy
           image: "{{ .Values.caddy.image.repository }}:{{ .Values.caddy.image.tag }}"
           imagePullPolicy: {{ .Values.caddy.image.pullPolicy }}
