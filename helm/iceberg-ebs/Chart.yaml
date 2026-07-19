@@ -8,7 +8,9 @@ type: application
 # charts indistinguishable. Bump this whenever the templates change.
 # 0.2.1 (#285): ConfigMap forwards ICEBERG_EBS_OIDC_SESSION_MAX_AGE (new
 # oidcSessionMaxAge value, default 3600).
-version: 0.2.1
+# 0.2.2 (#278): ConfigMap forwards ICEBERG_EBS_API_KEY_SSO_MAX_AGE_DAYS (new
+# apiKeySsoMaxAgeDays value, default 30).
+version: 0.2.2
 # The application version this chart deploys. Kept equal to [project].version in
 # pyproject.toml (the SemVer single source of truth) and gated by
 # tests/test_helm_postgres.py — "1.0.0" against an 0.1.0b1 app was a cosmetic lie

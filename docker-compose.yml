@@ -82,6 +82,9 @@ services:
       # The SSO session cap (#221): bounds how long a stale session/stolen cookie
       # survives an IdP disable. Documented as tunable, so it must be forwarded (#285).
       ICEBERG_EBS_OIDC_SESSION_MAX_AGE: ${ICEBERG_EBS_OIDC_SESSION_MAX_AGE:-3600}
+      # Its M2M counterpart (#278): SSO-owned API keys expire this many days after
+      # creation, bounding an offboarded user's bearer tokens (0 disables).
+      ICEBERG_EBS_API_KEY_SSO_MAX_AGE_DAYS: ${ICEBERG_EBS_API_KEY_SSO_MAX_AGE_DAYS:-30}
       ICEBERG_EBS_HTTPX_TIMEOUT: ${ICEBERG_EBS_HTTPX_TIMEOUT:-15.0}
       # Extra origins the CSRF origin check trusts (#107, #153), for proxy deployments that
       # rewrite Host so the app-observed origin differs from the browser's. Empty ⇒ same-origin

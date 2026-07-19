@@ -1,9 +1,12 @@
 """Tests for M2M API key creation, listing, revocation, and authentication."""
 
+from datetime import datetime, timedelta, timezone
+
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.auth import generate_api_key, hash_api_key
+from app.config import settings
 from app.models import ApiKey, User
 from tests.conftest import cached_password_hash
 
@@ -209,3 +212,89 @@ async def test_readonly_key_blocks_delete(readonly_api_key_client, test_db, admi
 async def test_readonly_key_blocks_creating_new_key(readonly_api_key_client):
     r = await readonly_api_key_client.post("/api/keys", json={"label": "new-key"})
     assert r.status_code == 403
+
+
+# ---------------------------------------------------------------------------
+# SSO revocation controls on the bearer path (#278)
+# ---------------------------------------------------------------------------
+
+
+async def _sso_user_with_key(test_db, *, key_age_days: float = 0.0, username: str = "ssokey"):
+    """Seed an SSO-provisioned user (no local password) owning one API key."""
+    raw_key = generate_api_key()
+    async with AsyncSession(test_db) as s:
+        user = User(
+            username=username,
+            password_hash=None,
+            oidc_subject=f"sub-{username}",
+            auth_provider="authentik",
+            oidc_issuer="https://idp.test/",
+            role_managed_by_idp=True,
+        )
+        s.add(user)
+        await s.commit()
+        await s.refresh(user)
+        s.add(
+            ApiKey(
+                user_id=user.id,
+                label="soar",
+                key_hash=hash_api_key(raw_key),
+                created_at=datetime.now(timezone.utc) - timedelta(days=key_age_days),
+            )
+        )
+        await s.commit()
+        user_id = user.id
+    return raw_key, user_id
+
+
+async def test_sso_key_older_than_cap_is_rejected(anon_client, test_db):
+    # Mirrors test_sso_session_expired_is_rejected for the bearer path (#278): an
+    # offboarded SSO user's key must die within the bounded lifetime, because no
+    # app-side event will ever revoke it.
+    raw_key, _ = await _sso_user_with_key(test_db, key_age_days=settings.api_key_sso_max_age_days + 1)
+    r = await anon_client.get("/api/extensions", headers={"Authorization": f"Bearer {raw_key}"})
+    assert r.status_code == 401
+    assert "expired" in r.json()["detail"].lower()
+
+
+async def test_sso_key_within_cap_is_accepted(anon_client, test_db):
+    raw_key, _ = await _sso_user_with_key(test_db, key_age_days=1, username="ssofresh")
+    r = await anon_client.get("/api/extensions", headers={"Authorization": f"Bearer {raw_key}"})
+    assert r.status_code == 200
+
+
+async def test_local_key_unaffected_by_sso_cap(anon_client, test_db):
+    # Local accounts keep unbounded keys — their revocation path is change_password,
+    # which deletes keys outright.
+    raw_key = generate_api_key()
+    async with AsyncSession(test_db) as s:
+        user = User(username="localkey", password_hash=cached_password_hash("pw12345678"))
+        s.add(user)
+        await s.commit()
+        await s.refresh(user)
+        s.add(
+            ApiKey(
+                user_id=user.id,
+                label="old-local",
+                key_hash=hash_api_key(raw_key),
+                created_at=datetime.now(timezone.utc) - timedelta(days=400),
+            )
+        )
+        await s.commit()
+    r = await anon_client.get("/api/extensions", headers={"Authorization": f"Bearer {raw_key}"})
+    assert r.status_code == 200
+
+
+async def test_key_minted_before_password_change_is_rejected(anon_client, test_db):
+    # The password_changed_at marker is the generic revocation cutoff (#32): the
+    # IdP-driven sync bumps it to revoke sessions — keys must fall with them
+    # instead of surviving as a side door (#278).
+    raw_key, user_id = await _sso_user_with_key(test_db, key_age_days=2, username="ssobumped")
+    async with AsyncSession(test_db) as s:
+        user = await s.get(User, user_id)
+        user.password_changed_at = datetime.now(timezone.utc) - timedelta(days=1)
+        s.add(user)
+        await s.commit()
+    r = await anon_client.get("/api/extensions", headers={"Authorization": f"Bearer {raw_key}"})
+    assert r.status_code == 401
+    assert "revoked" in r.json()["detail"].lower()

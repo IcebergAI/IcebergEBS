@@ -61,6 +61,11 @@ class Settings(BaseSettings):
     # write so read-only bearer GETs don't commit on every call (a wasted round-trip
     # + row update under the scheduler's concurrent load) — see require_api_auth.
     api_key_last_used_throttle_seconds: int = 60
+    # Maximum age of an API key owned by an SSO account, in days (#278). An IdP-side
+    # disable can't be pushed to us and the offboarded user never logs in again, so
+    # nothing app-side would ever revoke their keys — a bounded lifetime is the same
+    # containment #221 applies to SSO cookies, scaled for M2M use. <= 0 disables.
+    api_key_sso_max_age_days: int = 30
     # App-level login throttling (defense-in-depth, independent of the reverse proxy).
     login_max_attempts: int = 5
     login_attempt_window_seconds: int = 300

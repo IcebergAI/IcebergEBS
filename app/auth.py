@@ -206,11 +206,34 @@ async def require_api_auth(
             raise HTTPException(status_code=401, detail="Invalid API key")
         if api_key.readonly and request.method not in ("GET", "HEAD"):
             raise HTTPException(status_code=403, detail="Read-only API key")
-        user_id = api_key.user_id  # capture before commit expires the object
+        # Capture before any commit expires the ORM object.
+        user_id = api_key.user_id
+        created_at = api_key.created_at
+        if created_at.tzinfo is None:
+            created_at = created_at.replace(tzinfo=timezone.utc)
+        now = datetime.now(timezone.utc)
+        user = await session.get(User, user_id)
+        if user is None:
+            raise HTTPException(status_code=401, detail="Invalid API key")
+        # Keys minted before the user's password_changed_at are revoked, mirroring
+        # the session-cookie cutoff (#278). Local password change already deletes
+        # keys outright; this fence is what makes the IdP-driven bump (the #32
+        # is_admin sync, which revokes cookies via the same marker) revoke bearer
+        # tokens too, instead of leaving them as a side door.
+        if not _session_after_password_change(user, created_at):
+            raise HTTPException(status_code=401, detail="API key revoked")
+        # SSO-owned keys carry a bounded lifetime (#278): an IdP-side disable can't
+        # be pushed to us and the offboarded user never logs in again, so nothing
+        # else would ever revoke their keys — the same containment #221 applies to
+        # SSO cookies, scaled for M2M use.
+        if user.oidc_subject is not None and settings.api_key_sso_max_age_days > 0:
+            age_days = (now - created_at).total_seconds() / 86400
+            if age_days > settings.api_key_sso_max_age_days:
+                raise HTTPException(status_code=401, detail="API key expired")
         # Throttle the last_used_at write: a commit per request (including read-only
         # GETs) is a wasted write that contends with the scheduler under load. Only
         # write when the recorded value is missing or older than the configured window.
-        now = datetime.now(timezone.utc)
+        # Runs after the validity fences so a rejected key never records usage.
         last_used = api_key.last_used_at
         if last_used is not None and last_used.tzinfo is None:
             last_used = last_used.replace(tzinfo=timezone.utc)
@@ -218,9 +241,9 @@ async def require_api_auth(
             api_key.last_used_at = now
             session.add(api_key)
             await session.commit()
-        user = await session.get(User, user_id)
-        if user is None:
-            raise HTTPException(status_code=401, detail="Invalid API key")
+            user = await session.get(User, user_id)
+            if user is None:
+                raise HTTPException(status_code=401, detail="Invalid API key")
         return user
 
     # Fall back to session cookie

@@ -20,6 +20,8 @@ _FORWARDED_ENV = [
     # The SSO session cap (#221): documented as the knob that bounds IdP-disable
     # propagation, so leaving it unforwarded was a silent no-op (#285, the #87 trap).
     "ICEBERG_EBS_OIDC_SESSION_MAX_AGE",
+    # Its M2M counterpart (#278): the SSO API-key lifetime bound.
+    "ICEBERG_EBS_API_KEY_SSO_MAX_AGE_DAYS",
     "ICEBERG_EBS_HTTPX_TIMEOUT",
     # CSRF trusted origins for Host-rewriting proxies (#107, #153) — silently ignored
     # before it was forwarded, 403-ing every browser POST including login.
@@ -105,6 +107,7 @@ def test_helm_values_declare_forwarded_settings():
         "fetchIntervalMinutes",
         "sessionMaxAge",
         "oidcSessionMaxAge",
+        "apiKeySsoMaxAgeDays",
         "httpxTimeout",
         "apiRateLimitEnabled",
         "loginRateLimitEnabled",
