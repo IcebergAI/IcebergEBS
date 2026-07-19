@@ -62,3 +62,27 @@ MEDIUM_PERMISSIONS = {
 
 # Host-permission patterns broad enough to reach across many/all sites.
 BROAD_HOST_PATTERNS = {"<all_urls>", "*://*/*", "http://*/*", "https://*/*"}
+
+
+def permission_tier(name: str) -> str:
+    """Classify one declared API permission into its severity tier.
+
+    The render-side counterpart of the tier sets above (#281): the detail template
+    used to hand-copy the sets into Jinja conditionals and drifted (missing
+    declarativeNetRequestWithHostAccess, pageCapture, *://*/*), showing a grey
+    "low" tag for a permission that maxes the score. Broad host patterns count as
+    critical wherever they appear, matching score_permissions (#141).
+    """
+    if name in CRITICAL_PERMISSIONS or name in BROAD_HOST_PATTERNS:
+        return "critical"
+    if name in HIGH_PERMISSIONS:
+        return "high"
+    if name in MEDIUM_PERMISSIONS:
+        return "medium"
+    return "low"
+
+
+def host_permission_tier(pattern: str) -> str:
+    """Classify a host-permission pattern: broad patterns are critical, any other
+    host access is high — same semantics the scorer applies."""
+    return "critical" if pattern in BROAD_HOST_PATTERNS else "high"

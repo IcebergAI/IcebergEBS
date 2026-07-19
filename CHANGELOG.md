@@ -225,6 +225,13 @@ release to diff against.
 
 ### Fixed
 
+- **Detail-page permission badges no longer contradict the score** (#281). The template
+  hand-copied the permission-tier sets and had drifted: `declarativeNetRequestWithHostAccess`
+  (CRITICAL — maxes the permissions score), `pageCapture` (HIGH), and the `*://*/*` broad-host
+  pattern all rendered as grey "low"/wrong-tier tags. Tiers are now computed server-side from
+  `app/permissions.py` (the same single source the scorer and inspector use), the score-breakdown
+  bars take their band from `scoring.risk_level` instead of re-inlined cut points, and the
+  dashboard "High & critical" tile derives its threshold from `RISK_BANDS`.
 - **A webhook URL with an invalid port no longer 500s destination create/update** (#283).
   `urlparse` defers port validation to `.port` access, whose bare `ValueError` was unhandled:
   `https://hooks.example.com:99999/x` crashed the request, while the bare-IP form

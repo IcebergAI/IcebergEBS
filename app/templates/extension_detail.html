@@ -136,23 +136,15 @@
         <a href="/help" class="text-[12px]">Methodology →</a>
       </div>
 
-      {% set rows = [
-        ('Permissions',      risk_detail.permissions,      25, 'Danger level of declared permissions'),
-        ('Popularity',       risk_detail.popularity,       20, 'Install count / sudden drop'),
-        ('Publisher',        risk_detail.publisher,        15, 'Ownership change / verification'),
-        ('Staleness',        risk_detail.staleness,        15, 'Time since last author update'),
-        ('Code behaviour',   risk_detail.code_behaviour,   15, 'eval / remote code / obfuscation'),
-        ('External domains', risk_detail.external_domains, 10, 'Unknown external URLs in code'),
-      ] %}
+      {# Rows and bands come from the server (risk_rows in routes/ui.py) — the band
+         cut points live only in scoring.risk_level, never re-inlined here (#281). #}
       <div class="flex flex-col">
-        {% for label, value, max, note in rows %}
-        {% set pct = (value / max * 100)|round(1) %}
-        {% set band = 'low' if pct < 25 else ('medium' if pct < 50 else ('high' if pct < 75 else 'critical')) %}
+        {% for row in risk_rows %}
         <div class="flex items-center gap-3 py-2.5" style="border-bottom: 1px solid var(--line)">
-          <div class="w-32 text-[13px]" style="color:var(--ink-soft)">{{ label }}</div>
-          <div class="flex-1 score-bar-track"><div class="score-bar-fill fill-{{ band }}" style="width: {{ pct }}%"></div></div>
-          <div class="mono text-[12.5px] tabular-nums w-16 text-right"><span style="color:var(--ink);font-weight:500">{{ value }}</span><span style="color:var(--muted)"> / {{ max }}</span></div>
-          <div class="hidden md:block w-52 text-[11.5px]" style="color:var(--muted)">{{ note }}</div>
+          <div class="w-32 text-[13px]" style="color:var(--ink-soft)">{{ row.label }}</div>
+          <div class="flex-1 score-bar-track"><div class="score-bar-fill fill-{{ row.band }}" style="width: {{ row.pct }}%"></div></div>
+          <div class="mono text-[12.5px] tabular-nums w-16 text-right"><span style="color:var(--ink);font-weight:500">{{ row.value }}</span><span style="color:var(--muted)"> / {{ row.max }}</span></div>
+          <div class="hidden md:block w-52 text-[11.5px]" style="color:var(--muted)">{{ row.note }}</div>
         </div>
         {% endfor %}
         <div class="flex items-center gap-3 pt-3 mt-1" style="border-top: 1px solid var(--line)">
@@ -220,11 +212,12 @@
     {% endif %}
   </div>
 
-  {# Permissions #}
-  {% if permissions or host_permissions %}
+  {# Permissions — tiers are computed server-side from app.permissions (the single
+     source shared with the scorer/inspector); never re-inline the tier lists here (#281). #}
+  {% if permission_tags or host_permission_tags %}
   <div class="surface p-5">
     <div class="flex items-center justify-between mb-3">
-      <h2 class="section-title" style="margin:0">Permissions <span class="font-normal" style="color:var(--muted)">· {{ (permissions|length) + (host_permissions|length) }} declared</span></h2>
+      <h2 class="section-title" style="margin:0">Permissions <span class="font-normal" style="color:var(--muted)">· {{ (permission_tags|length) + (host_permission_tags|length) }} declared</span></h2>
       <div class="flex items-center gap-2 text-[11.5px]" style="color:var(--muted)">
         <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full" style="background:var(--risk-critical)"></span>critical</span>
         <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full" style="background:var(--risk-high)"></span>high</span>
@@ -232,19 +225,11 @@
       </div>
     </div>
     <div class="flex flex-wrap gap-1.5">
-      {% for p in host_permissions %}
-        <span class="perm-tag {% if '<all_urls>' in p or 'http://*/*' in p or 'https://*/*' in p %}perm-critical{% else %}perm-high{% endif %}">{{ p }}</span>
+      {% for tag in host_permission_tags %}
+        <span class="perm-tag perm-{{ tag.tier }}">{{ tag.name }}</span>
       {% endfor %}
-      {% for p in permissions %}
-        {% if p in ['debugger', 'nativeMessaging', 'proxy', 'webRequest', 'webRequestBlocking'] %}
-          <span class="perm-tag perm-critical">{{ p }}</span>
-        {% elif p in ['cookies', 'history', 'tabs', 'browsingData', 'downloads', 'management', 'clipboardRead', 'contentSettings'] %}
-          <span class="perm-tag perm-high">{{ p }}</span>
-        {% elif p in ['storage', 'notifications', 'contextMenus', 'bookmarks', 'identity', 'geolocation', 'scripting'] %}
-          <span class="perm-tag perm-medium">{{ p }}</span>
-        {% else %}
-          <span class="perm-tag perm-low">{{ p }}</span>
-        {% endif %}
+      {% for tag in permission_tags %}
+        <span class="perm-tag perm-{{ tag.tier }}">{{ tag.name }}</span>
       {% endfor %}
     </div>
   </div>
