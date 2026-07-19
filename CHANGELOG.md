@@ -281,6 +281,15 @@ release to diff against.
   the retention prune now also expires `InstallObservation` rows on `last_seen` — recomputing
   the affected footprints in the same transaction so a cached value can't outlive its rows even
   when decay is disabled (the daily refresh job is only registered when decay is on).
+- **Three unbounded-growth hot spots no longer degrade with history size** (#284). The
+  dashboard's latest-FetchLog-per-extension lookup now uses Postgres `DISTINCT ON` over a new
+  `(extension_id, fetched_at DESC, id DESC)` composite index (Alembic migration; sibling
+  `InstallCountHistory` already had the analogous index) instead of a group-by/max self-join
+  that re-sorted every extension's whole history on each render. `GET
+  /api/extensions/{id}/history` is now bounded like `/alerts/log` (`limit` ≤ 500 keeping the
+  most recent points, plus `since` for cheap increments) instead of returning every row ever.
+  And `/account` plus the CSV/JSON export use column-only selects instead of full ORM rows,
+  so the multi-KB per-extension JSON blobs stay out of memory on unpaginated paths.
 - **Detail-page permission badges no longer contradict the score** (#281). The template
   hand-copied the permission-tier sets and had drifted: `declarativeNetRequestWithHostAccess`
   (CRITICAL — maxes the permissions score), `pageCapture` (HIGH), and the `*://*/*` broad-host

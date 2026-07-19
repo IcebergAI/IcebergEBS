@@ -7,7 +7,7 @@ from fastapi import APIRouter, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from itsdangerous import URLSafeTimedSerializer
-from sqlalchemy import and_, func
+from sqlalchemy import func
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
@@ -247,26 +247,24 @@ def _stale_after() -> timedelta:
 
 
 async def _latest_fetch_logs(session: AsyncSession, ext_ids: list[int]) -> dict[int, FetchLog]:
-    """Map each extension id to its most recent FetchLog (one query, not N+1)."""
+    """Map each extension id to its most recent FetchLog (one query, not N+1).
+
+    Postgres ``DISTINCT ON`` walking the ``(extension_id, fetched_at DESC, id DESC)``
+    composite index (#284) — the previous group-by/max self-join re-sorted every
+    extension's whole history on each dashboard render, which turns the landing page
+    into a multi-second query once a large watchlist accumulates months of logs.
+    ``id DESC`` breaks exact-timestamp ties deterministically (newest row wins).
+    """
     if not ext_ids:
         return {}
-    newest = (
-        select(FetchLog.extension_id, func.max(FetchLog.fetched_at).label("mx"))
-        .where(FetchLog.extension_id.in_(ext_ids))
-        .group_by(FetchLog.extension_id)
-    ).subquery()
     rows = (
         await session.exec(
-            select(FetchLog).join(
-                newest,
-                and_(
-                    FetchLog.extension_id == newest.c.extension_id,
-                    FetchLog.fetched_at == newest.c.mx,
-                ),
-            )
+            select(FetchLog)
+            .where(FetchLog.extension_id.in_(ext_ids))
+            .distinct(FetchLog.extension_id)
+            .order_by(FetchLog.extension_id, FetchLog.fetched_at.desc(), FetchLog.id.desc())
         )
     ).all()
-    # Two logs could share an exact timestamp; last one wins (arbitrary but stable).
     return {fl.extension_id: fl for fl in rows}
 
 
@@ -794,8 +792,15 @@ async def account_page(
         await session.exec(select(AlertRule).where(AlertRule.user_id == current_user.id).order_by(AlertRule.created_at))
     ).all()
 
+    # Column-only select (#284): this page needs only id/name/store to build maps and
+    # the JSON island — a full Extension row drags the multi-KB JSON blobs along for
+    # every extension the account owns.
     extensions = (
-        await session.exec(select(Extension).where(Extension.user_id == current_user.id).order_by(Extension.name))
+        await session.exec(
+            select(Extension.id, Extension.name, Extension.extension_id, Extension.store)
+            .where(Extension.user_id == current_user.id)
+            .order_by(Extension.name)
+        )
     ).all()
 
     dest_map = {d.id: d.label for d in destinations}
