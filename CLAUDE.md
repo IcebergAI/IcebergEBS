@@ -15,7 +15,7 @@ App will always run on Python 3.14 or later.
 - itsdangerous (session cookie signing)
 - jinja2 + python-multipart (templates + form parsing)
 - uvicorn[standard] (ASGI server)
-- beautifulsoup4 (Chrome HTML scraping only)
+- beautifulsoup4 (Chrome HTML scraping, and script-block extraction in `inspector.py` — where a script starts and ends is a parsing question a regex gets wrong on hostile input, #275)
 - apscheduler (3.x stable — 4.x is alpha-only, do not use)
 
 ### Dependency management (uv)

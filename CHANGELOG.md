@@ -201,6 +201,23 @@ release to diff against.
 
 ### Fixed
 
+- **Static analysis is no longer evadable by renaming a file** (#275). The code-behaviour scan
+  selected files with `name.endswith(".js")`, but Chrome loads whatever path the manifest points
+  at and a VS Code `main` is routinely `.cjs`/`.mjs`. A payload in `bg.mjs` — or in a file the
+  manifest names `core.dat` — was never read, so it reported no eval, no remote code, an
+  obfuscation score of 0 and no external domains: *lower* code-behaviour and network scores than
+  an extension whose package could not be downloaded at all, which gets the unknown-midpoint.
+  MV2 `background.page` HTML with an inline `<script>` was invisible for the same reason. The
+  scan now covers the `.js`/`.mjs`/`.cjs`/`.jsx` and HTML suffixes **plus** every path the
+  manifest references as executable (service worker, background scripts/page, content scripts,
+  popup/options/devtools/sandbox pages, VS Code `main`/`browser`), whatever it is called. HTML
+  pages have their script boundaries resolved by a real parser (BeautifulSoup) rather than a
+  regex — `</script foo>`, a `</script>` inside a string literal and a `<script>` inside an HTML
+  comment all behave in ways a pattern match gets wrong, either hiding a payload or inventing a
+  finding for code the browser never runs — and the page is then masked down to those script
+  bodies so line numbers stay accurate and markup never reaches the minification/obfuscation
+  heuristics. A remote `<script src>` in a packaged page is flagged `remote_script_include`
+  (critical) with its host recorded as an external domain.
 - **A missing credential now aborts `docker compose up` instead of starting a broken stack.**
   `docker-compose.yml` referenced `${POSTGRES_PASSWORD}` (and the admin/secret vars) bare, and
   Compose resolves an unset variable to the empty string behind a warning that scrolls past in

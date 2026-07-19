@@ -5,6 +5,8 @@ import zipfile
 from dataclasses import MISSING, asdict, dataclass, field, fields
 from hashlib import sha256
 
+from bs4 import BeautifulSoup
+
 from app.permissions import BROAD_HOST_PATTERNS as _BROAD_HOST_PATTERNS
 from app.permissions import CRITICAL_PERMISSIONS as _CRITICAL_PERMISSIONS
 from app.permissions import HIGH_PERMISSIONS as _HIGH_PERMISSIONS
@@ -107,6 +109,43 @@ _MAX_EXTERNAL_URLS = 500
 _MAX_NETWORK_CALLOUT_URLS = 500
 _ZIP_MAGIC = b"PK\x03\x04"
 
+# Suffixes the code-behaviour scan reads. Chrome and VS Code both load code
+# from paths that need not end in `.js`, so the suffix list is a floor, not the
+# whole selection — `_script_files` also scans whatever the manifest references
+# by name (#275). `.jsx`/`.mjs`/`.cjs` are shipped by real packages; HTML is in
+# the list because an MV2 background page can hold its payload inline.
+_JS_SUFFIXES = (".js", ".mjs", ".cjs", ".jsx")
+_HTML_SUFFIXES = (".html", ".htm")
+_SCAN_SUFFIXES = _JS_SUFFIXES + _HTML_SUFFIXES
+
+# ASCII whitespace per the HTML spec — browsers strip it around a URL attribute
+# before resolving, so `src=" https://…"` still loads.
+_HTML_WHITESPACE = " \t\n\r\f"
+
+# The HTML spec's legacy JavaScript MIME types. A <script> whose type essence is
+# none of these (nor empty, nor "module") is a data block the browser never
+# executes: its body is not code and its src is never fetched.
+_JS_MIME_ESSENCES = frozenset(
+    {
+        "application/ecmascript",
+        "application/javascript",
+        "application/x-ecmascript",
+        "application/x-javascript",
+        "text/ecmascript",
+        "text/javascript",
+        "text/javascript1.0",
+        "text/javascript1.1",
+        "text/javascript1.2",
+        "text/javascript1.3",
+        "text/javascript1.4",
+        "text/javascript1.5",
+        "text/jscript",
+        "text/livescript",
+        "text/x-ecmascript",
+        "text/x-javascript",
+    }
+)
+
 
 # Domains that are noise — well-known CDNs/services not worth flagging
 _SAFE_DOMAINS = {
@@ -190,8 +229,7 @@ def inspect_package(data: bytes) -> PackageAnalysis:
     if manifest:
         _extract_manifest_fields(manifest, analysis)
 
-    js_files = [n for n in zf.namelist() if n.endswith(".js")]
-    for name in js_files:
+    for name in _script_files(zf, manifest):
         info = zf.getinfo(name)
         if info.file_size > _MAX_JS_BYTES:
             continue  # skip oversized files
@@ -203,13 +241,234 @@ def inspect_package(data: bytes) -> PackageAnalysis:
             source = raw.decode("utf-8", errors="replace")
         except Exception:  # nosec B112 - best-effort scan: skip unreadable/corrupt entries
             continue
-        _analyse_js(source, analysis, name)
+        if name.lower().endswith(_HTML_SUFFIXES):
+            _analyse_html(source, analysis, name)
+        else:
+            _analyse_js(source, analysis, name)
 
     analysis.external_domains = sorted(set(analysis.external_domains))[:_MAX_EXTERNAL_DOMAINS]
     analysis.external_urls = sorted(set(analysis.external_urls))[:_MAX_EXTERNAL_URLS]
     analysis.network_callout_urls = sorted(set(analysis.network_callout_urls))[:_MAX_NETWORK_CALLOUT_URLS]
     analysis.obfuscation_score = min(analysis.obfuscation_score, 10)
     return analysis
+
+
+def _script_files(zf: zipfile.ZipFile, manifest: dict | None) -> list[str]:
+    """Every archive entry worth running the code-behaviour scan over.
+
+    Selecting on ``.js`` alone made the whole static-analysis stage evadable by
+    renaming a file (#275): Chrome loads whatever path the manifest points at,
+    and a VS Code ``main`` is routinely ``.cjs``/``.mjs``. A payload in
+    ``bg.mjs`` scored zero on eval, remote code, obfuscation and external
+    domains — i.e. *below* an extension whose package could not be downloaded
+    at all, which gets the unknown-midpoint. So take the union of
+
+    * anything with a script-ish or HTML suffix, and
+    * anything the manifest actually references as executable, whatever its
+      name — the authoritative list, since that is what the browser loads.
+
+    Returned in archive order, deduped. The overall ``_MAX_FILE_COUNT`` cap
+    already bounds how many entries this can yield.
+    """
+    referenced = _manifest_referenced_paths(zf, manifest)
+    names = [n for n in zf.namelist() if n.lower().endswith(_SCAN_SUFFIXES) or n in referenced]
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for name in names:
+        if name not in seen:
+            seen.add(name)
+            ordered.append(name)
+    return ordered
+
+
+def _manifest_referenced_paths(zf: zipfile.ZipFile, manifest: dict | None) -> set[str]:
+    """Archive entries referenced as executable code by the manifest.
+
+    Covers the Chrome/Edge entry points (service worker, background scripts and
+    page, content scripts, popup/options/devtools pages) and the VS Code ones
+    (``main``/``browser``). Extensions are irrelevant here on purpose — the
+    point is to catch code the manifest loads under a name the suffix filter
+    would miss.
+    """
+    if not manifest:
+        return set()
+
+    raw: list[object] = []
+    background = manifest.get("background")
+    if isinstance(background, dict):
+        raw.extend([background.get("service_worker"), background.get("page")])
+        scripts = background.get("scripts")
+        if isinstance(scripts, list):
+            raw.extend(scripts)
+
+    content_scripts = manifest.get("content_scripts")
+    if isinstance(content_scripts, list):
+        for entry in content_scripts:
+            if isinstance(entry, dict) and isinstance(entry.get("js"), list):
+                raw.extend(entry["js"])
+
+    for key in ("devtools_page", "options_page", "main", "browser"):
+        raw.append(manifest.get(key))
+
+    for key in ("action", "browser_action", "page_action", "options_ui"):
+        section = manifest.get(key)
+        if isinstance(section, dict):
+            raw.extend([section.get("default_popup"), section.get("page")])
+
+    overrides = manifest.get("chrome_url_overrides")
+    if isinstance(overrides, dict):
+        raw.extend(overrides.values())
+
+    sandbox = manifest.get("sandbox")
+    if isinstance(sandbox, dict) and isinstance(sandbox.get("pages"), list):
+        raw.extend(sandbox["pages"])
+
+    names = set(zf.namelist())
+    resolved: set[str] = set()
+    for value in raw:
+        if not isinstance(value, str) or not value:
+            continue
+        resolved.update(_resolve_archive_path(value, names))
+    return resolved
+
+
+def _resolve_archive_path(path: str, names: set[str]) -> set[str]:
+    """Map a manifest-declared path onto the archive entries it could name.
+
+    Manifest paths are extension-root-relative and may be written with a
+    leading ``/`` or ``./``; a VSIX roots everything under ``extension/``.
+    Anything with a ``..`` segment is dropped rather than resolved — a manifest
+    must not reach outside its own package, and honouring it would be a zip-slip
+    lookalike.
+    """
+    candidate = path.split("?", 1)[0].split("#", 1)[0].lstrip("/")
+    if candidate.startswith("./"):
+        candidate = candidate[2:]
+    if not candidate or ".." in candidate.split("/"):
+        return set()
+    return {name for name in (candidate, f"extension/{candidate}") if name in names}
+
+
+def _analyse_html(source: str, analysis: PackageAnalysis, filename: str) -> None:
+    """Run the JS scan over the inline scripts of an HTML page.
+
+    An MV2 ``background.page`` (or a popup/options page) can carry its whole
+    payload in an inline ``<script>`` block, invisible to a scan that only reads
+    ``.js`` files (#275).
+
+    Script boundaries come from a **real HTML parser**, not a regex. Where a
+    script starts and ends is a parsing question with genuinely surprising
+    answers — ``</script foo>`` and ``</script\\n>`` both terminate a block, a
+    ``</script>`` inside a string literal terminates it too, and a ``<script>``
+    inside an HTML comment never runs at all. A regex that gets any of those
+    wrong is not a cosmetic defect on hostile input: it either masks a payload
+    out of the scan entirely or invents findings for code the browser never
+    executes. BeautifulSoup already ships for the Chrome scraper and matches
+    browser semantics on all four.
+
+    The parser decides the boundaries; the page is then *masked* down to just
+    those script bodies before the JS regexes run, so line numbers stay true to
+    the original file and markup never reaches the minification/obfuscation
+    heuristics (the #151 false-positive class).
+
+    Only *executable* scripts are analysed — see ``_is_executable_script``. A
+    ``<script type="application/json">`` is a data block the browser never runs,
+    so scanning it would score JSON that merely contains the text ``eval(...)``.
+    """
+    # on_duplicate_attribute="ignore" keeps the FIRST value, which is what the
+    # HTML spec says a parser does with a repeated attribute. BeautifulSoup's
+    # default keeps the last, and that difference is exploitable both ways:
+    # `<script type="text/javascript" type="application/json">` executes in the
+    # browser but would be read here as an inert data block, and a repeated `src`
+    # would report the wrong URL.
+    soup = BeautifulSoup(source, "html.parser", on_duplicate_attribute="ignore")
+    scripts = [tag for tag in soup.find_all("script") if _is_executable_script(tag)]
+
+    bodies = [body for tag in scripts if (body := tag.string)]
+    masked = _mask_non_script(source, bodies)
+    if masked.strip():
+        _analyse_js(masked, analysis, filename)
+
+    # A remote <script src> in a packaged page is code the extension does not
+    # ship, executed with the extension's own privileges. Read the attribute off
+    # the parsed tag: masking hides it from the URL sweep, and sweeping the raw
+    # page instead would drag in every href and img.
+    for tag in scripts:
+        src = tag.get("src")
+        if not isinstance(src, str):
+            continue
+        # Browsers strip leading/trailing ASCII whitespace before resolving a URL,
+        # so `src=" https://evil.example/p.js"` loads remote code. Comparing the
+        # raw attribute would have let that through with no finding at all.
+        src = src.strip(_HTML_WHITESPACE)
+        if not src.lower().startswith(("http://", "https://")):
+            continue
+        analysis.uses_remote_code = True
+        url = _clean_url(src)
+        domain = _domain_from_url(url)
+        if domain and not _is_safe_domain(domain.removeprefix("www.")):
+            analysis.external_urls.append(url)
+            analysis.external_domains.append(domain)
+            analysis.network_callout_urls.append(url)
+        _add_finding(
+            analysis,
+            code="remote_script_include",
+            severity="critical",
+            title="Remote script in packaged page",
+            detail="A packaged HTML page loads executable JavaScript from a remote URL.",
+            source="javascript",
+            file=filename,
+            line=tag.sourceline,
+        )
+
+
+def _is_executable_script(tag: object) -> bool:
+    """Whether the browser would execute this ``<script>`` as JavaScript.
+
+    A ``type`` the browser doesn't recognise as JavaScript makes the element a
+    data block: the body never runs and a ``src`` is never fetched. Common ones
+    are ``application/json``, ``importmap``, ``speculationrules`` and template
+    stashes like ``text/x-handlebars``. Scanning those bodies scored inert data
+    — JSON whose *contents* merely include ``eval(payload)`` could add code-
+    behaviour points — and flagged a ``src`` the browser ignores.
+
+    Matched the way the HTML spec does: on the MIME *essence*, so parameters
+    (``text/javascript; charset=utf-8``) still count as JavaScript. A missing or
+    empty ``type`` is a classic script; ``module`` is executable too. Anything
+    else is data, which is the safe default — the legacy JavaScript MIME list is
+    closed, so an unrecognised type really is inert.
+    """
+    raw = tag.get("type")  # type: ignore[attr-defined]
+    if raw is None:
+        return True
+    if not isinstance(raw, str):
+        return False
+    essence = raw.split(";", 1)[0].strip().lower()
+    return essence in ("", "module") or essence in _JS_MIME_ESSENCES
+
+
+def _mask_non_script(source: str, bodies: list[str]) -> str:
+    """Reduce *source* to just *bodies*, preserving line numbering.
+
+    Each body is a verbatim substring of the page, so it is located by a forward
+    scan — which keeps duplicate script bodies distinct. Everything else is
+    replaced by its newlines alone: findings report lines (never columns), so
+    numbering stays exact while the markup contributes no characters. Replacing
+    it with *spaces* instead would preserve the line lengths, and one long line
+    of minified markup would then trip the minification heuristic on a page
+    whose actual script is three tidy lines.
+    """
+    out: list[str] = []
+    cursor = 0
+    for body in bodies:
+        start = source.find(body, cursor)
+        if start == -1:  # parser normalised it out of recognition; skip, don't guess
+            continue
+        out.append("\n" * source.count("\n", cursor, start))
+        out.append(body)
+        cursor = start + len(body)
+    out.append("\n" * source.count("\n", cursor))
+    return "".join(out)
 
 
 def _zip_payload(data: bytes) -> bytes:

