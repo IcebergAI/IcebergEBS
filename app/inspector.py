@@ -375,7 +375,13 @@ def _analyse_html(source: str, analysis: PackageAnalysis, filename: str) -> None
     ``<script type="application/json">`` is a data block the browser never runs,
     so scanning it would score JSON that merely contains the text ``eval(...)``.
     """
-    soup = BeautifulSoup(source, "html.parser")
+    # on_duplicate_attribute="ignore" keeps the FIRST value, which is what the
+    # HTML spec says a parser does with a repeated attribute. BeautifulSoup's
+    # default keeps the last, and that difference is exploitable both ways:
+    # `<script type="text/javascript" type="application/json">` executes in the
+    # browser but would be read here as an inert data block, and a repeated `src`
+    # would report the wrong URL.
+    soup = BeautifulSoup(source, "html.parser", on_duplicate_attribute="ignore")
     scripts = [tag for tag in soup.find_all("script") if _is_executable_script(tag)]
 
     bodies = [body for tag in scripts if (body := tag.string)]

@@ -877,3 +877,40 @@ def test_executable_script_types_are_still_scanned(script_type):
         }
     )
     assert inspect_package(data).uses_eval is True
+
+
+def test_duplicate_type_attribute_uses_the_browsers_first_value():
+    """HTML keeps the FIRST of a repeated attribute; BeautifulSoup defaults to the
+    last. `type="text/javascript" type="application/json"` executes in a browser,
+    so reading the trailing type would skip a live payload."""
+    data = make_zip(
+        {
+            "manifest.json": json.dumps({"manifest_version": 3, "name": "x", "version": "1"}),
+            "p.html": '<html><script type="text/javascript" type="application/json">eval("x");</script></html>',
+        }
+    )
+    assert inspect_package(data).uses_eval is True
+
+
+def test_duplicate_src_attribute_uses_the_browsers_first_value():
+    """Same rule for src: the browser loads the first, so that is the URL to report."""
+    data = make_zip(
+        {
+            "manifest.json": json.dumps({"manifest_version": 3, "name": "x", "version": "1"}),
+            "p.html": '<html><script src="https://evil.example/a.js" src="local.js"></script></html>',
+        }
+    )
+    result = inspect_package(data)
+    assert result.uses_remote_code is True
+    assert "evil.example" in result.external_domains
+
+
+def test_duplicate_type_does_not_create_a_false_positive_either():
+    """The inverse: a data block whose *first* type is inert stays inert."""
+    data = make_zip(
+        {
+            "manifest.json": json.dumps({"manifest_version": 3, "name": "x", "version": "1"}),
+            "p.html": '<html><script type="application/json" type="text/javascript">eval("x");</script></html>',
+        }
+    )
+    assert inspect_package(data).uses_eval is False
