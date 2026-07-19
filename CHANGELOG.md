@@ -218,6 +218,13 @@ release to diff against.
 
 ### Fixed
 
+- **A webhook URL with an invalid port no longer 500s destination create/update** (#283).
+  `urlparse` defers port validation to `.port` access, whose bare `ValueError` was unhandled:
+  `https://hooks.example.com:99999/x` crashed the request, while the bare-IP form
+  (`http://8.8.8.8:99999/x`) skipped the access entirely and was **stored**, turning into a
+  permanently-failing destination that only errored at send time. `validate_webhook_url` now
+  reads the port exactly once, up front, and rejects invalid ports as a normal 422 validation
+  error on every URL shape.
 - **`ICEBERG_EBS_OIDC_SESSION_MAX_AGE` is now actually forwarded to the container** (#285).
   The SSO session cap (#221) was documented as tunable but appeared in neither the Compose
   `app.environment` block nor the Helm ConfigMap, so an operator shortening the window to speed

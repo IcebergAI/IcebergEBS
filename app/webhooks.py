@@ -56,6 +56,17 @@ async def validate_webhook_url(url: str) -> list[str]:
     if not hostname:
         raise WebhookValidationError("Webhook URL has no hostname")
 
+    # urlparse defers port validation to .port access, which raises a bare ValueError
+    # for out-of-range or non-numeric ports. Read it exactly once here — BEFORE the
+    # bare-IP early return below — so an invalid port is a 422-able validation error
+    # at create/update time on every URL shape. Previously the hostname form 500-ed
+    # (unhandled ValueError at the _resolve_host call) and the bare-IP form skipped
+    # the access entirely, storing a destination that could only fail at send time.
+    try:
+        port = parsed.port
+    except ValueError as exc:
+        raise WebhookValidationError("Webhook URL port is invalid") from exc
+
     # Block exact matches and subdomains (e.g. foo.localhost, sub.localtest.me).
     if hostname in _BLOCKED_HOSTNAMES or any(hostname.endswith("." + h) for h in _BLOCKED_HOSTNAMES):
         raise WebhookValidationError("Webhook URL hostname is not allowed")
@@ -72,7 +83,7 @@ async def validate_webhook_url(url: str) -> list[str]:
         return [hostname]
 
     try:
-        ips = await _resolve_host(hostname, parsed.port)
+        ips = await _resolve_host(hostname, port)
     except socket.gaierror as exc:
         raise WebhookValidationError("Webhook URL hostname could not be resolved") from exc
     if not ips:
