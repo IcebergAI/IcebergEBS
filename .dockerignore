@@ -10,4 +10,10 @@ __pycache__/
 tests/
 *.pyc
 caddy/certs/
+# pg_dump archives of the live database written by the Compose `backup` service
+# (#86, `./backups:/backups`). `.gitignore` does not affect the Docker build
+# context, so without this the documented `docker compose up --build` upgrade
+# path bakes every production dump — user rows, bcrypt hashes, webhook URLs —
+# into the app image layers (#277).
+backups/
 DEPLOYMENT.md

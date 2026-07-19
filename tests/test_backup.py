@@ -7,6 +7,7 @@ import yaml
 _ROOT = Path(__file__).resolve().parent.parent
 _COMPOSE = _ROOT / "docker-compose.yml"
 _DEPLOYMENT = _ROOT / "DEPLOYMENT.md"
+_DOCKERIGNORE = _ROOT / ".dockerignore"
 
 
 def _services():
@@ -53,6 +54,29 @@ def test_backup_has_db_credentials():
     env = _services()["backup"]["environment"]
     assert "PGPASSWORD" in env
     assert "POSTGRES_USER" in env and "POSTGRES_DB" in env
+
+
+def test_backup_dir_is_excluded_from_the_docker_build_context():
+    """#277: the dump directory must never be copied into the app image.
+
+    `Dockerfile` does `COPY . .`, and `.gitignore` has no effect on the build
+    context — so without a `.dockerignore` entry every `docker compose up
+    --build` bakes full pg_dump archives of the live database into the image.
+    Derive the directory from the Compose mount so a rename can't silently
+    reopen the hole.
+    """
+    host_dirs = [
+        v.split(":", 1)[0].lstrip("./").rstrip("/") for v in _services()["backup"]["volumes"] if v.endswith(":/backups")
+    ]
+    assert host_dirs, "backup service no longer bind-mounts a host directory"
+
+    entries = {
+        line.strip().rstrip("/")
+        for line in _DOCKERIGNORE.read_text().splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    }
+    for host_dir in host_dirs:
+        assert host_dir in entries, f"{host_dir}/ is missing from .dockerignore"
 
 
 def test_restore_docs_use_container_side_expansion():
