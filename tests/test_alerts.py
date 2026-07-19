@@ -15,7 +15,7 @@ from app.main import app as fastapi_app
 from app.models import AlertDestination, AlertLog, AlertRule, Extension
 from app.notifications import ChangeEvent, build_alert_payload, detect_changes, fire_alerts
 from app.services import fetch_and_store, fire_pending_alerts
-from app.webhooks import WebhookValidationError, send_webhook
+from app.webhooks import WebhookValidationError, send_webhook, validate_webhook_url
 
 # A fixed public IP the webhook resolver is patched to return, so the SSRF-pinning
 # send path is exercised deterministically without real DNS. The pinned request
@@ -162,6 +162,34 @@ async def test_create_destination(client):
     data = r.json()
     assert data["label"] == "Slack #security"
     assert data["enabled"] is True
+
+
+@pytest.mark.parametrize(
+    "target",
+    [
+        # Hostname form: previously an unhandled ValueError (500) at the _resolve_host
+        # call's .port access (#283).
+        "https://hooks.example.com:99999/webhook",
+        "https://hooks.example.com:abc/webhook",
+        # Bare-IP form: previously returned early WITHOUT touching .port, so the bad
+        # destination was stored and every delivery failed at send time (#283).
+        "http://8.8.8.8:99999/webhook",
+    ],
+)
+async def test_create_destination_invalid_port_rejected(client, target):
+    r = await client.post("/api/alerts/destinations", json={"label": "Bad Port", "target": target})
+    assert r.status_code == 422
+    assert "port" in r.json()["detail"].lower()
+    # Nothing was stored — the bare-IP form used to slip through validation.
+    listing = await client.get("/api/alerts/destinations")
+    assert all(d["target"] != target for d in listing.json())
+
+
+async def test_validate_webhook_url_invalid_port_raises_validation_error():
+    """Direct unit contract: ValueError from urlparse .port never escapes (#283)."""
+    for url in ("https://hooks.example.com:70000/x", "http://8.8.8.8:70000/x", "https://h.example.com:x/y"):
+        with pytest.raises(WebhookValidationError):
+            await validate_webhook_url(url)
 
 
 async def test_list_destinations(client):
