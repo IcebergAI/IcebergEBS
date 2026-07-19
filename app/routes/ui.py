@@ -582,7 +582,11 @@ async def extension_detail(
         if not isinstance(package_analysis.get("findings"), list):
             package_analysis["findings"] = []
         package_analysis["grouped_findings"] = group_detection_findings(package_analysis["findings"])
-        host_permissions = package_analysis.get("host_permissions", [])
+        # Mirror the API DTO's guard (#150): a wrong-shaped stored value — non-list
+        # container or non-string members — must not reach the tier classifier, whose
+        # set-membership check raises TypeError on unhashable members (#281 review).
+        raw_hosts = package_analysis.get("host_permissions", [])
+        host_permissions = [h for h in raw_hosts if isinstance(h, str)] if isinstance(raw_hosts, list) else []
     # Tier every rendered permission tag from the app.permissions sets — the single
     # source shared with the scorer/inspector (#63) — instead of Jinja re-inlining
     # the tier lists (which had drifted, #281).

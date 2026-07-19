@@ -198,3 +198,30 @@ async def test_detail_page_tolerates_wrong_shaped_json(client, test_db, admin_us
     r = await client.get(f"/extensions/{ext_id}")
     assert r.status_code == 200
     assert "Misshaped" in r.text
+
+
+async def test_detail_page_tolerates_non_string_host_permission_member(client, test_db, admin_user):
+    # A valid JSON list whose member is a dict/list (partial write / manual edit) must
+    # not 500 the detail page: the tier classifier's set-membership check raises
+    # TypeError on unhashable members without the string filter (#281 review; same
+    # threat model the API DTO already guards, #150).
+    async with AsyncSession(test_db) as s:
+        ext = Extension(
+            user_id=admin_user.id,
+            store="chrome",
+            extension_id="d" * 32,
+            name="OddHosts",
+            publisher="Acme",
+            version="1.0",
+            store_url="https://example.com",
+            permissions='["storage"]',
+            package_analysis='{"host_permissions": ["https://ok.example.com/*", {"bad": 1}, ["nested"], 7]}',
+        )
+        s.add(ext)
+        await s.commit()
+        await s.refresh(ext)
+        ext_id = ext.id
+
+    r = await client.get(f"/extensions/{ext_id}")
+    assert r.status_code == 200
+    assert '<span class="perm-tag perm-high">https://ok.example.com/*</span>' in r.text

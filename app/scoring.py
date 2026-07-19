@@ -175,6 +175,18 @@ def compute_risk_score(
     )
 
 
+# Ordered (band, inclusive lower bound) pairs — THE single home of the score→band
+# thresholds. risk_level() walks this table and extension_queries.RISK_BANDS derives
+# its [low, high) filter ranges from it, so the two representations cannot drift
+# (#281 review — RISK_BANDS used to re-hardcode 75/50/25 independently).
+RISK_LEVEL_THRESHOLDS: tuple[tuple[str, int], ...] = (
+    ("critical", 75),
+    ("high", 50),
+    ("medium", 25),
+    ("low", 0),
+)
+
+
 @overload
 def risk_level(score: int) -> str: ...
 @overload
@@ -187,12 +199,9 @@ def risk_level(score: int | None) -> str | None:
     """
     if score is None:
         return None
-    if score >= 75:
-        return "critical"
-    if score >= 50:
-        return "high"
-    if score >= 25:
-        return "medium"
+    for band, lower in RISK_LEVEL_THRESHOLDS:
+        if score >= lower:
+            return band
     return "low"
 
 

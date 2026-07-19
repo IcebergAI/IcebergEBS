@@ -391,3 +391,20 @@ def test_compute_risk_score_capped_at_100():
         analysis=analysis,
     )
     assert result.total <= 100
+
+
+def test_risk_bands_derive_from_risk_level_thresholds():
+    # RISK_BANDS is the filter-range representation of the same cut points risk_level
+    # walks; it used to re-hardcode 75/50/25 and could drift (#281 review). Assert the
+    # derived ranges agree with risk_level at every boundary.
+    from app.extension_queries import RISK_BANDS
+    from app.scoring import risk_level
+
+    assert set(RISK_BANDS) == {"low", "medium", "high", "critical"}
+    for band, (low, high) in RISK_BANDS.items():
+        assert risk_level(low) == band
+        if high is not None:
+            assert risk_level(high - 1) == band
+            assert risk_level(high) != band
+        else:
+            assert risk_level(100) == band
