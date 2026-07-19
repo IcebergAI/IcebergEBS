@@ -4,7 +4,7 @@ from contextlib import asynccontextmanager
 import httpx
 from fastapi import FastAPI, Request
 from fastapi.openapi.docs import get_redoc_html, get_swagger_ui_html
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 
@@ -250,12 +250,9 @@ async def edge_rate_limit(request: Request, call_next) -> Response:
     return await call_next(request)
 
 
-@app.middleware("http")
-async def security_headers(request: Request, call_next) -> Response:
+def _apply_security_headers(response: Response) -> Response:
     # Hard-set (not setdefault): the app is the canonical owner, so nothing inner may
-    # shadow these values. Registered last → outermost, so every response gets them:
-    # CSRF 403s, rate-limit 429s, exception handlers, and StaticFiles.
-    response = await call_next(request)
+    # shadow these values.
     response.headers["Content-Security-Policy"] = _CANONICAL_CSP
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["X-Frame-Options"] = "DENY"
@@ -267,6 +264,29 @@ async def security_headers(request: Request, call_next) -> Response:
     if settings.secure_cookies:
         response.headers["Strict-Transport-Security"] = _HSTS
     return response
+
+
+@app.middleware("http")
+async def security_headers(request: Request, call_next) -> Response:
+    # Registered last → outermost of the user middleware, so every response built
+    # inside the stack gets the headers: CSRF 403s, rate-limit 429s, HTTPException
+    # handlers, and StaticFiles.
+    return _apply_security_headers(await call_next(request))
+
+
+async def _unhandled_exception_response(request: Request, exc: Exception) -> Response:
+    # An UNHANDLED exception propagates out of the middleware above before it can set
+    # any header: Starlette's ServerErrorMiddleware sits OUTSIDE all user middleware
+    # and builds the 500 response itself. Registering a generic-Exception handler is
+    # the supported hook into that boundary — Starlette passes it to
+    # ServerErrorMiddleware, which sends this response and then still re-raises the
+    # exception, so uvicorn's error log keeps the traceback. Without this, a bare
+    # 500 ships headerless on exactly the non-proxied paths the app-canonical
+    # design is meant to cover (behind Caddy the edge fallback would mask it).
+    return _apply_security_headers(PlainTextResponse("Internal Server Error", status_code=500))
+
+
+app.add_exception_handler(Exception, _unhandled_exception_response)
 
 
 app.mount("/static", StaticFiles(directory="static"), name="static")

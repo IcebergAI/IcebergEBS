@@ -12,8 +12,10 @@ fallback — a hard SET reappearing at the edge would clobber the app's canonica
 import re
 from pathlib import Path
 
+import httpx
+
 from app.config import settings
-from app.main import _CANONICAL_CSP, _HSTS, _PERMISSIONS_POLICY
+from app.main import _CANONICAL_CSP, _HSTS, _PERMISSIONS_POLICY, app
 
 _CADDY_HEADERS = Path(__file__).resolve().parent.parent / "caddy" / "headers.caddy"
 
@@ -55,6 +57,31 @@ async def test_headers_present_on_error_responses(client):
     assert resp.status_code == 404
     assert resp.headers["Content-Security-Policy"] == _CANONICAL_CSP
     assert resp.headers["X-Content-Type-Options"] == "nosniff"
+
+
+async def test_headers_present_on_unhandled_exception():
+    # An UNHANDLED exception escapes the security_headers middleware entirely — the 500
+    # is built by Starlette's ServerErrorMiddleware, outside all user middleware. The
+    # generic-Exception handler in app/main.py is what puts the canonical headers on
+    # that response (review finding on #297); this drives a route that genuinely raises,
+    # with raise_app_exceptions=False so the 500 response is observable. The handled-404
+    # test above cannot catch a regression here.
+    async def _boom():
+        raise RuntimeError("boom")
+
+    app.add_api_route("/_test/boom", _boom, include_in_schema=False)
+    try:
+        transport = httpx.ASGITransport(app=app, raise_app_exceptions=False)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as probe:
+            resp = await probe.get("/_test/boom")
+    finally:
+        app.router.routes[:] = [r for r in app.router.routes if getattr(r, "path", None) != "/_test/boom"]
+    assert resp.status_code == 500
+    assert resp.headers["Content-Security-Policy"] == _CANONICAL_CSP
+    assert resp.headers["X-Content-Type-Options"] == "nosniff"
+    assert resp.headers["X-Frame-Options"] == "DENY"
+    assert resp.headers["Referrer-Policy"] == "same-origin"
+    assert resp.headers["Permissions-Policy"] == _PERMISSIONS_POLICY
 
 
 def test_img_src_omits_data_uri():
