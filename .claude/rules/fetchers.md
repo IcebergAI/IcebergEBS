@@ -8,9 +8,10 @@ paths:
 # Store-specific fetcher notes
 
 ## Chrome Web Store (`app/fetchers/chrome.py`)
-- Scrapes `https://chromewebstore.google.com/detail/{extension_id}` with BeautifulSoup4
+- Scrapes `https://chromewebstore.google.com/detail/{extension_id}?hl=en` with BeautifulSoup4 — the `hl=en` pin + `Accept-Language: en-US,en` header are load-bearing (#279): Google localizes by egress IP, and the label lookups + English-month `_parse_date` silently break on a localized page (staleness then scores 10 "unknown" forever)
 - Publisher extracted via `_find_detail_value(soup, "offered by")` — finds text node then reads next sibling element
 - Last updated extracted via `_find_detail_value(soup, "updated")` then `_parse_date()`
+- Version extracted via `_find_detail_value(soup, "version", exact=True)` (exact label match, so description prose containing "Version" can't hijack it, #279), validated against `[0-9][0-9.]*`; the whole-visible-page regex remains as fallback for pages carrying only the inline "Version: x.y.z" form
 - Downloads CRX from `clients2.google.com/service/update2/crx`
 - CRX3 format: a binary header precedes the zip payload. The fetchers download the raw CRX as-is; the header is stripped downstream by `inspector._zip_payload()`, which seeks the `PK\x03\x04` zip magic before reading the archive (the fetchers do **not** pre-strip it)
 

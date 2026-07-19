@@ -7,7 +7,12 @@ from app.fetchers.base import BaseFetcher, ExtensionMetadata, FetchError
 
 _DATE_FORMATS = ("%B %d, %Y", "%b %d, %Y", "%Y-%m-%d")
 
-_DETAIL_URL = "https://chromewebstore.google.com/detail/{extension_id}"
+# hl=en pins the page to English (#279): the label-adjacency extraction below and
+# _parse_date's English month names both break on a localized page, which Google
+# serves by egress IP — a non-US deployment otherwise gets "Aktualisiert"/"17. Juli
+# 2025", last_updated stays None forever, and staleness silently scores 10
+# ("unknown") for a freshly-updated extension. The Edge fetcher already pins hl.
+_DETAIL_URL = "https://chromewebstore.google.com/detail/{extension_id}?hl=en"
 _DOWNLOAD_URL = (
     "https://clients2.google.com/service/update2/crx"
     "?response=redirect&prodversion=130.0&acceptformat=crx3"
@@ -18,7 +23,9 @@ _DOWNLOAD_URL = (
 class ChromeFetcher(BaseFetcher):
     async def fetch_metadata(self, extension_id: str) -> ExtensionMetadata:
         url = _DETAIL_URL.format(extension_id=extension_id)
-        resp = await self.client.get(url, follow_redirects=True)
+        # Belt-and-braces with hl=en: some Google endpoints weigh the header when
+        # the query param is absent/ignored (#279).
+        resp = await self.client.get(url, follow_redirects=True, headers={"Accept-Language": "en-US,en"})
         if resp.status_code == 404:
             raise FetchError(f"Extension not found: {extension_id}")
         if resp.status_code != 200:
@@ -52,6 +59,16 @@ def _parse_page(html: str, extension_id: str, url: str) -> ExtensionMetadata:
 
     last_updated = _parse_date(_find_detail_value(soup, "updated"))
 
+    # Version via label adjacency in the Details section, like `updated`/`offered by`
+    # (#279). The whole-page regex below is fallback only: the description renders as
+    # visible body text BEFORE the details section, so "New in Version 9.9.9" there
+    # used to hijack the regex on every fetch — one spurious new_version alert, then a
+    # permanently wrong stored version. `exact=True` keeps the label lookup itself from
+    # matching description prose that merely contains the word.
+    version = _find_detail_value(soup, "version", exact=True)
+    if not re.fullmatch(r"[0-9][0-9.]*", version):
+        version = ""
+
     # The version and user-count regexes take the FIRST match, so they must
     # only see *visible* page text: the raw document's <head> meta description
     # (an attribute, invisible to get_text) and body <script> JSON blobs both
@@ -62,10 +79,10 @@ def _parse_page(html: str, extension_id: str, url: str) -> ExtensionMetadata:
         tag.decompose()
     visible = soup.get_text(" ")
 
-    version = ""
-    version_m = re.search(r"Version[:\s]+([0-9][0-9.]*)", visible)
-    if version_m:
-        version = version_m.group(1)
+    if not version:
+        version_m = re.search(r"Version[:\s]+([0-9][0-9.]*)", visible)
+        if version_m:
+            version = version_m.group(1)
 
     install_count = None
     count_m = re.search(r"([\d,]+)\s+users?", visible, re.IGNORECASE)
@@ -86,9 +103,18 @@ def _parse_page(html: str, extension_id: str, url: str) -> ExtensionMetadata:
     )
 
 
-def _find_detail_value(soup: BeautifulSoup, label: str) -> str:
-    """Find a value in the details section by its label text (e.g. 'Offered by', 'Updated')."""
-    for elem in soup.find_all(string=re.compile(re.escape(label), re.IGNORECASE)):
+def _find_detail_value(soup: BeautifulSoup, label: str, *, exact: bool = False) -> str:
+    """Find a value in the details section by its label text (e.g. 'Offered by', 'Updated').
+
+    ``exact=True`` requires the text node to BE the label (ignoring whitespace), not
+    merely contain it — needed for labels like 'Version' that also occur in
+    description prose (#279).
+    """
+    if exact:
+        pattern = re.compile(rf"^\s*{re.escape(label)}\s*$", re.IGNORECASE)
+    else:
+        pattern = re.compile(re.escape(label), re.IGNORECASE)
+    for elem in soup.find_all(string=pattern):
         parent = elem.parent
         sibling = parent.find_next_sibling()
         if sibling:
