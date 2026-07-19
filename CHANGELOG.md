@@ -460,6 +460,15 @@ release to diff against.
 
 ### Security
 
+- **Database backups are no longer baked into the app image** (#277). `.dockerignore` excluded
+  `.env`, `tests/`, and `caddy/certs/` but not `backups/` — the directory the Compose `backup`
+  service fills with `pg_dump -Fc` archives of the live database. Since the Dockerfile does
+  `COPY . .` and `.gitignore` has no bearing on the Docker build context, the documented
+  `docker compose up --build` upgrade path copied every dump — user rows with bcrypt hashes,
+  watchlist data, alert destinations and their webhook URLs — into the image layers, readable by
+  anyone who can pull the image and shipped wholesale if it is ever pushed. It also grew the build
+  context without bound as backups accumulated. `tests/test_backup.py` now derives the host
+  directory from the Compose mount and asserts it is excluded, so a rename can't reopen the hole.
 - **SSO: RP-initiated logout + shorter SSO session lifetime** (#221). Logging out of an SSO account
   now redirects to the IdP's `end_session_endpoint` (with the `id_token_hint`) so the provider
   session is terminated, not just the local cookie — falling back to a local-only logout when the
