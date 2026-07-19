@@ -6,10 +6,12 @@ Two layers, guarding both halves of the contract:
    origin. Navigation links (``<a href>``) and dynamic hrefs built by the app
    (e.g. the manual VirusTotal/OTX lookup links) are deliberately out of scope —
    the gate is about what executes/renders in the page, not where a user may go.
-2. The canonical CSP (caddy/headers.caddy and its test-guarded Helm mirror) must
-   not allowlist any scheme://host source. A reintroduced CDN tag would otherwise
-   only fail at runtime (blocked by the same-origin CSP) — or worse, merge cleanly
-   if the CSP were quietly widened to match.
+2. The CSP must not allowlist any scheme://host source — checked on the canonical
+   policy the app emits (app/main.py:security_headers, asserted on a real response)
+   AND in the Caddy fallback files (caddy/headers.caddy + its test-guarded Helm
+   mirror). A reintroduced CDN tag would otherwise only fail at runtime (blocked by
+   the same-origin CSP) — or worse, merge cleanly if the CSP were quietly widened
+   to match.
 """
 
 import re
@@ -73,3 +75,9 @@ def test_csp_allowlists_no_external_origin() -> None:
                 f"{path}: the CSP must not allowlist an external origin (#85); "
                 "every source directive is same-origin only"
             )
+
+
+async def test_served_csp_allowlists_no_external_origin(client) -> None:
+    """Same contract on the canonical policy the app actually serves (#85)."""
+    csp = (await client.get("/healthz")).headers["Content-Security-Policy"]
+    assert "://" not in csp, "the served CSP must not allowlist an external origin (#85)"

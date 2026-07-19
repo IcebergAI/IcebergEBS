@@ -60,11 +60,14 @@ def test_k8s_caddyfile_uses_strict_trusted_proxies():
 
 
 def test_headers_caddy_defers_header_ops():
-    """The header block must carry an explicit `defer` so its SETs apply AFTER reverse_proxy
-    copies the upstream (app baseline) response headers — otherwise both the SET value and the
-    upstream copy ship (two CSP/HSTS). The block also defers implicitly via the `-Server` delete
-    op, but that's fragile; the explicit `defer` guards a future edit dropping it (#201). Checked
-    in the canonical file and enforced identically in the byte-mirrored ConfigMap."""
+    """The fallback header block must carry an explicit `defer` so its `?` (set-if-absent) ops
+    run AFTER reverse_proxy copies the upstream (app canonical) response headers — that ordering
+    is what lets `?` see the app's headers and stand down. Without it the fallback CSP would be
+    set first and the app's canonical CSP copied in afterwards: two CSP values, and the browser
+    enforces the intersection (the fallback's default-src 'none'), breaking every page (#201).
+    The block also defers implicitly via the `-Server` delete op, but that's fragile; the
+    explicit `defer` guards a future edit dropping it. Checked in the canonical file and
+    enforced identically in the byte-mirrored ConfigMap."""
     canonical = (_ROOT / "caddy/headers.caddy").read_text()
     assert re.search(r"header\s*\{\s*defer\b", canonical), "explicit `defer` missing from headers.caddy header block"
     # The mirror test above already pins byte-equality; this asserts the mirror carries it too.

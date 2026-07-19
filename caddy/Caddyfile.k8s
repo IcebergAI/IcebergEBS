@@ -1,7 +1,8 @@
 # In-pod reverse proxy for the Kubernetes deployment (#188). Topology: cluster ingress
 # (TLS termination via cert-manager, edge rate limiting) → THIS Caddy sidecar → app on
-# localhost:8000. Caddy owns the canonical security headers here too (imported from the
-# same headers.caddy), so the ingress no longer has to duplicate the CSP snippet.
+# localhost:8000. The app owns the canonical security headers (app/main.py:
+# security_headers); the sidecar imports the same headers.caddy set-if-absent fallback
+# as Compose, and the ingress still doesn't duplicate any CSP snippet.
 #
 # Delivered to the pod as a ConfigMap mounted at /etc/caddy (see the Helm chart), so the
 # `import headers.caddy` path resolves next to this file exactly as it does in Compose.
@@ -37,7 +38,8 @@
 		respond "ok" 200
 	}
 
-	# Canonical security headers (single source of truth, shared with Compose).
+	# Fallback security headers (set-if-absent, shared with Compose) — the app owns
+	# the canonical set; these only apply to Caddy-generated responses.
 	import headers.caddy
 
 	# Everything (including /static, which the app serves via StaticFiles) → the app in the

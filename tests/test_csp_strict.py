@@ -7,6 +7,12 @@ external static/js/theme-boot.js, Alpine is the @alpinejs/csp build, and every
 component is registered from same-origin files. The new guard is strictly
 stronger: it covers EVERY template, not one script, and pins the policy itself.
 
+The policy home is the app: `app/main.py:security_headers` emits the canonical CSP
+on every response, so the script-src check runs against a real client response —
+the actual enforcement surface — rather than grepping config files. The remaining
+file scans cover `caddy/headers.caddy` (now a set-if-absent fallback for
+Caddy-generated responses) and its Helm ConfigMap mirror.
+
 Nothing at runtime notices a regression on pages the e2e suite doesn't visit: the
 browser silently refuses to run a reintroduced inline script and that page's
 behaviour quietly breaks in production. This test makes it a CI failure instead.
@@ -20,21 +26,17 @@ import pytest
 _ROOT = Path(__file__).resolve().parent.parent
 _TEMPLATES = sorted((_ROOT / "app" / "templates").glob("*.html"))
 _CSP_FILES = [
+    # The canonical policy home (app-side, #66 inverted).
+    _ROOT / "app/main.py",
+    # The Caddy fallback and its Helm ConfigMap mirror (Helm can't read files above
+    # the chart) — scanned so a hash pin can't linger in either copy.
     _ROOT / "caddy/headers.caddy",
-    # The Helm K8s ConfigMap embeds a mirror of caddy/headers.caddy (Helm can't read
-    # files above the chart); check it too so the two copies can't silently drift.
     _ROOT / "helm/iceberg-ebs/templates/caddy-configmap.yaml",
 ]
 
 # Any <script> tag: must either load a same-origin file (src=) or be a data island
 # (type="application/json", inert — never executed).
 _SCRIPT_TAG = re.compile(r"<script\b[^>]*>", re.IGNORECASE)
-
-
-def _csp_values(csp_file: Path) -> list[str]:
-    values = re.findall(r"Content-Security-Policy \"([^\"]+)\"", csp_file.read_text(encoding="utf-8"))
-    assert values, f"no Content-Security-Policy header found in {csp_file}"
-    return values
 
 
 def test_no_inline_scripts_in_any_template():
@@ -68,16 +70,14 @@ def test_no_inline_event_handlers_in_any_template():
     )
 
 
-@pytest.mark.parametrize("csp_file", _CSP_FILES, ids=lambda p: p.name)
-def test_script_src_is_exactly_self(csp_file: Path):
-    for value in _csp_values(csp_file):
-        directives = dict(
-            (stripped.split(None, 1) + [""])[:2] for part in value.split(";") if (stripped := part.strip())
-        )
-        assert directives.get("script-src") == "'self'", (
-            f"{csp_file}: script-src must be exactly \"'self'\" (#106) — no hashes, "
-            f"no hosts, no unsafe-*; got: {directives.get('script-src')!r}"
-        )
+async def test_script_src_is_exactly_self(client):
+    """Asserted on a real response — the app middleware is the enforcement surface."""
+    value = (await client.get("/healthz")).headers["Content-Security-Policy"]
+    directives = dict((stripped.split(None, 1) + [""])[:2] for part in value.split(";") if (stripped := part.strip()))
+    assert directives.get("script-src") == "'self'", (
+        f"script-src must be exactly \"'self'\" (#106) — no hashes, "
+        f"no hosts, no unsafe-*; got: {directives.get('script-src')!r}"
+    )
 
 
 @pytest.mark.parametrize("csp_file", _CSP_FILES, ids=lambda p: p.name)
