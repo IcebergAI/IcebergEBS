@@ -242,8 +242,8 @@ def scrub(text: str) -> str:
         if not raw:
             continue
         parsed = urlsplit(raw)
-        for secret in (parsed.password, parsed.username):
-            if secret:
-                text = text.replace(secret, "***")
-                text = text.replace(quote(secret, safe=""), "***")
+        for env_secret in (parsed.password, parsed.username):
+            if env_secret:
+                text = text.replace(env_secret, "***")
+                text = text.replace(quote(env_secret, safe=""), "***")
     return _URL_USERINFO_RE.sub("***", text)
