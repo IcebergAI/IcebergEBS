@@ -697,7 +697,7 @@ apiVersion: v2
 name: iceberg-ebs
 description: Extension risk monitor
 type: application
-version: 0.2.0        # the CHART's version — bump on template changes
+version: 0.2.1        # the CHART's version — bump on template changes
 appVersion: "0.1.0b1" # the APP version it deploys — kept equal to pyproject.toml
 # No dependencies — PostgreSQL is templates/postgres.yaml (#276)
 ```
