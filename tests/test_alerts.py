@@ -898,13 +898,16 @@ async def test_fire_alerts_persisted_error_is_scrubbed(test_db, admin_user):
         session.add(dest)
         await session.commit()
         await session.refresh(dest)
+        # Capture before the next commit re-expires dest's attributes: an expired
+        # attribute access lazy-loads synchronously → MissingGreenlet under asyncpg.
+        dest_id = dest.id
 
         ext = _ext(id=None, user_id=admin_user.id)
         session.add(ext)
         await session.commit()
         await session.refresh(ext)
 
-        rule = AlertRule(user_id=admin_user.id, destination_id=dest.id, event_type="new_version", enabled=True)
+        rule = AlertRule(user_id=admin_user.id, destination_id=dest_id, event_type="new_version", enabled=True)
         session.add(rule)
         await session.commit()
         await session.refresh(ext)

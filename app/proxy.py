@@ -40,7 +40,7 @@ import re
 from dataclasses import dataclass
 from enum import StrEnum
 from ipaddress import ip_address, ip_network
-from urllib.parse import quote, urlsplit, urlunsplit
+from urllib.parse import quote, unquote, urlsplit, urlunsplit
 
 from app.config import Settings, settings
 
@@ -244,6 +244,8 @@ def scrub(text: str) -> str:
         parsed = urlsplit(raw)
         for env_secret in (parsed.password, parsed.username):
             if env_secret:
-                text = text.replace(env_secret, "***")
-                text = text.replace(quote(env_secret, safe=""), "***")
+                # urlsplit keeps userinfo percent-encoded, but an exception message
+                # may carry the decoded spelling too — redact every form.
+                for form in (env_secret, quote(env_secret, safe=""), unquote(env_secret)):
+                    text = text.replace(form, "***")
     return _URL_USERINFO_RE.sub("***", text)
