@@ -118,6 +118,34 @@ _JS_SUFFIXES = (".js", ".mjs", ".cjs", ".jsx")
 _HTML_SUFFIXES = (".html", ".htm")
 _SCAN_SUFFIXES = _JS_SUFFIXES + _HTML_SUFFIXES
 
+# ASCII whitespace per the HTML spec — browsers strip it around a URL attribute
+# before resolving, so `src=" https://…"` still loads.
+_HTML_WHITESPACE = " \t\n\r\f"
+
+# The HTML spec's legacy JavaScript MIME types. A <script> whose type essence is
+# none of these (nor empty, nor "module") is a data block the browser never
+# executes: its body is not code and its src is never fetched.
+_JS_MIME_ESSENCES = frozenset(
+    {
+        "application/ecmascript",
+        "application/javascript",
+        "application/x-ecmascript",
+        "application/x-javascript",
+        "text/ecmascript",
+        "text/javascript",
+        "text/javascript1.0",
+        "text/javascript1.1",
+        "text/javascript1.2",
+        "text/javascript1.3",
+        "text/javascript1.4",
+        "text/javascript1.5",
+        "text/jscript",
+        "text/livescript",
+        "text/x-ecmascript",
+        "text/x-javascript",
+    }
+)
+
 
 # Domains that are noise — well-known CDNs/services not worth flagging
 _SAFE_DOMAINS = {
@@ -342,9 +370,13 @@ def _analyse_html(source: str, analysis: PackageAnalysis, filename: str) -> None
     those script bodies before the JS regexes run, so line numbers stay true to
     the original file and markup never reaches the minification/obfuscation
     heuristics (the #151 false-positive class).
+
+    Only *executable* scripts are analysed — see ``_is_executable_script``. A
+    ``<script type="application/json">`` is a data block the browser never runs,
+    so scanning it would score JSON that merely contains the text ``eval(...)``.
     """
     soup = BeautifulSoup(source, "html.parser")
-    scripts = soup.find_all("script")
+    scripts = [tag for tag in soup.find_all("script") if _is_executable_script(tag)]
 
     bodies = [body for tag in scripts if (body := tag.string)]
     masked = _mask_non_script(source, bodies)
@@ -357,7 +389,13 @@ def _analyse_html(source: str, analysis: PackageAnalysis, filename: str) -> None
     # page instead would drag in every href and img.
     for tag in scripts:
         src = tag.get("src")
-        if not isinstance(src, str) or not src.lower().startswith(("http://", "https://")):
+        if not isinstance(src, str):
+            continue
+        # Browsers strip leading/trailing ASCII whitespace before resolving a URL,
+        # so `src=" https://evil.example/p.js"` loads remote code. Comparing the
+        # raw attribute would have let that through with no finding at all.
+        src = src.strip(_HTML_WHITESPACE)
+        if not src.lower().startswith(("http://", "https://")):
             continue
         analysis.uses_remote_code = True
         url = _clean_url(src)
@@ -376,6 +414,31 @@ def _analyse_html(source: str, analysis: PackageAnalysis, filename: str) -> None
             file=filename,
             line=tag.sourceline,
         )
+
+
+def _is_executable_script(tag: object) -> bool:
+    """Whether the browser would execute this ``<script>`` as JavaScript.
+
+    A ``type`` the browser doesn't recognise as JavaScript makes the element a
+    data block: the body never runs and a ``src`` is never fetched. Common ones
+    are ``application/json``, ``importmap``, ``speculationrules`` and template
+    stashes like ``text/x-handlebars``. Scanning those bodies scored inert data
+    — JSON whose *contents* merely include ``eval(payload)`` could add code-
+    behaviour points — and flagged a ``src`` the browser ignores.
+
+    Matched the way the HTML spec does: on the MIME *essence*, so parameters
+    (``text/javascript; charset=utf-8``) still count as JavaScript. A missing or
+    empty ``type`` is a classic script; ``module`` is executable too. Anything
+    else is data, which is the safe default — the legacy JavaScript MIME list is
+    closed, so an unrecognised type really is inert.
+    """
+    raw = tag.get("type")  # type: ignore[attr-defined]
+    if raw is None:
+        return True
+    if not isinstance(raw, str):
+        return False
+    essence = raw.split(";", 1)[0].strip().lower()
+    return essence in ("", "module") or essence in _JS_MIME_ESSENCES
 
 
 def _mask_non_script(source: str, bodies: list[str]) -> str:

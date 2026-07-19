@@ -791,3 +791,89 @@ def test_markup_after_a_sloppy_end_tag_is_still_masked():
     result = inspect_package(data)
     assert result.has_minified_code is False
     assert result.obfuscation_score == 0
+
+
+# --- #275 review: HTML script elements must be classified the way a browser does ---
+
+
+@pytest.mark.parametrize(
+    "src",
+    [
+        " https://evil.example/p.js",  # browsers strip leading ASCII whitespace
+        "https://evil.example/p.js ",
+        "\thttps://evil.example/p.js",
+        "\nhttps://evil.example/p.js\n",
+    ],
+)
+def test_remote_script_src_is_normalised_before_the_scheme_check(src):
+    """A raw-attribute comparison let `src=" https://…"` load remote code while
+    producing no finding, no external domain and no callout at all."""
+    data = make_zip(
+        {
+            "manifest.json": json.dumps({"manifest_version": 3, "name": "x", "version": "1"}),
+            "p.html": f'<html><script src="{src}"></script></html>',
+        }
+    )
+    result = inspect_package(data)
+    assert result.uses_remote_code is True
+    assert "remote_script_include" in _finding_codes(result)
+    assert "evil.example" in result.external_domains
+
+
+@pytest.mark.parametrize(
+    "script_type",
+    ["application/json", "importmap", "speculationrules", "text/x-handlebars-template"],
+)
+def test_data_blocks_are_not_scanned_as_javascript(script_type):
+    """A non-JavaScript type is a data block: the body never executes, so scoring
+    it would let inert JSON containing the text `eval(...)` add code-behaviour
+    points."""
+    data = make_zip(
+        {
+            "manifest.json": json.dumps({"manifest_version": 3, "name": "x", "version": "1"}),
+            "p.html": f'<html><script type="{script_type}">{{"x":"eval(payload); fetch(\'https://evil.example/a\')"}}</script></html>',
+        }
+    )
+    result = inspect_package(data)
+    assert result.uses_eval is False
+    assert result.uses_remote_code is False
+    assert result.external_domains == []
+    assert _finding_codes(result) == set()
+
+
+def test_src_on_a_data_block_is_not_flagged():
+    """Browsers never fetch the src of a non-executable script type, so a critical
+    finding there is a pure false positive."""
+    data = make_zip(
+        {
+            "manifest.json": json.dumps({"manifest_version": 3, "name": "x", "version": "1"}),
+            "p.html": '<html><script type="application/json" src="https://cdn.example/data.json"></script></html>',
+        }
+    )
+    result = inspect_package(data)
+    assert result.uses_remote_code is False
+    assert "remote_script_include" not in _finding_codes(result)
+
+
+@pytest.mark.parametrize(
+    "script_type",
+    [
+        "",  # <script type="">
+        "text/javascript",
+        "TEXT/JAVASCRIPT",  # matching is case-insensitive
+        "text/javascript; charset=utf-8",  # parameters ignored: match on the essence
+        "module",
+        "application/ecmascript",
+        "text/jscript",  # legacy spellings are still executed
+    ],
+)
+def test_executable_script_types_are_still_scanned(script_type):
+    """The type check must not swing the other way and let a payload hide behind
+    a legacy or parameterised JavaScript MIME type."""
+    data = make_zip(
+        {
+            "manifest.json": json.dumps({"manifest_version": 3, "name": "x", "version": "1"}),
+            "p.html": f'<html><script type="{script_type}">eval("x");</script></html>',
+        }
+    )
+    assert inspect_package(data).uses_eval is True
