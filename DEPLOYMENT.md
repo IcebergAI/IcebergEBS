@@ -662,7 +662,14 @@ Assumes the cluster already has:
 - **nginx-ingress-controller** (`ingress-nginx`)
 - **cert-manager** with a `ClusterIssuer` named `letsencrypt-prod`
 
-PostgreSQL is deployed as a Bitnami subchart — no separate StatefulSet to maintain.
+PostgreSQL is deployed by the chart itself — a single-replica StatefulSet on
+`docker.io/library/postgres`, the same image Compose and CI use (#276). It was previously the
+Bitnami `postgresql` subchart, dropped when Broadcom's 2025 catalog migration moved every
+versioned `bitnami/postgresql` tag to `bitnamilegacy` (so the pinned image stopped pulling) and
+left the free catalog publishing `latest` only — a moving tag that could roll a running
+deployment onto a new PostgreSQL major on a pod restart. Owning ~100 lines of StatefulSet buys
+back an exact, testable version pin; `tests/test_helm_postgres.py` fails if it ever drifts from
+the Compose image.
 
 ## Helm chart layout
 
@@ -690,12 +697,9 @@ apiVersion: v2
 name: iceberg-ebs
 description: Extension risk monitor
 type: application
-version: 0.1.0
-appVersion: "1.0.0"
-dependencies:
-  - name: postgresql
-    version: "~15.x.x"
-    repository: https://charts.bitnami.com/bitnami
+version: 0.2.0        # the CHART's version — bump on template changes
+appVersion: "0.1.0b1" # the APP version it deploys — kept equal to pyproject.toml
+# No dependencies — PostgreSQL is templates/postgres.yaml (#276)
 ```
 
 ---
@@ -755,10 +759,12 @@ postgresql:
     username: iceberg_ebs
     password: ""           # override with --set or existingSecret
     database: iceberg_ebs
-  # Disable the Bitnami subchart's OWN NetworkPolicy (#103): policy ingress rules
-  # union, so leaving it enabled would re-open Postgres past our app-only rule.
-  networkPolicy:
-    enabled: false
+  image:
+    repository: postgres   # docker.io/library/postgres, matching Compose + CI
+    tag: "18-alpine"       # lockstep-tested against docker-compose.yml
+  persistence:
+    size: 10Gi
+    storageClass: ""       # empty = cluster default
 
 ingress:
   host: icebergebs.example.com
@@ -869,15 +875,27 @@ spec:
             - configMapRef:
                 name: {{ include "iceberg-ebs.fullname" . }}
           env:
-            # POSTGRES_PASSWORD must be defined BEFORE the $(POSTGRES_PASSWORD)
-            # reference below, or the interpolation doesn't resolve.
+            {{- if .Values.postgresql.enabled }}
+            # Bundled database. POSTGRES_PASSWORD must be defined BEFORE the
+            # $(POSTGRES_PASSWORD) reference below, or the interpolation doesn't resolve.
             - name: POSTGRES_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: {{ include "iceberg-ebs.fullname" . }}-postgresql
+                  # NOT iceberg-ebs.fullname + "-postgresql" — that named a Secret
+                  # nothing creates, so the pod never started (#276).
+                  name: {{ include "iceberg-ebs.postgresql.fullname" . }}
                   key: password
             - name: ICEBERG_EBS_DATABASE_URL
-              value: "postgresql+asyncpg://{{ .Values.postgresql.auth.username }}:$(POSTGRES_PASSWORD)@{{ include \"iceberg-ebs.fullname\" . }}-postgresql/{{ .Values.postgresql.auth.database }}"
+              value: "postgresql+asyncpg://{{ .Values.postgresql.auth.username }}:$(POSTGRES_PASSWORD)@{{ include \"iceberg-ebs.postgresql.fullname\" . }}/{{ .Values.postgresql.auth.database }}"
+            {{- else }}
+            # External database: the DSN carries a password, so it comes from a
+            # Secret — never a ConfigMap, never a plaintext value here.
+            - name: ICEBERG_EBS_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.externalDatabase.existingSecret | default (include "iceberg-ebs.fullname" .) }}
+                  key: {{ .Values.externalDatabase.existingSecretKey | default "database-url" }}
+            {{- end }}
             - name: ICEBERG_EBS_ADMIN_PASSWORD
               valueFrom:
                 secretKeyRef:
@@ -984,9 +1002,7 @@ spec:
 ## Installing
 
 ```bash
-# Add Bitnami repo and update deps
-helm repo add bitnami https://charts.bitnami.com/bitnami
-helm dependency update helm/iceberg-ebs
+# No `helm repo add` / `helm dependency update` — the chart has no subcharts (#276).
 
 # Install (generate strong values; never commit these)
 helm upgrade --install icebergebs helm/iceberg-ebs \
@@ -998,8 +1014,9 @@ helm upgrade --install icebergebs helm/iceberg-ebs \
   --set icebergEbs.appBaseUrl="https://icebergebs.example.com" \
   --set ingress.host="icebergebs.example.com"
 
-# Watch rollout
-kubectl rollout status deployment/icebergebs -n icebergebs
+# Watch rollout. The Deployment is named <release>-<chart>, so a release called
+# "icebergebs" produces "icebergebs-iceberg-ebs" — not "icebergebs" (#276).
+kubectl rollout status deployment/icebergebs-iceberg-ebs -n icebergebs
 ```
 
 **`image.tag` is required — the chart has no default** (#88). Pin an immutable release tag
@@ -1029,7 +1046,7 @@ For GitOps (Flux / ArgoCD): use `SealedSecret` or an ExternalSecrets `ExternalSe
 | TLS | Manual cert or self-signed | cert-manager + Let's Encrypt (automatic) |
 | Scaling | Single host | Multi-node |
 | Secret management | `.env` file | K8s Secret / ExternalSecret |
-| PostgreSQL | Docker volume | Bitnami subchart (StatefulSet) |
+| PostgreSQL | Docker volume | In-chart StatefulSet + PVC |
 | Upgrades | rebuild / repin image, `up` | `helm upgrade --set image.tag=<new release>` |
 | Best for | Single-server / homelab | Cloud / team deployments |
 
@@ -1112,24 +1129,147 @@ else
 fi
 ```
 
-**Helm:** the chart's Postgres version tracks the Bitnami `postgresql` subchart pinned in
-`Chart.yaml`, upgraded separately from these Compose pins; follow the subchart's own major-upgrade
-guidance (dump/restore, or its `pg_upgrade` job) so both deployment paths land on the same major.
+**Helm:** the chart runs the *same* image as Compose (`postgresql.image` in `values.yaml`), held in
+lockstep by `tests/test_helm_postgres.py::test_helm_postgres_image_matches_compose_exactly` — so a
+major bump is one PR touching both pins, and the two deployment paths cannot land on different
+majors. The upgrade itself is the same dump/restore as above: the official image does **not**
+run `pg_upgrade` for you, and pointing a new major at an old PGDATA fails to start. Scale the app
+to 0, `pg_dump` from the old pod, bump both pins, delete the PVC, then restore into the new pod.
+
+#### Migrating from the Bitnami subchart
+
+**Applies only to releases installed before #276.** Fresh installs need none of this.
+
+The chart used to deploy the Bitnami `postgresql` subchart; it now runs its own StatefulSet. The
+two are **not** interchangeable in place, for two independent reasons:
+
+- **Immutable fields.** The StatefulSet's `serviceName` and `selector` cannot be changed, so a
+  plain `helm upgrade` is rejected by the API server.
+- **Incompatible on-disk layout — the dangerous one.** Bitnami stores its cluster at
+  `/bitnami/postgresql/data`; this chart uses `PGDATA=/var/lib/postgresql/data/pgdata`. Both
+  declare a volumeClaimTemplate named `data`, so a *recreated* StatefulSet binds the **same PVC**,
+  finds no `pgdata` directory, and `initdb` creates a brand-new **empty PostgreSQL 18 cluster**
+  next to your untouched PostgreSQL 16 data. The app starts, Alembic builds a fresh schema, and
+  every probe is green — while the application is empty. It looks exactly like a successful
+  upgrade.
+
+The chart therefore **refuses to render** against a release whose StatefulSet is still Bitnami's,
+naming this section. Do not work around it; do this instead.
+
+```bash
+set -euo pipefail          # a failed pg_dump must NOT look like a successful one
+NS=icebergebs
+REL=icebergebs
+# Two credentials, and the difference matters below: `password` is the application
+# role, `postgres-password` is the superuser. The Bitnami chart creates the custom
+# role WITHOUT the CREATEDB attribute, so the scratch database in step 3 has to be
+# created by the superuser (verified: `createdb -U iceberg_ebs` fails with
+# "permission denied to create database").
+PGPW=$(kubectl -n "$NS" get secret "$REL"-postgresql -o jsonpath='{.data.password}' | base64 -d)
+PGSUPERPW=$(kubectl -n "$NS" get secret "$REL"-postgresql -o jsonpath='{.data.postgres-password}' | base64 -d)
+
+# 1. Stop writes. (The Deployment is <release>-<chart>.)
+kubectl -n "$NS" scale deploy/"$REL"-iceberg-ebs --replicas=0
+kubectl -n "$NS" rollout status deploy/"$REL"-iceberg-ebs --timeout=120s
+
+# 2. Dump from the OLD (Bitnami) pod. `set -o pipefail` above is what makes a
+#    mid-stream pg_dump failure fail this command instead of leaving a truncated
+#    file that later steps treat as good.
+kubectl -n "$NS" exec "$REL"-postgresql-0 -- \
+  env PGPASSWORD="$PGPW" pg_dump -U iceberg_ebs -d iceberg_ebs -Fc \
+  > icebergebs-premigration.pgc
+
+# 3. VERIFY BY RESTORING, not by reading the header. `pg_restore --list` only
+#    parses the table of contents, so an archive truncated after its TOC passes it
+#    while missing every data block. Measured: a 65,751-byte dump truncated to 30%
+#    still passed BOTH `pg_restore --list` and `test -s`, yet restored 0 of 5000
+#    rows per table. Restore into a scratch database and compare counts instead.
+kubectl -n "$NS" exec "$REL"-postgresql-0 -- \
+  env PGPASSWORD="$PGSUPERPW" createdb -U postgres -O iceberg_ebs migration_verify
+kubectl -n "$NS" exec -i "$REL"-postgresql-0 -- \
+  env PGPASSWORD="$PGPW" pg_restore -U iceberg_ebs -d migration_verify \
+  < icebergebs-premigration.pgc
+
+# Compare a real row count between the live database and the restored copy.
+for DB in iceberg_ebs migration_verify; do
+  kubectl -n "$NS" exec "$REL"-postgresql-0 -- \
+    env PGPASSWORD="$PGPW" psql -U iceberg_ebs -d "$DB" -tAc \
+    'select (select count(*) from "user"), (select count(*) from extension);'
+done
+# The two lines MUST match. If they do not, STOP — nothing has been deleted yet.
+
+kubectl -n "$NS" exec "$REL"-postgresql-0 -- \
+  env PGPASSWORD="$PGSUPERPW" dropdb -U postgres migration_verify
+
+# 4. Retain the underlying volume BEFORE deleting the PVC. Kubernetes cannot
+#    rename a PVC, and the new StatefulSet's volumeClaimTemplate wants the same
+#    name — so the old claim has to go. Flipping the PV to Retain means deleting
+#    the claim releases the name without destroying the data: the PV survives,
+#    and can be re-bound manually if the restore turns out wrong.
+PV=$(kubectl -n "$NS" get pvc data-"$REL"-postgresql-0 -o jsonpath='{.spec.volumeName}')
+kubectl patch pv "$PV" -p '{"spec":{"persistentVolumeReclaimPolicy":"Retain"}}'
+kubectl get pv "$PV" -o jsonpath='{.spec.persistentVolumeReclaimPolicy}'   # must print: Retain
+
+# 5. Delete the Bitnami database resources.
+kubectl -n "$NS" delete statefulset "$REL"-postgresql
+kubectl -n "$NS" delete svc "$REL"-postgresql "$REL"-postgresql-hl --ignore-not-found
+kubectl -n "$NS" delete pvc data-"$REL"-postgresql-0
+
+# 6. Upgrade. The guard now passes and the chart's own StatefulSet is created.
+helm upgrade "$REL" helm/iceberg-ebs -n "$NS" --set image.tag=... --set postgresql.auth.password=...
+kubectl -n "$NS" rollout status statefulset/"$REL"-postgresql --timeout=300s
+
+# 7. Restore, then bring the app back.
+kubectl -n "$NS" exec -i "$REL"-postgresql-0 -- \
+  env PGPASSWORD='<postgresql.auth.password>' \
+  pg_restore -U iceberg_ebs -d iceberg_ebs --clean --if-exists \
+  < icebergebs-premigration.pgc
+kubectl -n "$NS" scale deploy/"$REL"-iceberg-ebs --replicas=1
+```
+
+**Do not clean up until the new deployment is validated.** Keep both the dump file and the retained
+PV until you have confirmed the restored application looks right — extension count, users, alert
+destinations, and a successful scheduler run. Only then `kubectl delete pv "$PV"`.
+
+Rolling back means `helm rollback`, then re-creating a PVC bound to the retained PV (clear its
+`claimRef` first, so it can bind again) — which is the reason step 4 exists.
+
+If you would rather not migrate data at all, `postgresql.enabled=false` with `externalDatabase.*`
+pointed at a managed Postgres is a clean alternative: restore the dump there instead, and the
+in-cluster database stops being your problem.
 
 ### Kubernetes (Helm)
 
 The chart does not template a backup CronJob; choose one of:
 
-- **Bitnami `postgresql` backup values** — the subchart supports a scheduled `pg_dump` CronJob
-  (`postgresql.backup.enabled=true`, `postgresql.backup.cronjob.schedule`, storage size/retention).
-  Enable it in your values and point it at a PVC or object-storage sidecar.
+- **Your own `CronJob`** — a scheduled `pg_dump -Fc` into a PVC or object storage, mirroring the
+  Compose `backup` service. The chart no longer bundles one: the Bitnami subchart's backup values
+  went away with the subchart (#276). Give the Job the app pod's labels or its own NetworkPolicy
+  rule, per the note below.
 - **VolumeSnapshots** — if your CSI driver supports them, snapshot the Postgres PVC on a schedule
   (e.g. via an external-snapshotter policy). Fast, but crash-consistent, not a logical dump.
 - **External managed Postgres** — run Postgres outside the cluster (RDS/Cloud SQL/etc.) and use the
-  provider's automated backups + PITR; set `postgresql.enabled=false` and point `ICEBERG_EBS_DATABASE_URL`
-  at it. Recommended for anything beyond a homelab.
+  provider's automated backups + PITR. Recommended for anything beyond a homelab. Set
+  `postgresql.enabled=false` — since #276 there is no subchart at all, so this simply skips the
+  chart's own `templates/postgres.yaml` — and supply the DSN one of two ways:
 
-Restore mirrors the Compose flow: scale the app to 0 (`kubectl scale deploy/icebergebs --replicas=0`),
+  ```bash
+  # (a) chart-managed Secret — simplest
+  --set postgresql.enabled=false \
+  --set externalDatabase.url="postgresql+asyncpg://user:pass@db.example.com:5432/iceberg_ebs"
+
+  # (b) bring your own Secret — keeps the credential out of your values file and
+  #     out of `helm get values`
+  --set postgresql.enabled=false \
+  --set externalDatabase.existingSecret=icebergebs-db \
+  --set externalDatabase.existingSecretKey=dsn
+  ```
+
+  The DSN carries a password, so the chart only ever reads it from a Secret — never a ConfigMap and
+  never a plaintext `value:` in the pod spec. Setting neither fails the render with a message naming
+  the missing value, rather than deploying a pod that cannot reach a database.
+
+Restore mirrors the Compose flow: scale the app to 0 (`kubectl scale deploy/icebergebs-iceberg-ebs --replicas=0`),
 `pg_restore` the dump into the database, then scale back to 1. Note the NetworkPolicy (#103) default-denies
 ingress to Postgres, so a backup/restore Job needs either its own explicit rule or to carry the app pod's
 labels (NetworkPolicy matches on pod/namespace selectors, so the existing allow-postgres-from-app rule

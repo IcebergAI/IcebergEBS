@@ -157,6 +157,108 @@ jobs:
           "$(go env GOPATH)/bin/actionlint" -color
 
   # Browser-level UI smoke (#100): boots the real stack (Postgres + uvicorn behind
+  # Renders the Helm chart. Nothing in CI used to render or install it, which is
+  # exactly how #276 shipped: the Deployment referenced a Secret and a Service that
+  # the Bitnami subchart never creates (subcharts name resources with their OWN chart
+  # name), so the app pod could only ever have died in CreateContainerConfigError.
+  # Reading the templates cannot catch that; rendering them can.
+  #
+  # tests/test_helm_postgres.py guards the same contract as text inside the `test`
+  # job — this job proves the chart actually renders, including the external-database
+  # path and the deliberate render failure when neither DSN knob is set.
+  helm:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          # zizmor artipacked: don't leave the repo token in .git/config —
+          # nothing in this job pushes.
+          persist-credentials: false
+      - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+        with:
+          version: v3.16.3
+      # No `helm dependency update` step: the chart has no subcharts since #276,
+      # so this job needs no chart registry at all.
+      - run: helm lint helm/iceberg-ebs --set image.tag=v0.0.0-ci --set icebergEbs.adminPassword=x --set icebergEbs.secretKey=y --set postgresql.auth.password=z
+
+      # The bundled path: the DB Secret and host the pod is wired to must be names
+      # the subchart actually creates.
+      - name: Render with the bundled database and check the wiring resolves
+        run: |
+          helm template ci helm/iceberg-ebs \
+            --set image.tag=v0.0.0-ci \
+            --set icebergEbs.adminPassword=x --set icebergEbs.secretKey=y \
+            --set postgresql.auth.password=z > /tmp/bundled.yaml
+
+          # Every name the app pod's DB env refers to must be a name the chart
+          # actually creates, and every selector must actually select the DB pods.
+          python3 - <<'PY'
+          import re, yaml
+          docs = [d for d in yaml.safe_load_all(open("/tmp/bundled.yaml")) if d]
+          created = {(d["kind"], d["metadata"]["name"]) for d in docs}
+          dep = next(d for d in docs if d["kind"] == "Deployment")
+          app = next(c for c in dep["spec"]["template"]["spec"]["containers"] if c["name"] == "iceberg-ebs")
+          env = {e["name"]: e for e in app["env"]}
+
+          secret = env["POSTGRES_PASSWORD"]["valueFrom"]["secretKeyRef"]["name"]
+          assert ("Secret", secret) in created, f"pod reads Secret {secret!r}, which the chart never creates"
+
+          dsn = env["ICEBERG_EBS_DATABASE_URL"]["value"]
+          host = re.search(r"@([^/:]+)", dsn).group(1)
+          assert ("Service", host) in created, f"DSN host {host!r} resolves to no Service in this release"
+
+          # A Service or NetworkPolicy whose selector matches nothing is silently
+          # inert: the app cannot connect, or Postgres is left unprotected.
+          sts = next(d for d in docs if d["kind"] == "StatefulSet")
+          pod_labels = sts["spec"]["template"]["metadata"]["labels"]
+          svc = next(d for d in docs if d["kind"] == "Service" and d["metadata"]["name"] == host)
+          assert svc["spec"]["selector"].items() <= pod_labels.items(), \
+              f"Service {host!r} selector {svc['spec']['selector']} matches no DB pod"
+          np = next(d for d in docs if d["kind"] == "NetworkPolicy"
+                    and d["metadata"]["name"].endswith("allow-postgres-from-app"))
+          assert np["spec"]["podSelector"]["matchLabels"].items() <= pod_labels.items(), \
+              "allow-postgres-from-app selects no DB pod — Postgres would be unprotected"
+
+          image = sts["spec"]["template"]["spec"]["containers"][0]["image"]
+          print(f"OK: Secret {secret}, Service {host}, selectors match, image {image}")
+          PY
+
+      # The documented external-database path must actually suppress the subchart.
+      - name: Render with an external database
+        run: |
+          helm template ci helm/iceberg-ebs \
+            --set image.tag=v0.0.0-ci \
+            --set icebergEbs.adminPassword=x --set icebergEbs.secretKey=y \
+            --set postgresql.enabled=false \
+            --set externalDatabase.url='postgresql+asyncpg://u:p@db.example.com:5432/iceberg_ebs' \
+            > /tmp/external.yaml
+          if grep -q "ci-postgresql" /tmp/external.yaml; then
+            echo "postgresql.enabled=false still deployed the subchart" >&2
+            exit 1
+          fi
+          # The DSN carries a password: it must come from a Secret, never a plaintext value.
+          grep -q "key: database-url" /tmp/external.yaml
+
+      # The upgrade guard (#276) cannot be tested by rendering the chart normally:
+      # `lookup` returns empty without a cluster. Substitute a fixture for it and
+      # assert the actual branch behaviour — a StatefulSet without the chart's
+      # marker label must refuse, including one whose image name carries no
+      # "bitnami" substring (an air-gapped mirror), which is exactly the case a
+      # string sniff would wave through.
+      - name: Upgrade guard refuses a foreign StatefulSet
+        run: bash helm/test-upgrade-guard.sh
+
+      - name: Render must fail when no external DSN is supplied
+        run: |
+          if helm template ci helm/iceberg-ebs \
+               --set image.tag=v0.0.0-ci \
+               --set icebergEbs.adminPassword=x --set icebergEbs.secretKey=y \
+               --set postgresql.enabled=false 2>/dev/null; then
+            echo "expected the render to fail with no externalDatabase.url and no existingSecret" >&2
+            exit 1
+          fi
+
   # the Caddy edge proxy) and drives it with Playwright, so a CSP
   # violation — e.g. the hand-maintained inline-script hash drifting — or a broken
   # Alpine component fails CI. The API/unit suite can see none of that. Playwright is

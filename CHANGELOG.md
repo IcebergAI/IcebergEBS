@@ -201,6 +201,37 @@ release to diff against.
 
 ### Fixed
 
+- **The Helm chart's database wiring now actually resolves** (#276). Three defects, none of
+  which any gate could catch because nothing in CI rendered or installed the chart.
+  - The Deployment referenced its DB Secret and host as `<release>-iceberg-ebs-postgresql`,
+    but a subchart names resources with its *own* chart name, so Bitnami created
+    `<release>-postgresql`. The app pod could only ever have died in
+    `CreateContainerConfigError`, and would not have resolved the DB host either.
+  - `postgresql.enabled=false` was inert — the dependency carried no `condition:`, so the
+    subchart deployed regardless, and `ICEBERG_EBS_DATABASE_URL` was hardcoded from the
+    subchart's values. The documented external-database option was impossible. There is now
+    an `externalDatabase.url` / `.existingSecret` knob; the DSN carries a password so it is
+    only ever read from a Secret, and supplying neither fails the render rather than
+    deploying a pod that cannot reach a database.
+  - **The bundled Bitnami subchart has been replaced by an in-chart StatefulSet** on
+    `docker.io/library/postgres:18-alpine`. Broadcom's 2025 catalog migration moved every
+    versioned `bitnami/postgresql` tag to `bitnamilegacy`, so the chart's `~15.x.x` pin no
+    longer pulls at all — a fresh install `ImagePullBackOff`s — and the current Bitnami chart
+    can only reach PostgreSQL 18 through a moving `latest` tag on the free tier, which could
+    roll a running deployment onto a new major on a pod restart. The chart now runs the exact
+    image Compose and CI use, held in lockstep by `tests/test_helm_postgres.py`.
+  **Upgrading an existing release needs a migration** — see "Migrating from the Bitnami subchart"
+  in `DEPLOYMENT.md`. Bitnami's data lives at `/bitnami/postgresql/data` and the chart's at
+  `PGDATA=/var/lib/postgresql/data/pgdata`, but both declare a volumeClaimTemplate named `data` —
+  so a recreated StatefulSet binds the *same* PVC, finds no `pgdata`, and `initdb`s an empty
+  PostgreSQL 18 cluster beside the untouched PostgreSQL 16 data, leaving every probe green and
+  the application empty. The chart **refuses to render** against a still-Bitnami release rather
+  than letting that happen silently.
+  Also: `appVersion` said `1.0.0` against an 0.1.0b1 app, and DEPLOYMENT.md's
+  `kubectl rollout status deployment/icebergebs` named a Deployment that is really
+  `icebergebs-iceberg-ebs`. A new **`helm` CI job** renders the chart and asserts the pod's DB
+  Secret and Service names exist and that the Service and NetworkPolicy selectors actually
+  select the database pods.
 - **Static analysis is no longer evadable by renaming a file** (#275). The code-behaviour scan
   selected files with `name.endswith(".js")`, but Chrome loads whatever path the manifest points
   at and a VS Code `main` is routinely `.cjs`/`.mjs`. A payload in `bg.mjs` — or in a file the
