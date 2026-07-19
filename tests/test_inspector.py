@@ -1058,3 +1058,50 @@ def test_comment_stripping_round_trips_valid_json(manifest):
     and quietly freeze that extension's analysis."""
     text = json.dumps(manifest)
     assert json.loads(_strip_json_comments(text)) == manifest
+
+
+def test_broken_manifest_json_does_not_fall_through_to_package_json():
+    """The highest-priority candidate present is authoritative.
+
+    A Chrome extension whose `manifest.json` is corrupt but which also ships
+    npm/build metadata in `package.json` — common — used to match that instead,
+    be classified as VS Code on the filename, and have its permissions cleared
+    to []. That is the same permission erasure and spurious removal alert this
+    fix exists to prevent, reached by a longer route.
+    """
+    data = make_zip(
+        {
+            "manifest.json": "{ corrupt",
+            "package.json": json.dumps({"name": "build-metadata", "version": "1.0.0", "devDependencies": {}}),
+            "bg.js": "console.log(1);",
+        }
+    )
+    with pytest.raises(InspectorError, match="manifest.json"):
+        inspect_package(data)
+
+
+def test_broken_vsix_manifest_does_not_fall_through_either():
+    """Same rule one level down: a corrupt `extension/package.json` must not be
+    silently replaced by a root `package.json`."""
+    data = make_zip(
+        {
+            "extension/package.json": "{ corrupt",
+            "package.json": json.dumps({"name": "outer", "version": "1.0.0", "contributes": {}}),
+        }
+    )
+    with pytest.raises(InspectorError, match="extension/package.json"):
+        inspect_package(data)
+
+
+def test_lower_priority_candidate_is_still_used_when_the_higher_one_is_absent():
+    """No fallthrough on *failure* must not become no fallthrough at all —
+    a VSIX with only `extension/package.json` still resolves."""
+    data = make_zip(
+        {
+            "extension/package.json": json.dumps({"name": "e", "version": "1", "contributes": {}}),
+            "extension/main.js": "console.log(1);",
+        }
+    )
+    result = inspect_package(data)
+    assert result.permissions == []
+    assert "manifest_v2" not in _finding_codes(result)

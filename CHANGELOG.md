@@ -211,7 +211,10 @@ release to diff against.
   keep-stale guard only covered `analysis is None`.) Manifests are now decoded with `utf-8-sig`
   and re-parsed with comments stripped by a string-aware stripper, and a manifest that genuinely
   cannot be read — unparsable, wrong shape, or over the size limit — raises instead, taking the
-  same keep-stale path as a failed download. **Behaviour change:** an over-limit manifest
+  same keep-stale path as a failed download. The highest-priority candidate present is
+  authoritative, with no fallthrough: a Chrome extension with a corrupt `manifest.json` that also
+  ships npm metadata in `package.json` would otherwise match that instead, be classified as VS Code
+  on the filename, and have its permissions cleared anyway. **Behaviour change:** an over-limit manifest
   previously produced an analysis with no permissions; it now aborts the inspection, so scoring
   falls back to the unknown-midpoint rather than a falsely clean zero.
 - **VS Code extension packs and API-only extensions are no longer reported as Chrome Manifest V2**

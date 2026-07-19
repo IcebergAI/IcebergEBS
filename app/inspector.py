@@ -496,27 +496,29 @@ def _load_manifest(zf: zipfile.ZipFile) -> tuple[dict, str] | None:
     zeroing a real extension's permissions and firing a spurious
     ``permission_change`` removal alert. Raising routes it through the same
     keep-stale path as a failed download (#142).
+
+    **The highest-priority candidate present is authoritative — there is no
+    fallthrough.** Trying the next candidate when a higher-priority one fails to
+    parse rebuilds the very bug this exists to prevent: a Chrome extension whose
+    `manifest.json` is corrupt but which also ships npm/build metadata in
+    `package.json` (common) would match that instead, be classified as VS Code
+    on the filename, and have its permissions cleared to ``[]`` — permission
+    erasure and a spurious removal alert, by a longer route. If the file that
+    should describe this package cannot be read, we do not know what it said,
+    and guessing from a lesser file is worse than keeping the stored values.
     """
     candidates = ["manifest.json", "extension/package.json", "package.json"]
     names = zf.namelist()
     lower_map = {n.lower(): n for n in names}
 
-    resolved: list[str] = []
     for candidate in candidates:
-        if candidate in names:
-            resolved.append(candidate)
-        elif candidate in lower_map:  # case-insensitive fallback
-            resolved.append(lower_map[candidate])
-
-    errors: list[str] = []
-    for name in resolved:
+        name = candidate if candidate in names else lower_map.get(candidate)
+        if name is None:
+            continue
         try:
             return _read_manifest_json(zf, name), name
-        except Exception as exc:  # try the next candidate, but remember why this one failed
-            errors.append(f"{name}: {exc}")
-
-    if resolved:
-        raise InspectorError(f"Manifest present but unparsable ({'; '.join(errors)})")
+        except Exception as exc:
+            raise InspectorError(f"Manifest present but unparsable ({name}: {exc})") from exc
     return None
 
 
