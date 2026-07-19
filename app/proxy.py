@@ -36,6 +36,7 @@ that exercise the transport without the app lifecycle.
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass
 from enum import StrEnum
 from ipaddress import ip_address, ip_network
@@ -213,14 +214,36 @@ def validate_proxy_settings(s: Settings | None = None) -> None:
             )
 
 
+_URL_USERINFO_RE = re.compile(r"(?<=://)[^/@\s]+(?=@)")
+
+
 def scrub(text: str) -> str:
     """Redact any credential the exception text may have echoed back.
 
     httpx exception messages can embed the proxy URL, and the resolved URL
-    carries the env-only credentials — never let the raw string reach a log line.
+    carries credentials — never let the raw string reach a log line or a
+    persisted error column. Three layers (#228):
+
+    - the explicit ``ICEBERG_EBS_PROXY_USERNAME``/``_PASSWORD`` values (raw and
+      %-quoted), the EXPLICIT-mode credentials;
+    - userinfo carried inside the proxy env vars themselves — in SYSTEM mode
+      (the default) the resolved proxy URL is the raw ``HTTP(S)_PROXY``/
+      ``ALL_PROXY`` value, whose embedded credentials the settings-based pass
+      cannot see;
+    - a generic ``scheme://user:pass@`` strip as the backstop for any other URL
+      userinfo the message may carry.
     """
     for secret in (settings.proxy_password.get_secret_value(), settings.proxy_username):
         if secret:
             text = text.replace(secret, "***")
             text = text.replace(quote(secret, safe=""), "***")
-    return text
+    for env_name in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy"):
+        raw = os.environ.get(env_name, "").strip()
+        if not raw:
+            continue
+        parsed = urlsplit(raw)
+        for secret in (parsed.password, parsed.username):
+            if secret:
+                text = text.replace(secret, "***")
+                text = text.replace(quote(secret, safe=""), "***")
+    return _URL_USERINFO_RE.sub("***", text)

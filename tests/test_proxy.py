@@ -278,6 +278,33 @@ def test_scrub_redacts_raw_and_encoded_credentials(monkeypatch):
     assert "p%40ss%20word" not in scrubbed
 
 
+def test_scrub_redacts_system_mode_env_credentials(monkeypatch):
+    # SYSTEM mode (the default) resolves the raw HTTP(S)_PROXY/ALL_PROXY env value,
+    # whose embedded userinfo never touches settings.proxy_username/password — scrub
+    # must read the env too, or the one scrubbed sink is unsafe in the default mode (#228).
+    monkeypatch.setattr(settings, "proxy_username", "")
+    monkeypatch.setattr(settings, "proxy_password", SecretStr(""))
+    monkeypatch.setenv("HTTPS_PROXY", "http://carol:t0p%20secret@proxy.corp:3128")
+    text = "ProxyError connecting via http://carol:t0p%20secret@proxy.corp:3128 as carol / t0p secret"
+    scrubbed = proxy.scrub(text)
+    assert "carol" not in scrubbed
+    assert "t0p secret" not in scrubbed
+    assert "t0p%20secret" not in scrubbed
+
+
+def test_scrub_strips_any_url_userinfo_as_backstop(monkeypatch):
+    # Even with no configured credentials anywhere, a scheme://user:pass@ in the text
+    # (e.g. httpx.Proxy's "Unknown scheme for proxy URL {url!r}") must not survive (#228).
+    monkeypatch.setattr(settings, "proxy_username", "")
+    monkeypatch.setattr(settings, "proxy_password", SecretStr(""))
+    for env in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy"):
+        monkeypatch.delenv(env, raising=False)
+    scrubbed = proxy.scrub("Unknown scheme for proxy URL 'socks5://eve:pw123@203.0.113.9:1080'")
+    assert "eve" not in scrubbed
+    assert "pw123" not in scrubbed
+    assert "203.0.113.9" in scrubbed  # only the userinfo is redacted, not the host
+
+
 # ---------------------------------------------------------------------------
 # ProxyRoutingTransport
 # ---------------------------------------------------------------------------

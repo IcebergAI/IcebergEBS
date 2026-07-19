@@ -172,7 +172,9 @@ class RetryTransport(httpx.AsyncBaseTransport):
                     "Retrying %s %s after transport error (%s): attempt %d/%d",
                     request.method,
                     request.url,
-                    exc,
+                    # A proxy-layer failure can echo the credential-injected proxy
+                    # URL in the exception text — scrub before it reaches a log (#228).
+                    proxy.scrub(str(exc)),
                     attempt + 1,
                     self._max_retries,
                 )

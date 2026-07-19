@@ -889,6 +889,41 @@ async def test_fire_alerts_logs_webhook_failure(test_db, admin_user):
     assert logs[0].destination_id is not None
 
 
+async def test_fire_alerts_persisted_error_is_scrubbed(test_db, admin_user):
+    # AlertLog.error is returned by GET /api/alerts/log and rendered in the UI; a
+    # delivery failure through the outbound proxy can echo the credential-injected
+    # proxy URL in the exception text, so it must pass proxy.scrub first (#228).
+    async with AsyncSession(test_db) as session:
+        dest = AlertDestination(user_id=admin_user.id, label="Hook", target="https://hooks.example.com/w", enabled=True)
+        session.add(dest)
+        await session.commit()
+        await session.refresh(dest)
+
+        ext = _ext(id=None, user_id=admin_user.id)
+        session.add(ext)
+        await session.commit()
+        await session.refresh(ext)
+
+        rule = AlertRule(user_id=admin_user.id, destination_id=dest.id, event_type="new_version", enabled=True)
+        session.add(rule)
+        await session.commit()
+        await session.refresh(ext)
+
+        events = [ChangeEvent("new_version", "1.0.0", "2.0.0")]
+        leaky = httpx.ProxyError("CONNECT via http://bob:hunter2@proxy.corp:3128 refused")
+        with patch("app.notifications.send_webhook", new=AsyncMock(side_effect=leaky)):
+            async with httpx.AsyncClient() as http:
+                await fire_alerts(events, ext, test_db, http)
+
+    async with AsyncSession(test_db) as session:
+        logs = (await session.exec(select(AlertLog))).all()
+    assert len(logs) == 1
+    assert logs[0].success is False
+    assert "hunter2" not in logs[0].error
+    assert "bob" not in logs[0].error
+    assert "proxy.corp" in logs[0].error  # only the userinfo is redacted
+
+
 @respx.mock
 async def test_fire_alerts_skips_disabled_destination(test_db, admin_user):
     """An enabled rule pointing to a disabled destination fires no webhook and writes no log."""
