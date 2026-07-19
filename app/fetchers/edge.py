@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 
 import httpx
 
+from app import proxy
 from app.fetchers.base import BaseFetcher, ExtensionMetadata, FetchError
 
 logger = logging.getLogger(__name__)
@@ -87,7 +88,8 @@ class EdgeFetcher(BaseFetcher):
             logger.warning(
                 "Edge CRX unavailable for %s (%s) — JS analysis skipped, using manifest-only package",
                 extension_id,
-                exc,
+                # A proxy-layer failure can echo the credential-injected proxy URL (#228).
+                proxy.scrub(str(exc)),
             )
 
         return metadata, pkg_bytes

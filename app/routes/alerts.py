@@ -7,6 +7,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict
 from sqlmodel import select
 
+from app import proxy
 from app.alert_queries import get_alert_log
 from app.deps import CurrentUser, SessionDep, get_owned_or_404
 from app.models import AlertDestination, AlertRule, Extension
@@ -282,7 +283,9 @@ async def test_destination(
         # Never surface the raw exception text to the caller: it can contain the
         # resolved IP, internal hostnames, or other SSRF-probing detail. Log the
         # full error server-side and return a generic message (M4 / #9).
-        logger.warning("Webhook test to destination %d failed: %s", dest_id, exc)
+        # Scrub too (#228): delivery through the outbound proxy can echo the
+        # credential-injected proxy URL in the exception text.
+        logger.warning("Webhook test to destination %d failed: %s", dest_id, proxy.scrub(str(exc)))
         raise HTTPException(
             status_code=502,
             detail="Failed to deliver test webhook to the destination",

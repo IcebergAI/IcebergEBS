@@ -5,6 +5,8 @@ from datetime import datetime
 import httpx
 from pydantic import BaseModel
 
+from app import proxy
+
 logger = logging.getLogger(__name__)
 
 _MAX_PACKAGE_DOWNLOAD_BYTES = 64 * 1024 * 1024  # bytes on the wire
@@ -47,7 +49,8 @@ class BaseFetcher(ABC):
             logger.warning(
                 "Package download failed for %s (%s) — continuing without static analysis",
                 extension_id,
-                exc,
+                # A proxy-layer failure can echo the credential-injected proxy URL (#228).
+                proxy.scrub(str(exc)),
             )
             package = None
         return metadata, package

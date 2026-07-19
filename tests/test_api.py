@@ -648,3 +648,29 @@ async def test_get_history_empty(client):
 async def test_unauthenticated_api(anon_client):
     r = await anon_client.get("/api/extensions", follow_redirects=False)
     assert r.status_code == 401
+
+
+async def test_interactive_refresh_failure_error_message_is_scrubbed(client, test_db):
+    # The interactive-refresh FetchLog is the manual-path twin of the scheduler sink
+    # (#228 review): a proxy-layer failure can echo the credential-injected proxy URL,
+    # and error_message is rendered to non-admin owners.
+    with patch("app.fetchers.VSCodeFetcher") as MockFetcher:
+        MockFetcher.return_value.fetch = AsyncMock(return_value=(_fake_metadata(), _fake_vsix()))
+        r = await client.post("/api/extensions", json={"store": "vscode", "extension_id": "testpub.scrubref"})
+    ext_id = r.json()["id"]
+
+    leaky = httpx.ConnectError("CONNECT via http://bob:hunter2@proxy.corp:3128 refused")
+    with patch("app.fetchers.VSCodeFetcher") as MockFetcher2:
+        MockFetcher2.return_value.fetch = AsyncMock(side_effect=leaky)
+        r2 = await client.post(f"/api/extensions/{ext_id}/refresh")
+
+    assert r2.status_code == 502
+    async with AsyncSession(test_db) as s:
+        logs = (
+            await s.exec(select(FetchLog).where(FetchLog.extension_id == ext_id, FetchLog.success == False))  # noqa: E712
+        ).all()
+    assert len(logs) == 1
+    message = logs[0].error_message or ""
+    assert "hunter2" not in message
+    assert "bob" not in message
+    assert "proxy.corp" in message  # only the userinfo is redacted
