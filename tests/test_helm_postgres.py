@@ -135,17 +135,47 @@ def test_deployment_docs_do_not_reproduce_the_bug_they_describe():
     assert "charts.bitnami.com" not in doc
 
 
-def test_migration_guard_refuses_a_bitnami_backed_upgrade():
+def test_migration_guard_identifies_our_statefulset_positively():
     """A `helm upgrade` over the Bitnami subchart would bind its PVC, find no
     pgdata, and initdb an EMPTY database while every probe stayed green. The chart
-    must refuse rather than rely on the operator reading the runbook first."""
+    must refuse rather than rely on the operator reading the runbook first.
+
+    The recognition must be a **positive marker**, not an image-name sniff: the
+    subchart supported registry overrides, so a mirrored `registry.internal/pg:16`
+    carries the old layout with no "bitnami" anywhere in the string. Anything
+    lacking our label predates this template, whatever it is called.
+
+    The guard's actual branch behaviour is exercised by the CI `helm` job (it
+    needs a real render with a substituted `lookup`); this asserts the contract
+    those two halves share.
+    """
     text = (_CHART / "templates/postgres.yaml").read_text()
     assert 'lookup "apps/v1" "StatefulSet"' in text
-    assert 'contains "bitnami"' in text
-    assert "fail (printf" in text
+    assert 'contains "bitnami"' not in text, "image-name sniffing is bypassable by a mirrored registry"
+    assert 'dig "metadata" "labels" "icebergai.io/postgres-template"' in text
+    # The marker must actually be stamped on the StatefulSet, or the guard blocks
+    # every upgrade including its own.
+    assert "icebergai.io/postgres-template: iceberg-ebs" in text
+    # ...and on metadata only: a StatefulSet's selector is immutable.
+    assert "icebergai.io/postgres-template" not in text.split("selector:", 1)[1].split("template:", 1)[0]
     # The failure must name the runbook, and the runbook must exist.
     assert "Migrating from the Bitnami subchart" in text
     assert "#### Migrating from the Bitnami subchart" in _DEPLOYMENT_DOC.read_text()
+
+
+def test_migration_runbook_verifies_the_dump_by_restoring_it():
+    """`pg_restore --list` only parses the table of contents: an archive truncated
+    after its TOC passes while missing every data block. Deleting a PVC on that
+    basis is unrecoverable, so the runbook must restore into a scratch database
+    and compare row counts, and must retain the PV before deleting the claim."""
+    doc = _DEPLOYMENT_DOC.read_text()
+    runbook = doc.split("#### Migrating from the Bitnami subchart", 1)[1].split("\n## ", 1)[0]
+    assert "set -euo pipefail" in runbook, "a failed pg_dump must not look like a successful one"
+    assert "migration_verify" in runbook, "the dump must be verified by restoring it, not by reading its TOC"
+    assert "persistentVolumeReclaimPolicy" in runbook, "the PV must be retained before the PVC is deleted"
+    assert "delete pvc" in runbook
+    # Retain must come before the delete, or the data is already gone.
+    assert runbook.index("persistentVolumeReclaimPolicy") < runbook.index("delete pvc")
 
 
 def test_chart_version_was_bumped_for_the_template_rewrite():

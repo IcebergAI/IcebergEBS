@@ -240,6 +240,54 @@ jobs:
           # The DSN carries a password: it must come from a Secret, never a plaintext value.
           grep -q "key: database-url" /tmp/external.yaml
 
+      # The upgrade guard (#276) cannot be tested by rendering the chart normally:
+      # `lookup` returns empty without a cluster. Substitute a fixture for it and
+      # assert the actual branch behaviour — a StatefulSet without the chart's
+      # marker label must refuse, including one whose image name carries no
+      # "bitnami" substring (an air-gapped mirror), which is exactly the case a
+      # string sniff would wave through.
+      - name: Upgrade guard refuses a foreign StatefulSet
+        run: |
+          set -euo pipefail
+          WORK="${RUNNER_TEMP:-/tmp}/guard"
+          LOOKUP='{{- $existing := lookup "apps/v1" "StatefulSet" .Release.Namespace (include "iceberg-ebs.postgresql.fullname" .) -}}'
+
+          # Setup failures must never be reported as guard results. Each step here
+          # runs at top level so `set -e` aborts on a broken harness, instead of an
+          # empty render being read as "the guard did not fire".
+          render_with() {   # $1 = replacement for the lookup line; writes $WORK/out
+            rm -rf "$WORK"
+            cp -r helm/iceberg-ebs "$WORK"
+            python3 - "$WORK/templates/postgres.yaml" "$LOOKUP" "$1" <<'PY'
+          import pathlib, sys
+          p = pathlib.Path(sys.argv[1]); t = p.read_text()
+          if sys.argv[2] not in t:
+              sys.exit("guard lookup line not found — did templates/postgres.yaml change?")
+          p.write_text(t.replace(sys.argv[2], sys.argv[3]))
+          PY
+            # helm exits non-zero when `fail` fires; that is the expected path here,
+            # so capture the output and let the assertions below judge it.
+            helm template ci "$WORK" --set image.tag=v0.0.0-ci \
+              --set icebergEbs.adminPassword=x --set icebergEbs.secretKey=y \
+              --set postgresql.auth.password=z > "$WORK/out" 2>&1 || true
+            test -s "$WORK/out"   # empty output means the harness broke, not a verdict
+          }
+
+          for fixture in \
+            '{{- $existing := dict "metadata" (dict "labels" (dict "app.kubernetes.io/name" "postgresql")) -}}' \
+            '{{- $existing := dict "metadata" (dict "labels" (dict "app" "pg")) "spec" (dict "template" (dict "spec" (dict "containers" (list (dict "image" "registry.internal/pg:16"))))) -}}'
+          do
+            render_with "$fixture"
+            grep -q "Refusing to upgrade" "$WORK/out" \
+              || { echo "guard did NOT refuse a foreign StatefulSet: $fixture" >&2; cat "$WORK/out" >&2; exit 1; }
+          done
+
+          # ...and must NOT refuse our own, or every upgrade would be blocked.
+          render_with '{{- $existing := dict "metadata" (dict "labels" (dict "icebergai.io/postgres-template" "iceberg-ebs")) -}}'
+          grep -q "kind: StatefulSet" "$WORK/out" \
+            || { echo "guard wrongly refused the chart's own StatefulSet" >&2; cat "$WORK/out" >&2; exit 1; }
+          echo "upgrade guard: refuses foreign StatefulSets (incl. mirrored images), allows its own"
+
       - name: Render must fail when no external DSN is supplied
         run: |
           if helm template ci helm/iceberg-ebs \

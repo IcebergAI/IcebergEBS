@@ -875,8 +875,9 @@ spec:
             - configMapRef:
                 name: {{ include "iceberg-ebs.fullname" . }}
           env:
-            # POSTGRES_PASSWORD must be defined BEFORE the $(POSTGRES_PASSWORD)
-            # reference below, or the interpolation doesn't resolve.
+            {{- if .Values.postgresql.enabled }}
+            # Bundled database. POSTGRES_PASSWORD must be defined BEFORE the
+            # $(POSTGRES_PASSWORD) reference below, or the interpolation doesn't resolve.
             - name: POSTGRES_PASSWORD
               valueFrom:
                 secretKeyRef:
@@ -886,6 +887,15 @@ spec:
                   key: password
             - name: ICEBERG_EBS_DATABASE_URL
               value: "postgresql+asyncpg://{{ .Values.postgresql.auth.username }}:$(POSTGRES_PASSWORD)@{{ include \"iceberg-ebs.postgresql.fullname\" . }}/{{ .Values.postgresql.auth.database }}"
+            {{- else }}
+            # External database: the DSN carries a password, so it comes from a
+            # Secret — never a ConfigMap, never a plaintext value here.
+            - name: ICEBERG_EBS_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.externalDatabase.existingSecret | default (include "iceberg-ebs.fullname" .) }}
+                  key: {{ .Values.externalDatabase.existingSecretKey | default "database-url" }}
+            {{- end }}
             - name: ICEBERG_EBS_ADMIN_PASSWORD
               valueFrom:
                 secretKeyRef:
@@ -1147,43 +1157,75 @@ The chart therefore **refuses to render** against a release whose StatefulSet is
 naming this section. Do not work around it; do this instead.
 
 ```bash
+set -euo pipefail          # a failed pg_dump must NOT look like a successful one
 NS=icebergebs
 REL=icebergebs
+PGPW=$(kubectl -n "$NS" get secret "$REL"-postgresql -o jsonpath='{.data.password}' | base64 -d)
 
-# 1. Stop writes. (Deployment is <release>-<chart>.)
+# 1. Stop writes. (The Deployment is <release>-<chart>.)
 kubectl -n "$NS" scale deploy/"$REL"-iceberg-ebs --replicas=0
+kubectl -n "$NS" rollout status deploy/"$REL"-iceberg-ebs --timeout=120s
 
-# 2. Dump from the OLD (Bitnami) pod. Note the Bitnami data path and its own
-#    credentials secret; -Fc is the custom format `pg_restore` wants.
+# 2. Dump from the OLD (Bitnami) pod. `set -o pipefail` above is what makes a
+#    mid-stream pg_dump failure fail this command instead of leaving a truncated
+#    file that later steps treat as good.
 kubectl -n "$NS" exec "$REL"-postgresql-0 -- \
-  env PGPASSWORD="$(kubectl -n "$NS" get secret "$REL"-postgresql -o jsonpath='{.data.password}' | base64 -d)" \
-  pg_dump -U iceberg_ebs -d iceberg_ebs -Fc > icebergebs-premigration.pgc
+  env PGPASSWORD="$PGPW" pg_dump -U iceberg_ebs -d iceberg_ebs -Fc \
+  > icebergebs-premigration.pgc
 
-# 3. VERIFY THE DUMP BEFORE DELETING ANYTHING. A truncated dump here is
-#    unrecoverable once the PVC is gone.
-pg_restore --list icebergebs-premigration.pgc | head
-test -s icebergebs-premigration.pgc || { echo "empty dump — STOP"; exit 1; }
+# 3. VERIFY BY RESTORING, not by reading the header. `pg_restore --list` only
+#    parses the table of contents — an archive truncated after its TOC passes it
+#    while missing every data block. Restore into a scratch database and check the
+#    data is actually there.
+kubectl -n "$NS" exec "$REL"-postgresql-0 -- \
+  env PGPASSWORD="$PGPW" createdb -U iceberg_ebs migration_verify
+kubectl -n "$NS" exec -i "$REL"-postgresql-0 -- \
+  env PGPASSWORD="$PGPW" pg_restore -U iceberg_ebs -d migration_verify \
+  < icebergebs-premigration.pgc
 
-# 4. Delete the Bitnami database resources, INCLUDING the PVC. This destroys the
-#    old data — step 3 is what makes it safe.
+# Compare a real row count between the live database and the restored copy.
+for DB in iceberg_ebs migration_verify; do
+  kubectl -n "$NS" exec "$REL"-postgresql-0 -- \
+    env PGPASSWORD="$PGPW" psql -U iceberg_ebs -d "$DB" -tAc \
+    'select (select count(*) from "user"), (select count(*) from extension);'
+done
+# The two lines MUST match. If they do not, STOP — nothing has been deleted yet.
+
+kubectl -n "$NS" exec "$REL"-postgresql-0 -- \
+  env PGPASSWORD="$PGPW" dropdb -U iceberg_ebs migration_verify
+
+# 4. Retain the underlying volume BEFORE deleting the PVC. Kubernetes cannot
+#    rename a PVC, and the new StatefulSet's volumeClaimTemplate wants the same
+#    name — so the old claim has to go. Flipping the PV to Retain means deleting
+#    the claim releases the name without destroying the data: the PV survives,
+#    and can be re-bound manually if the restore turns out wrong.
+PV=$(kubectl -n "$NS" get pvc data-"$REL"-postgresql-0 -o jsonpath='{.spec.volumeName}')
+kubectl patch pv "$PV" -p '{"spec":{"persistentVolumeReclaimPolicy":"Retain"}}'
+kubectl get pv "$PV" -o jsonpath='{.spec.persistentVolumeReclaimPolicy}'   # must print: Retain
+
+# 5. Delete the Bitnami database resources.
 kubectl -n "$NS" delete statefulset "$REL"-postgresql
 kubectl -n "$NS" delete svc "$REL"-postgresql "$REL"-postgresql-hl --ignore-not-found
 kubectl -n "$NS" delete pvc data-"$REL"-postgresql-0
 
-# 5. Upgrade. The guard now passes and the chart's own StatefulSet is created.
+# 6. Upgrade. The guard now passes and the chart's own StatefulSet is created.
 helm upgrade "$REL" helm/iceberg-ebs -n "$NS" --set image.tag=... --set postgresql.auth.password=...
-kubectl -n "$NS" rollout status statefulset/"$REL"-postgresql
+kubectl -n "$NS" rollout status statefulset/"$REL"-postgresql --timeout=300s
 
-# 6. Restore, then bring the app back.
+# 7. Restore, then bring the app back.
 kubectl -n "$NS" exec -i "$REL"-postgresql-0 -- \
-  env PGPASSWORD="<postgresql.auth.password>" \
-  pg_restore -U iceberg_ebs -d iceberg_ebs --clean --if-exists < icebergebs-premigration.pgc
+  env PGPASSWORD='<postgresql.auth.password>' \
+  pg_restore -U iceberg_ebs -d iceberg_ebs --clean --if-exists \
+  < icebergebs-premigration.pgc
 kubectl -n "$NS" scale deploy/"$REL"-iceberg-ebs --replicas=1
 ```
 
-Keep `icebergebs-premigration.pgc` until you have confirmed the restored application looks right —
-extension count, users, alert destinations. Rolling back means re-running steps 4–6 against the
-previous chart version, restoring the same dump.
+**Do not clean up until the new deployment is validated.** Keep both the dump file and the retained
+PV until you have confirmed the restored application looks right — extension count, users, alert
+destinations, and a successful scheduler run. Only then `kubectl delete pv "$PV"`.
+
+Rolling back means `helm rollback`, then re-creating a PVC bound to the retained PV (clear its
+`claimRef` first, so it can bind again) — which is the reason step 4 exists.
 
 If you would rather not migrate data at all, `postgresql.enabled=false` with `externalDatabase.*`
 pointed at a managed Postgres is a clean alternative: restore the dump there instead, and the
@@ -1201,8 +1243,8 @@ The chart does not template a backup CronJob; choose one of:
   (e.g. via an external-snapshotter policy). Fast, but crash-consistent, not a logical dump.
 - **External managed Postgres** — run Postgres outside the cluster (RDS/Cloud SQL/etc.) and use the
   provider's automated backups + PITR. Recommended for anything beyond a homelab. Set
-  `postgresql.enabled=false` (backed by `condition: postgresql.enabled` on the dependency since #276,
-  so the subchart genuinely stops deploying) and supply the DSN one of two ways:
+  `postgresql.enabled=false` — since #276 there is no subchart at all, so this simply skips the
+  chart's own `templates/postgres.yaml` — and supply the DSN one of two ways:
 
   ```bash
   # (a) chart-managed Secret — simplest
