@@ -697,8 +697,8 @@ apiVersion: v2
 name: iceberg-ebs
 description: Extension risk monitor
 type: application
-version: 0.1.0
-appVersion: "1.0.0"
+version: 0.2.0        # the CHART's version — bump on template changes
+appVersion: "0.1.0b1" # the APP version it deploys — kept equal to pyproject.toml
 # No dependencies — PostgreSQL is templates/postgres.yaml (#276)
 ```
 
@@ -880,10 +880,12 @@ spec:
             - name: POSTGRES_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: {{ include "iceberg-ebs.fullname" . }}-postgresql
+                  # NOT iceberg-ebs.fullname + "-postgresql" — that named a Secret
+                  # nothing creates, so the pod never started (#276).
+                  name: {{ include "iceberg-ebs.postgresql.fullname" . }}
                   key: password
             - name: ICEBERG_EBS_DATABASE_URL
-              value: "postgresql+asyncpg://{{ .Values.postgresql.auth.username }}:$(POSTGRES_PASSWORD)@{{ include \"iceberg-ebs.fullname\" . }}-postgresql/{{ .Values.postgresql.auth.database }}"
+              value: "postgresql+asyncpg://{{ .Values.postgresql.auth.username }}:$(POSTGRES_PASSWORD)@{{ include \"iceberg-ebs.postgresql.fullname\" . }}/{{ .Values.postgresql.auth.database }}"
             - name: ICEBERG_EBS_ADMIN_PASSWORD
               valueFrom:
                 secretKeyRef:
@@ -1123,6 +1125,69 @@ major bump is one PR touching both pins, and the two deployment paths cannot lan
 majors. The upgrade itself is the same dump/restore as above: the official image does **not**
 run `pg_upgrade` for you, and pointing a new major at an old PGDATA fails to start. Scale the app
 to 0, `pg_dump` from the old pod, bump both pins, delete the PVC, then restore into the new pod.
+
+#### Migrating from the Bitnami subchart
+
+**Applies only to releases installed before #276.** Fresh installs need none of this.
+
+The chart used to deploy the Bitnami `postgresql` subchart; it now runs its own StatefulSet. The
+two are **not** interchangeable in place, for two independent reasons:
+
+- **Immutable fields.** The StatefulSet's `serviceName` and `selector` cannot be changed, so a
+  plain `helm upgrade` is rejected by the API server.
+- **Incompatible on-disk layout — the dangerous one.** Bitnami stores its cluster at
+  `/bitnami/postgresql/data`; this chart uses `PGDATA=/var/lib/postgresql/data/pgdata`. Both
+  declare a volumeClaimTemplate named `data`, so a *recreated* StatefulSet binds the **same PVC**,
+  finds no `pgdata` directory, and `initdb` creates a brand-new **empty PostgreSQL 18 cluster**
+  next to your untouched PostgreSQL 16 data. The app starts, Alembic builds a fresh schema, and
+  every probe is green — while the application is empty. It looks exactly like a successful
+  upgrade.
+
+The chart therefore **refuses to render** against a release whose StatefulSet is still Bitnami's,
+naming this section. Do not work around it; do this instead.
+
+```bash
+NS=icebergebs
+REL=icebergebs
+
+# 1. Stop writes. (Deployment is <release>-<chart>.)
+kubectl -n "$NS" scale deploy/"$REL"-iceberg-ebs --replicas=0
+
+# 2. Dump from the OLD (Bitnami) pod. Note the Bitnami data path and its own
+#    credentials secret; -Fc is the custom format `pg_restore` wants.
+kubectl -n "$NS" exec "$REL"-postgresql-0 -- \
+  env PGPASSWORD="$(kubectl -n "$NS" get secret "$REL"-postgresql -o jsonpath='{.data.password}' | base64 -d)" \
+  pg_dump -U iceberg_ebs -d iceberg_ebs -Fc > icebergebs-premigration.pgc
+
+# 3. VERIFY THE DUMP BEFORE DELETING ANYTHING. A truncated dump here is
+#    unrecoverable once the PVC is gone.
+pg_restore --list icebergebs-premigration.pgc | head
+test -s icebergebs-premigration.pgc || { echo "empty dump — STOP"; exit 1; }
+
+# 4. Delete the Bitnami database resources, INCLUDING the PVC. This destroys the
+#    old data — step 3 is what makes it safe.
+kubectl -n "$NS" delete statefulset "$REL"-postgresql
+kubectl -n "$NS" delete svc "$REL"-postgresql "$REL"-postgresql-hl --ignore-not-found
+kubectl -n "$NS" delete pvc data-"$REL"-postgresql-0
+
+# 5. Upgrade. The guard now passes and the chart's own StatefulSet is created.
+helm upgrade "$REL" helm/iceberg-ebs -n "$NS" --set image.tag=... --set postgresql.auth.password=...
+kubectl -n "$NS" rollout status statefulset/"$REL"-postgresql
+
+# 6. Restore, then bring the app back.
+kubectl -n "$NS" exec -i "$REL"-postgresql-0 -- \
+  env PGPASSWORD="<postgresql.auth.password>" \
+  pg_restore -U iceberg_ebs -d iceberg_ebs --clean --if-exists < icebergebs-premigration.pgc
+kubectl -n "$NS" scale deploy/"$REL"-iceberg-ebs --replicas=1
+```
+
+Keep `icebergebs-premigration.pgc` until you have confirmed the restored application looks right —
+extension count, users, alert destinations. Rolling back means re-running steps 4–6 against the
+previous chart version, restoring the same dump.
+
+If you would rather not migrate data at all, `postgresql.enabled=false` with `externalDatabase.*`
+pointed at a managed Postgres is a clean alternative: restore the dump there instead, and the
+in-cluster database stops being your problem.
 
 ### Kubernetes (Helm)
 

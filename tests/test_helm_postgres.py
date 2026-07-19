@@ -32,6 +32,7 @@ _DEPLOYMENT = _CHART / "templates/deployment.yaml"
 _HELPERS = _CHART / "templates/_helpers.tpl"
 _SECRET = _CHART / "templates/secret.yaml"
 _COMPOSE = _ROOT / "docker-compose.yml"
+_DEPLOYMENT_DOC = _ROOT / "DEPLOYMENT.md"
 
 
 def _values() -> dict:
@@ -120,6 +121,37 @@ def test_chart_appversion_matches_the_application_version():
         line.split("=", 1)[1].strip().strip('"') for line in pyproject.splitlines() if line.startswith("version =")
     )
     assert str(_chart()["appVersion"]) == version
+
+
+def test_deployment_docs_do_not_reproduce_the_bug_they_describe():
+    """DEPLOYMENT.md embeds excerpts of the chart files, so it is a second copy that
+    drifts silently — its examples still showed the broken secret reference and the
+    wrong appVersion after the chart was fixed. Guard the specific strings."""
+    doc = _DEPLOYMENT_DOC.read_text()
+    assert '{{ include "iceberg-ebs.fullname" . }}-postgresql' not in doc, (
+        "the docs still show the pre-#276 secret/host reference, which names a resource nothing creates"
+    )
+    assert 'appVersion: "1.0.0"' not in doc
+    assert "charts.bitnami.com" not in doc
+
+
+def test_migration_guard_refuses_a_bitnami_backed_upgrade():
+    """A `helm upgrade` over the Bitnami subchart would bind its PVC, find no
+    pgdata, and initdb an EMPTY database while every probe stayed green. The chart
+    must refuse rather than rely on the operator reading the runbook first."""
+    text = (_CHART / "templates/postgres.yaml").read_text()
+    assert 'lookup "apps/v1" "StatefulSet"' in text
+    assert 'contains "bitnami"' in text
+    assert "fail (printf" in text
+    # The failure must name the runbook, and the runbook must exist.
+    assert "Migrating from the Bitnami subchart" in text
+    assert "#### Migrating from the Bitnami subchart" in _DEPLOYMENT_DOC.read_text()
+
+
+def test_chart_version_was_bumped_for_the_template_rewrite():
+    """Reusing a chart version across materially different templates makes packaged
+    chart artifacts ambiguous."""
+    assert _chart()["version"] != "0.1.0"
 
 
 def _compose_postgres_image() -> str:

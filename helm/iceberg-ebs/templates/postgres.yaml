@@ -21,6 +21,30 @@ are unchanged. No backup or failover story here on purpose: replicaCount is
 pinned at 1 chart-wide (APScheduler is per-process), and DEPLOYMENT.md points
 anything beyond a homelab at externalDatabase + a managed provider.
 */}}
+{{/*
+Refuse to upgrade a release whose database is still the Bitnami subchart's.
+
+Bitnami stores its data at /bitnami/postgresql/data; ours is PGDATA=<mount>/pgdata.
+The volumeClaimTemplate is called `data` in both, so a recreated StatefulSet binds
+the SAME PVC, finds no pgdata directory, and initdb cheerfully creates a brand-new
+empty PostgreSQL 18 cluster beside the untouched PostgreSQL 16 data. The app then
+starts, Alembic builds a fresh schema, and every probe is green while every row is
+gone. Silent, and it looks like a successful upgrade — so make it unreachable by
+accident rather than documenting around it.
+
+`lookup` returns empty during `helm template` / `--dry-run`, so this never fires on
+a fresh install or in CI; only against a live cluster still running the subchart.
+*/}}
+{{- $existing := lookup "apps/v1" "StatefulSet" .Release.Namespace (include "iceberg-ebs.postgresql.fullname" .) -}}
+{{- if $existing -}}
+  {{- $bitnami := false -}}
+  {{- range $existing.spec.template.spec.containers -}}
+    {{- if contains "bitnami" .image -}}{{- $bitnami = true -}}{{- end -}}
+  {{- end -}}
+  {{- if $bitnami -}}
+    {{- fail (printf "Refusing to upgrade: StatefulSet %q is still the Bitnami PostgreSQL. Its on-disk layout is incompatible with this chart's own PostgreSQL, and reusing its PVC would silently initialise an EMPTY database (#276). Follow 'Migrating from the Bitnami subchart' in DEPLOYMENT.md: dump the data, delete the StatefulSet, its Service and its PVC, upgrade, then restore." (include "iceberg-ebs.postgresql.fullname" .)) -}}
+  {{- end -}}
+{{- end -}}
 apiVersion: v1
 kind: Secret
 metadata:

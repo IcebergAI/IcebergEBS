@@ -220,6 +220,13 @@ release to diff against.
     can only reach PostgreSQL 18 through a moving `latest` tag on the free tier, which could
     roll a running deployment onto a new major on a pod restart. The chart now runs the exact
     image Compose and CI use, held in lockstep by `tests/test_helm_postgres.py`.
+  **Upgrading an existing release needs a migration** — see "Migrating from the Bitnami subchart"
+  in `DEPLOYMENT.md`. Bitnami's data lives at `/bitnami/postgresql/data` and the chart's at
+  `PGDATA=/var/lib/postgresql/data/pgdata`, but both declare a volumeClaimTemplate named `data` —
+  so a recreated StatefulSet binds the *same* PVC, finds no `pgdata`, and `initdb`s an empty
+  PostgreSQL 18 cluster beside the untouched PostgreSQL 16 data, leaving every probe green and
+  the application empty. The chart **refuses to render** against a still-Bitnami release rather
+  than letting that happen silently.
   Also: `appVersion` said `1.0.0` against an 0.1.0b1 app, and DEPLOYMENT.md's
   `kubectl rollout status deployment/icebergebs` named a Deployment that is really
   `icebergebs-iceberg-ebs`. A new **`helm` CI job** renders the chart and asserts the pod's DB
