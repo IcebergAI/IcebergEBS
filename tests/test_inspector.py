@@ -728,3 +728,66 @@ def test_markup_only_html_does_not_trigger_js_heuristics():
     assert result.has_minified_code is False
     assert result.obfuscation_score == 0
     assert _finding_codes(result) == set()
+
+
+@pytest.mark.parametrize(
+    "page",
+    [
+        # An HTML parser ends a script block on any of these; matching only the
+        # clean `</script>` spelling let the payload hide behind a sloppy end tag.
+        "<html><script>eval('x');</script foo></html>",
+        "<html><script>eval('x');</script\n></html>",
+        "<html><script>eval('x');</script/></html>",
+        # Unterminated at EOF — browsers execute it all the same.
+        "<html><body><script>eval('x');",
+    ],
+)
+def test_script_block_end_tag_variants_do_not_hide_the_payload(page):
+    data = make_zip(
+        {
+            "manifest.json": json.dumps({"manifest_version": 2, "name": "x", "version": "1"}),
+            "bg.html": page,
+        }
+    )
+    assert inspect_package(data).uses_eval is True
+
+
+def test_script_inside_an_html_comment_is_not_treated_as_code():
+    """A commented-out script never executes, so flagging it would be a pure
+    false positive. A regex over the raw page could not tell the difference."""
+    data = make_zip(
+        {
+            "manifest.json": json.dumps({"manifest_version": 3, "name": "x", "version": "1"}),
+            "c.html": "<html><!--<script>eval('x');fetch('https://evil.example/a');</script>--></html>",
+        }
+    )
+    result = inspect_package(data)
+    assert result.uses_eval is False
+    assert result.external_domains == []
+
+
+def test_script_ends_at_a_close_tag_inside_a_string_literal():
+    """Browsers end the block at the first `</script>` even inside a string, so
+    the trailing eval is markup, not code — matching browser semantics is the
+    point of parsing rather than pattern-matching."""
+    data = make_zip(
+        {
+            "manifest.json": json.dumps({"manifest_version": 3, "name": "x", "version": "1"}),
+            "s.html": "<html><script>var s='</script>';eval('x');</script></html>",
+        }
+    )
+    assert inspect_package(data).uses_eval is False
+
+
+def test_markup_after_a_sloppy_end_tag_is_still_masked():
+    """The end-tag handling must not swing the other way and start feeding
+    markup to the JS heuristics."""
+    data = make_zip(
+        {
+            "manifest.json": json.dumps({"manifest_version": 3, "name": "x", "version": "1"}),
+            "p.html": "<html><script>var a=1;</script foo>" + "<div class='a b c'>t</div>" * 400 + "</html>",
+        }
+    )
+    result = inspect_package(data)
+    assert result.has_minified_code is False
+    assert result.obfuscation_score == 0

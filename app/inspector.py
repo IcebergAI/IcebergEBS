@@ -5,6 +5,8 @@ import zipfile
 from dataclasses import MISSING, asdict, dataclass, field, fields
 from hashlib import sha256
 
+from bs4 import BeautifulSoup
+
 from app.permissions import BROAD_HOST_PATTERNS as _BROAD_HOST_PATTERNS
 from app.permissions import CRITICAL_PERMISSIONS as _CRITICAL_PERMISSIONS
 from app.permissions import HIGH_PERMISSIONS as _HIGH_PERMISSIONS
@@ -138,13 +140,6 @@ _URL_LITERAL_TAIL = r'[^\s\'"`<>{}\\]+'
 _URL_RE = re.compile(r"https?://" + _URL_LITERAL_TAIL)
 _EVAL_RE = re.compile(r"\beval\s*\(|new\s+Function\s*\(")
 _IDENTIFIER_RE = re.compile(r"\b[a-zA-Z_$][a-zA-Z0-9_$]*\b")
-
-_HTML_SCRIPT_BLOCK_RE = re.compile(r"<script\b[^>]*>(.*?)</script\s*>", re.IGNORECASE | re.DOTALL)
-_HTML_REMOTE_SCRIPT_RE = re.compile(r'<script\b[^>]*\bsrc\s*=\s*[\'"]?https?://', re.IGNORECASE)
-_HTML_SCRIPT_SRC_RE = re.compile(
-    r'<script\b[^>]*\bsrc\s*=\s*[\'"]?(https?://' + _URL_LITERAL_TAIL + r")",
-    re.IGNORECASE,
-)
 
 _EVAL_CALL_RE = re.compile(r"\beval\s*\(")
 _NEW_FUNCTION_RE = re.compile(r"\bnew\s+Function\s*\(")
@@ -330,58 +325,80 @@ def _analyse_html(source: str, analysis: PackageAnalysis, filename: str) -> None
     """Run the JS scan over the inline scripts of an HTML page.
 
     An MV2 ``background.page`` (or a popup/options page) can carry its whole
-    payload in an inline ``<script>`` block, invisible to a scan that only
-    reads ``.js`` files (#275).
+    payload in an inline ``<script>`` block, invisible to a scan that only reads
+    ``.js`` files (#275).
 
-    The page is *masked* rather than stripped: everything outside a script body
-    is replaced with spaces, newlines preserved. That keeps the existing
-    regexes and the reported line numbers pointing at real positions in the
-    HTML file, and — just as importantly — keeps markup out of the minification
-    and obfuscation heuristics, which would otherwise fire on any large minified
-    page (the #151 false-positive class).
+    Script boundaries come from a **real HTML parser**, not a regex. Where a
+    script starts and ends is a parsing question with genuinely surprising
+    answers — ``</script foo>`` and ``</script\\n>`` both terminate a block, a
+    ``</script>`` inside a string literal terminates it too, and a ``<script>``
+    inside an HTML comment never runs at all. A regex that gets any of those
+    wrong is not a cosmetic defect on hostile input: it either masks a payload
+    out of the scan entirely or invents findings for code the browser never
+    executes. BeautifulSoup already ships for the Chrome scraper and matches
+    browser semantics on all four.
+
+    The parser decides the boundaries; the page is then *masked* down to just
+    those script bodies before the JS regexes run, so line numbers stay true to
+    the original file and markup never reaches the minification/obfuscation
+    heuristics (the #151 false-positive class).
     """
-    masked = _mask_non_script(source)
+    soup = BeautifulSoup(source, "html.parser")
+    scripts = soup.find_all("script")
+
+    bodies = [body for tag in scripts if (body := tag.string)]
+    masked = _mask_non_script(source, bodies)
     if masked.strip():
         _analyse_js(masked, analysis, filename)
 
     # A remote <script src> in a packaged page is code the extension does not
-    # ship being executed with the extension's own privileges. Its host counts
-    # as an external domain too — masking hid the attribute from the URL sweep,
-    # and scanning the raw page instead would drag in every href/img.
-    if _HTML_REMOTE_SCRIPT_RE.search(source):
+    # ship, executed with the extension's own privileges. Read the attribute off
+    # the parsed tag: masking hides it from the URL sweep, and sweeping the raw
+    # page instead would drag in every href and img.
+    for tag in scripts:
+        src = tag.get("src")
+        if not isinstance(src, str) or not src.lower().startswith(("http://", "https://")):
+            continue
         analysis.uses_remote_code = True
-        for match in _HTML_SCRIPT_SRC_RE.finditer(source):
-            url = _clean_url(match.group(1))
-            domain = _domain_from_url(url)
-            if domain and not _is_safe_domain(domain.removeprefix("www.")):
-                analysis.external_urls.append(url)
-                analysis.external_domains.append(domain)
-                analysis.network_callout_urls.append(url)
-        _add_js_pattern_finding(
+        url = _clean_url(src)
+        domain = _domain_from_url(url)
+        if domain and not _is_safe_domain(domain.removeprefix("www.")):
+            analysis.external_urls.append(url)
+            analysis.external_domains.append(domain)
+            analysis.network_callout_urls.append(url)
+        _add_finding(
             analysis,
-            source,
-            filename,
-            _HTML_REMOTE_SCRIPT_RE,
             code="remote_script_include",
             severity="critical",
             title="Remote script in packaged page",
             detail="A packaged HTML page loads executable JavaScript from a remote URL.",
+            source="javascript",
+            file=filename,
+            line=tag.sourceline,
         )
 
 
-def _mask_non_script(source: str) -> str:
-    """Blank out everything outside ``<script>`` bodies, preserving line layout."""
+def _mask_non_script(source: str, bodies: list[str]) -> str:
+    """Reduce *source* to just *bodies*, preserving line numbering.
 
-    def blank(text: str) -> str:
-        return "".join(ch if ch == "\n" else " " for ch in text)
-
+    Each body is a verbatim substring of the page, so it is located by a forward
+    scan — which keeps duplicate script bodies distinct. Everything else is
+    replaced by its newlines alone: findings report lines (never columns), so
+    numbering stays exact while the markup contributes no characters. Replacing
+    it with *spaces* instead would preserve the line lengths, and one long line
+    of minified markup would then trip the minification heuristic on a page
+    whose actual script is three tidy lines.
+    """
     out: list[str] = []
     cursor = 0
-    for match in _HTML_SCRIPT_BLOCK_RE.finditer(source):
-        out.append(blank(source[cursor : match.start(1)]))
-        out.append(match.group(1))
-        cursor = match.end(1)
-    out.append(blank(source[cursor:]))
+    for body in bodies:
+        start = source.find(body, cursor)
+        if start == -1:  # parser normalised it out of recognition; skip, don't guess
+            continue
+        out.append("\n" * source.count("\n", cursor, start))
+        out.append(body)
+        cursor = start + len(body)
+    out.append("\n" * source.count("\n", cursor))
     return "".join(out)
 
 
