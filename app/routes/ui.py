@@ -40,6 +40,7 @@ from app.oidc.config import EDITABLE_FIELDS as OIDC_EDITABLE_FIELDS
 from app.oidc.config import client_secret_status
 from app.permissions import host_permission_tier, permission_tier
 from app.ratelimit import login_limiter
+from app.retention import freshness_cutoff
 from app.scoring import risk_level
 from app.threat_intel import build_threat_intel_indicators
 from app.version import get_version
@@ -636,18 +637,22 @@ async def extension_detail(
 
     # Org footprint (#29): SOAR-reported installs grouped by department. The
     # headline count reuses the cached install_footprint (distinct assets); the
-    # breakdown is queried live.
-    dept_rows = (
-        await session.exec(
-            select(
-                InstallObservation.department,
-                func.count(func.distinct(InstallObservation.asset_id)).label("n"),
-            )
-            .where(InstallObservation.extension_id == ext_id)
-            .group_by(InstallObservation.department)
-            .order_by(func.count(func.distinct(InstallObservation.asset_id)).desc())
+    # breakdown is queried live over FRESH observations only (#287), matching the
+    # freshness window the cached footprint is computed with — otherwise the card
+    # total and its per-department rows could disagree.
+    dept_stmt = (
+        select(
+            InstallObservation.department,
+            func.count(func.distinct(InstallObservation.asset_id)).label("n"),
         )
-    ).all()
+        .where(InstallObservation.extension_id == ext_id)
+        .group_by(InstallObservation.department)
+        .order_by(func.count(func.distinct(InstallObservation.asset_id)).desc())
+    )
+    cutoff = freshness_cutoff()
+    if cutoff is not None:
+        dept_stmt = dept_stmt.where(InstallObservation.last_seen >= cutoff)
+    dept_rows = (await session.exec(dept_stmt)).all()
     footprint_assets = ext.install_footprint or 0
     footprint_departments = [{"department": d.department or "Unassigned", "count": d.n} for d in dept_rows]
     exposure = ext.risk_score * footprint_assets if (ext.risk_score is not None and footprint_assets) else None

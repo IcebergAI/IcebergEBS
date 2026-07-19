@@ -375,3 +375,47 @@ async def test_enroll_extension_insert_race_returns_duplicate(test_db, admin_use
 
     assert result["status"] == "duplicate"
     assert result["id"] == winner_id
+
+
+async def test_inventory_recompute_ignores_stale_observations(client, test_db, monkeypatch):
+    # A stale (extension, asset) pair the SOAR stopped reporting must not keep
+    # inflating install_footprint when a new batch touches the extension (#287).
+    from datetime import datetime, timedelta, timezone
+
+    from sqlmodel import select
+    from sqlmodel.ext.asyncio.session import AsyncSession
+
+    from app.config import settings
+    from app.models import Extension, InstallObservation
+
+    monkeypatch.setattr(settings, "inventory_freshness_days", 30)
+
+    r = await client.post(
+        "/api/inventory",
+        json={"items": [{"store": "chrome", "extension_id": "a" * 32, "asset_id": "host-1"}]},
+    )
+    assert r.status_code == 200
+
+    async with AsyncSession(test_db) as s:
+        ext = (await s.exec(select(Extension).where(Extension.extension_id == "a" * 32))).one()
+        # Backdate a second observation beyond the freshness window.
+        s.add(
+            InstallObservation(
+                extension_id=ext.id,
+                asset_id="host-gone",
+                first_seen=datetime.now(timezone.utc) - timedelta(days=60),
+                last_seen=datetime.now(timezone.utc) - timedelta(days=60),
+            )
+        )
+        await s.commit()
+        ext_id = ext.id
+
+    # A new push touching the extension recomputes over fresh observations only.
+    r = await client.post(
+        "/api/inventory",
+        json={"items": [{"store": "chrome", "extension_id": "a" * 32, "asset_id": "host-1"}]},
+    )
+    assert r.status_code == 200
+    async with AsyncSession(test_db) as s:
+        ext = await s.get(Extension, ext_id)
+    assert ext.install_footprint == 1  # host-gone no longer counts

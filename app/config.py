@@ -66,6 +66,11 @@ class Settings(BaseSettings):
     # nothing app-side would ever revoke their keys — a bounded lifetime is the same
     # containment #221 applies to SSO cookies, scaled for M2M use. <= 0 disables.
     api_key_sso_max_age_days: int = 30
+    # Freshness window for SOAR install observations, in days (#287): an observation
+    # whose last_seen is older stops counting toward install_footprint (and exposure),
+    # so an extension removed from every endpoint decays instead of staying inflated
+    # forever. <= 0 disables decay (count all observations ever).
+    inventory_freshness_days: int = 30
     # App-level login throttling (defense-in-depth, independent of the reverse proxy).
     login_max_attempts: int = 5
     login_attempt_window_seconds: int = 300

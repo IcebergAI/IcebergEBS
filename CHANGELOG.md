@@ -270,6 +270,15 @@ release to diff against.
   The detail request also pins `hl=en` + `Accept-Language: en-US,en`: without it Google
   localizes by egress IP, the English label/month parsing finds nothing, `last_updated` stays
   `None`, and staleness silently scores 10 ("unknown") for any non-US deployment.
+- **`install_footprint` (and therefore exposure) now decays** (#287). `InstallObservation.
+  last_seen` was written on every SOAR re-push but never read, and the table was exempt from
+  retention — so an extension removed from every endpoint kept its old footprint forever,
+  permanently inflating exposure, the "Top exposure" ranking, and `sort=exposure`. Observations
+  not re-seen within `ICEBERG_EBS_INVENTORY_FRESHNESS_DAYS` (default 30, forwarded in both
+  deploy stacks; 0 disables) stop counting: the per-batch recompute and the detail-page
+  department breakdown filter to fresh observations, a new daily scheduler job re-computes
+  every cached footprint (covering extensions that stopped appearing in pushes entirely), and
+  the retention prune now also expires `InstallObservation` rows on `last_seen`.
 - **Detail-page permission badges no longer contradict the score** (#281). The template
   hand-copied the permission-tier sets and had drifted: `declarativeNetRequestWithHostAccess`
   (CRITICAL — maxes the permissions score), `pageCapture` (HIGH), and the `*://*/*` broad-host

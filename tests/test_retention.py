@@ -3,8 +3,9 @@ from datetime import datetime, timedelta, timezone
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from app.models import AlertLog, Extension, FetchLog, InstallCountHistory
-from app.retention import prune_expired
+from app.config import settings
+from app.models import AlertLog, Extension, FetchLog, InstallCountHistory, InstallObservation
+from app.retention import prune_expired, refresh_install_footprints
 
 
 async def _make_extension(session: AsyncSession) -> int:
@@ -34,15 +35,19 @@ async def test_prune_removes_old_keeps_recent(session):
     session.add(InstallCountHistory(extension_id=ext_id, install_count=2, recorded_at=recent))
     session.add(AlertLog(extension_id=ext_id, event_type="new_version", detail="{}", success=True, sent_at=old))
     session.add(AlertLog(extension_id=ext_id, event_type="new_version", detail="{}", success=True, sent_at=recent))
+    # InstallObservation prunes on last_seen (#287): a pair the SOAR keeps re-pushing
+    # stays; one it stopped reporting expires with the same retention window.
+    session.add(InstallObservation(extension_id=ext_id, asset_id="old-host", first_seen=old, last_seen=old))
+    session.add(InstallObservation(extension_id=ext_id, asset_id="live-host", first_seen=old, last_seen=recent))
     await session.commit()
 
     counts = await prune_expired(session, retention_days=30, now=now)
     await session.commit()
 
-    assert counts == {"FetchLog": 1, "InstallCountHistory": 1, "AlertLog": 1}
+    assert counts == {"FetchLog": 1, "InstallCountHistory": 1, "AlertLog": 1, "InstallObservation": 1}
 
     # Only the recent row of each table remains.
-    for model in (FetchLog, InstallCountHistory, AlertLog):
+    for model in (FetchLog, InstallCountHistory, AlertLog, InstallObservation):
         rows = (await session.exec(select(model))).all()
         assert len(rows) == 1
 
@@ -59,7 +64,7 @@ async def test_prune_disabled_is_noop(session):
     counts = await prune_expired(session, retention_days=0, now=now)
     await session.commit()
 
-    assert counts == {"FetchLog": 0, "InstallCountHistory": 0, "AlertLog": 0}
+    assert counts == {"FetchLog": 0, "InstallCountHistory": 0, "AlertLog": 0, "InstallObservation": 0}
     assert len((await session.exec(select(FetchLog))).all()) == 1
 
 
@@ -124,3 +129,67 @@ async def test_scheduler_jobs_disable_misfire_grace_time(monkeypatch):
         assert sched.get_job("retention_prune").misfire_grace_time is None
     finally:
         await client.aclose()
+
+
+# ---- install-footprint decay (#287) ----------------------------------------
+
+
+async def test_stale_observation_stops_counting_after_window(session, monkeypatch):
+    monkeypatch.setattr(settings, "inventory_freshness_days", 30)
+    ext_id = await _make_extension(session)
+    now = datetime(2026, 6, 26, tzinfo=timezone.utc)
+    session.add(InstallObservation(extension_id=ext_id, asset_id="fresh", first_seen=now, last_seen=now))
+    session.add(
+        InstallObservation(extension_id=ext_id, asset_id="stale", first_seen=now, last_seen=now - timedelta(days=45))
+    )
+    ext = await session.get(Extension, ext_id)
+    ext.install_footprint = 2  # the pre-decay cached value
+    session.add(ext)
+    await session.commit()
+
+    updated = await refresh_install_footprints(session, now=now)
+    await session.commit()
+    assert updated >= 1
+    ext = await session.get(Extension, ext_id)
+    await session.refresh(ext)
+    assert ext.install_footprint == 1  # the stale asset no longer counts
+
+
+async def test_all_stale_observations_decay_footprint_to_zero(session, monkeypatch):
+    # The #287 failure case: the extension stops appearing in SOAR pushes entirely,
+    # so the per-batch recompute never touches it — the daily refresh must decay it.
+    monkeypatch.setattr(settings, "inventory_freshness_days", 30)
+    ext_id = await _make_extension(session)
+    now = datetime(2026, 6, 26, tzinfo=timezone.utc)
+    session.add(
+        InstallObservation(extension_id=ext_id, asset_id="gone", first_seen=now, last_seen=now - timedelta(days=90))
+    )
+    ext = await session.get(Extension, ext_id)
+    ext.install_footprint = 1
+    session.add(ext)
+    await session.commit()
+
+    await refresh_install_footprints(session, now=now)
+    await session.commit()
+    ext = await session.get(Extension, ext_id)
+    await session.refresh(ext)
+    assert ext.install_footprint == 0
+
+
+async def test_decay_disabled_counts_all_observations(session, monkeypatch):
+    monkeypatch.setattr(settings, "inventory_freshness_days", 0)
+    ext_id = await _make_extension(session)
+    now = datetime(2026, 6, 26, tzinfo=timezone.utc)
+    session.add(
+        InstallObservation(extension_id=ext_id, asset_id="ancient", first_seen=now, last_seen=now - timedelta(days=900))
+    )
+    ext = await session.get(Extension, ext_id)
+    ext.install_footprint = 0
+    session.add(ext)
+    await session.commit()
+
+    await refresh_install_footprints(session, now=now)
+    await session.commit()
+    ext = await session.get(Extension, ext_id)
+    await session.refresh(ext)
+    assert ext.install_footprint == 1  # pre-#287 behaviour preserved when disabled

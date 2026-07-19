@@ -15,6 +15,8 @@ _ROOT = Path(__file__).resolve().parent.parent
 # advertised as tunable in README and would otherwise be silently ignored).
 _FORWARDED_ENV = [
     "ICEBERG_EBS_RETENTION_DAYS",
+    # Footprint decay window (#287) — documented tunable, so it must be forwarded.
+    "ICEBERG_EBS_INVENTORY_FRESHNESS_DAYS",
     "ICEBERG_EBS_FETCH_INTERVAL_MINUTES",
     "ICEBERG_EBS_SESSION_MAX_AGE",
     # The SSO session cap (#221): documented as the knob that bounds IdP-disable
@@ -104,6 +106,7 @@ def test_helm_values_declare_forwarded_settings():
     for key in (
         "trustedOrigins",
         "retentionDays",
+        "inventoryFreshnessDays",
         "fetchIntervalMinutes",
         "sessionMaxAge",
         "oidcSessionMaxAge",

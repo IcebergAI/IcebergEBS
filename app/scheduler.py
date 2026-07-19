@@ -13,7 +13,7 @@ from app.config import settings
 from app.database import engine
 from app.fetchers.base import FetchError
 from app.models import Extension, FetchLog
-from app.retention import run_retention_prune
+from app.retention import run_footprint_refresh, run_retention_prune
 from app.scheduler_state import mark_scheduler_run
 from app.services import fetch_and_store, fire_pending_alerts, recover_pending_alerts
 
@@ -273,6 +273,22 @@ def create_scheduler(client: httpx.AsyncClient) -> AsyncIOScheduler:
             # and the executor picking the job up (exactly the CPU-starved restart #145
             # targets) drops the startup prune as a misfire, and no prune runs until +24h.
             # None removes the limit so the prune always runs, however late the loop is (#198).
+            misfire_grace_time=None,
+        )
+    # Daily install-footprint decay (#287) — recomputes every cached footprint over
+    # observations seen within the freshness window, so an extension whose SOAR
+    # pushes stopped decays to zero instead of inflating exposure forever. Runs
+    # independently of the retention prune (decay matters even with retention off,
+    # the default). Same startup-fire + no-misfire-limit rationale as the prune
+    # (#145/#198).
+    if settings.inventory_freshness_days > 0:
+        scheduler.add_job(
+            run_footprint_refresh,
+            trigger="interval",
+            hours=24,
+            id="footprint_refresh",
+            replace_existing=True,
+            next_run_time=datetime.now(timezone.utc),
             misfire_grace_time=None,
         )
     return scheduler
