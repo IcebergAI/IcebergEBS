@@ -697,7 +697,7 @@ apiVersion: v2
 name: iceberg-ebs
 description: Extension risk monitor
 type: application
-version: 0.2.0        # the CHART's version — bump on template changes
+version: 0.2.1        # the CHART's version — bump on template changes
 appVersion: "0.1.0b1" # the APP version it deploys — kept equal to pyproject.toml
 # No dependencies — PostgreSQL is templates/postgres.yaml (#276)
 ```
@@ -735,6 +735,7 @@ icebergEbs:
   fetchIntervalMinutes: 60
   retentionDays: 0         # prune history older than N days; 0 disables (#22, #87)
   sessionMaxAge: 86400     # session lifetime in seconds
+  oidcSessionMaxAge: 3600  # SSO session cap in seconds (#221) — bounds IdP-disable propagation
   httpxTimeout: 15.0       # outbound HTTP timeout in seconds
   secureCookies: true
   logJson: false           # emit single-line JSON logs for a collector (#89)
@@ -822,6 +823,7 @@ data:
   ICEBERG_EBS_FETCH_INTERVAL_MINUTES: {{ .Values.icebergEbs.fetchIntervalMinutes | quote }}
   ICEBERG_EBS_RETENTION_DAYS:        {{ .Values.icebergEbs.retentionDays | quote }}
   ICEBERG_EBS_SESSION_MAX_AGE:       {{ .Values.icebergEbs.sessionMaxAge | quote }}
+  ICEBERG_EBS_OIDC_SESSION_MAX_AGE:  {{ .Values.icebergEbs.oidcSessionMaxAge | quote }}
   ICEBERG_EBS_HTTPX_TIMEOUT:         {{ .Values.icebergEbs.httpxTimeout | quote }}
   ICEBERG_EBS_SECURE_COOKIES:        {{ .Values.icebergEbs.secureCookies | quote }}
   ICEBERG_EBS_LOG_JSON:              {{ .Values.icebergEbs.logJson | quote }}
