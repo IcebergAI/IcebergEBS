@@ -34,6 +34,11 @@ accident rather than documenting around it.
 
 `lookup` returns empty during `helm template` / `--dry-run`, so this never fires on
 a fresh install or in CI; only against a live cluster still running the subchart.
+
+It is a backstop, not the control. `lookup` also returns empty when the caller
+lacks RBAC to read StatefulSets, so the guard fails OPEN — it cannot distinguish
+"no such object" from "not allowed to look". The runbook in DEPLOYMENT.md is the
+primary safeguard; this catches the operator who never read it.
 */}}
 {{- $existing := lookup "apps/v1" "StatefulSet" .Release.Namespace (include "iceberg-ebs.postgresql.fullname" .) -}}
 {{- if $existing -}}
