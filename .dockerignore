@@ -17,3 +17,5 @@ caddy/certs/
 # into the app image layers (#277).
 backups/
 DEPLOYMENT.md
+# Public docs site (Zensical) — 3+ MB of screenshots/fonts, never served by the app
+website/

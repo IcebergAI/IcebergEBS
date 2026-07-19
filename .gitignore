@@ -79,3 +79,9 @@ static/css/output.css
 # Ignore personal Claude config but track shared path-scoped rules
 .claude/*
 !.claude/rules/
+# Zensical docs site build output + incremental cache (website/, #docs-site)
+website/site/
+website/.cache/
+# The root `.claude/*` rule is anchored to the repo root, so a nested agent
+# config created while working inside website/ would otherwise show as untracked
+website/.claude/

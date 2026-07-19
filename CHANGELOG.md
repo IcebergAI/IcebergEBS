@@ -20,6 +20,12 @@ release to diff against.
 
 ### Added
 
+- **Public documentation site** under `website/`, built with Zensical and deployed to
+  GitHub Pages at https://icebergai.github.io/IcebergEBS/ by `.github/workflows/docs.yml`
+  (pinned `zensical` version; the job holds `pages: write` + `id-token: write`). Styled to
+  the shared Iceberg design system to match the sibling IcebergTTX site, with pages for
+  risk scoring, deployment, alerts/API, and security; the changelog page snippet-includes
+  this file. Requires **Settings → Pages → Source = "GitHub Actions"** (one-time).
 - Extension tracking for the **Chrome Web Store, VS Code Marketplace, and Edge Add-ons**:
   metadata fetch, package download, and static analysis of the shipped code.
 - **Risk scoring** (0–100) across permissions, popularity, publisher identity, staleness,
