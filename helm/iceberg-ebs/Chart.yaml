@@ -6,7 +6,9 @@ type: application
 # #276: replacing the Bitnami subchart with an in-chart StatefulSet is a breaking
 # template change, and reusing 0.1.0 would make two materially different packaged
 # charts indistinguishable. Bump this whenever the templates change.
-version: 0.2.0
+# 0.2.1 (#285): ConfigMap forwards ICEBERG_EBS_OIDC_SESSION_MAX_AGE (new
+# oidcSessionMaxAge value, default 3600).
+version: 0.2.1
 # The application version this chart deploys. Kept equal to [project].version in
 # pyproject.toml (the SemVer single source of truth) and gated by
 # tests/test_helm_postgres.py — "1.0.0" against an 0.1.0b1 app was a cosmetic lie
