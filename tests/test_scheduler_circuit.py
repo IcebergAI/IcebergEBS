@@ -285,3 +285,102 @@ async def test_plain_failure_is_counted_as_failing(client, test_db, admin_user):
     r = await client.get("/")
     assert r.status_code == 200
     assert "stale or failing" in r.text
+
+
+# ---- per-extension isolation: one failure cannot abort the cycle (#282) ----
+
+
+async def test_mid_cycle_delete_does_not_abort_remaining_extensions(test_db, admin_user, monkeypatch):
+    # A DELETE racing the scheduler mid-fetch makes the failure-FetchLog FK insert
+    # raise IntegrityError from inside the FetchError handler — where the sibling
+    # `except Exception` can't catch it. Previously that aborted the whole cycle,
+    # starving every remaining extension (#282).
+    monkeypatch.setattr(scheduler, "engine", test_db)
+    # Disable the breaker: all three fetches fail by design, and this test is about
+    # cycle isolation, not the circuit (which would otherwise skip the third).
+    monkeypatch.setattr(scheduler.settings, "store_circuit_failure_threshold", 0)
+
+    ids = {}
+    async with AsyncSession(test_db) as s:
+        for i in range(3):
+            ext = Extension(
+                user_id=admin_user.id,
+                store="vscode",
+                extension_id=f"pub.iso{i}",
+                name=f"Iso {i}",
+                publisher="pub",
+                version="1.0",
+                store_url="https://example.com",
+                risk_score=10,
+                watchlist=True,
+            )
+            s.add(ext)
+            await s.commit()
+            await s.refresh(ext)
+            ids[f"pub.iso{i}"] = ext.id
+
+    fetched: list[str] = []
+
+    async def fetch_side_effect(extension_id):
+        fetched.append(extension_id)
+        if extension_id == "pub.iso1":
+            # Simulate the user deleting this extension while its fetch is in flight,
+            # then the fetch failing — the failure-log insert now hits a dead FK.
+            async with AsyncSession(test_db) as s:
+                row = await s.get(Extension, ids["pub.iso1"])
+                await s.delete(row)
+                await s.commit()
+            raise FetchError("store hiccup")
+        raise FetchError("store hiccup")
+
+    with patch("app.fetchers.VSCodeFetcher") as MockFetcher:
+        MockFetcher.return_value.fetch = AsyncMock(side_effect=fetch_side_effect)
+        async with httpx.AsyncClient() as http:
+            # Must not raise, and must reach every extension.
+            await scheduler.refresh_watchlist(http)
+
+    assert fetched == ["pub.iso0", "pub.iso1", "pub.iso2"]
+    async with AsyncSession(test_db) as s:
+        logs = (await s.exec(select(FetchLog))).all()
+    # The two surviving extensions recorded their failure logs; the deleted one's
+    # failure-log write failed quietly (its row is gone).
+    assert {lg.extension_id for lg in logs} == {ids["pub.iso0"], ids["pub.iso2"]}
+
+
+async def test_escaped_refresh_error_is_breaker_neutral_and_cycle_continues(test_db, admin_user, monkeypatch):
+    # The loop-level backstop (#282): anything escaping _refresh_one records the
+    # neutral ERROR outcome — the cycle continues and the circuit never opens.
+    monkeypatch.setattr(scheduler, "engine", test_db)
+    monkeypatch.setattr(scheduler.settings, "store_circuit_failure_threshold", 2)
+
+    async with AsyncSession(test_db) as s:
+        for i in range(4):
+            s.add(
+                Extension(
+                    user_id=admin_user.id,
+                    store="vscode",
+                    extension_id=f"pub.esc{i}",
+                    name=f"Esc {i}",
+                    publisher="pub",
+                    version="1.0",
+                    store_url="https://example.com",
+                    risk_score=10,
+                    watchlist=True,
+                )
+            )
+        await s.commit()
+
+    calls = []
+
+    async def exploding_refresh(ext_id, client):
+        calls.append(ext_id)
+        raise RuntimeError("escaped _refresh_one")
+
+    monkeypatch.setattr(scheduler, "_refresh_one", exploding_refresh)
+    async with httpx.AsyncClient() as http:
+        await scheduler.refresh_watchlist(http)  # must not raise
+
+    assert len(calls) == 4  # every extension attempted; nothing skipped as outage
+    async with AsyncSession(test_db) as s:
+        logs = (await s.exec(select(FetchLog))).all()
+    assert [lg for lg in logs if lg.store_outage] == []

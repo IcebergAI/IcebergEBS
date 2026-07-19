@@ -100,15 +100,25 @@ async def _refresh_one(ext_id: int, client: httpx.AsyncClient) -> _Outcome:
             error_message = proxy.scrub(str(exc))
             logger.warning("Fetch failed for %s/%s: %s", ext.store, ext.extension_id, error_message)
             await session.rollback()
-            session.add(
-                FetchLog(
-                    extension_id=ext_id,
-                    success=False,
-                    error_message=error_message,
-                    risk_score_before=score_before,
+            # The failure-log write is itself guarded (#282): a DELETE of this extension
+            # mid-fetch makes the FetchLog FK insert raise IntegrityError, which the
+            # sibling `except Exception` above cannot catch (we're already inside a
+            # handler) — previously that aborted the whole cycle. The store-failure
+            # evidence stands either way, so the outcome stays FAILED. error_message is
+            # the scrubbed value (#228) so a proxy-layer failure can't echo credentials.
+            try:
+                session.add(
+                    FetchLog(
+                        extension_id=ext_id,
+                        success=False,
+                        error_message=error_message,
+                        risk_score_before=score_before,
+                    )
                 )
-            )
-            await session.commit()
+                await session.commit()
+            except Exception:
+                logger.exception("Could not record failure FetchLog for ext_id=%d", ext_id)
+                await session.rollback()
             return _Outcome.FAILED
         except Exception:
             # An unexpected internal error (inspector/scoring/DB/programming bug) is NOT
@@ -120,8 +130,23 @@ async def _refresh_one(ext_id: int, client: httpx.AsyncClient) -> _Outcome:
             return _Outcome.ERROR
         # Fire alerts only after committing above, so fire_alerts' own session (which
         # writes AlertLog) does not run inside this session's open write transaction.
-        await session.refresh(ext)
-        await fire_pending_alerts(events, ext, engine, client)
+        # Both tails are guarded (#282): they sit after the try block, so an exception
+        # here — the row deleted between commit and refresh, a transient DB error —
+        # previously escaped _refresh_one and aborted the whole cycle.
+        try:
+            await session.refresh(ext)
+        except Exception:
+            # The committed row vanished (deleted concurrently) — nothing to fire
+            # against; its pending-alert marker was deleted with it.
+            logger.warning("Extension ext_id=%d disappeared between commit and refresh", ext_id)
+            return _Outcome.GONE
+        try:
+            await fire_pending_alerts(events, ext, engine, client)
+        except Exception:
+            # The state change is committed and the pending-alert marker is durable,
+            # so a delivery-path bug here loses nothing: recover_pending_alerts
+            # re-fires the marker at the head of the next cycle (#109).
+            logger.exception("Alert delivery failed for ext_id=%d; will retry via recovery", ext_id)
         return _Outcome.SUCCESS
 
 
@@ -135,16 +160,22 @@ async def _record_store_outage(ext_id: int, store: str) -> None:
         ext = await session.get(Extension, ext_id)
         if not ext or not ext.watchlist:
             return
-        session.add(
-            FetchLog(
-                extension_id=ext_id,
-                success=False,
-                store_outage=True,
-                error_message=f"Skipped: {store} appears unavailable (store circuit open this cycle)",
-                risk_score_before=ext.risk_score,
+        # Guarded (#282): a concurrent DELETE between the get above and this commit
+        # raises on the FK and would otherwise abort the rest of the cycle.
+        try:
+            session.add(
+                FetchLog(
+                    extension_id=ext_id,
+                    success=False,
+                    store_outage=True,
+                    error_message=f"Skipped: {store} appears unavailable (store circuit open this cycle)",
+                    risk_score_before=ext.risk_score,
+                )
             )
-        )
-        await session.commit()
+            await session.commit()
+        except Exception:
+            logger.exception("Could not record store-outage FetchLog for ext_id=%d", ext_id)
+            await session.rollback()
 
 
 async def refresh_watchlist(client: httpx.AsyncClient) -> None:
@@ -167,11 +198,20 @@ async def refresh_watchlist(client: httpx.AsyncClient) -> None:
         breaker = _StoreCircuitBreaker(settings.store_circuit_failure_threshold)
         skipped = 0
         for ext_id, store in rows:
-            if breaker.is_open(store):
-                await _record_store_outage(ext_id, store)
-                skipped += 1
-                continue
-            outcome = await _refresh_one(ext_id, client)
+            # Belt-and-braces per-extension isolation (#282): _refresh_one guards its
+            # own tails, but nothing that escapes it — or _record_store_outage — may
+            # abort the cycle and starve every remaining extension of its refresh
+            # (and mark_scheduler_run of its heartbeat). An escaped exception is an
+            # internal error, so it records the breaker-neutral ERROR outcome.
+            try:
+                if breaker.is_open(store):
+                    await _record_store_outage(ext_id, store)
+                    skipped += 1
+                    continue
+                outcome = await _refresh_one(ext_id, client)
+            except Exception:
+                logger.exception("Unhandled error refreshing ext_id=%d; continuing cycle", ext_id)
+                outcome = _Outcome.ERROR
             breaker.record(store, outcome)
 
         # Record that the scheduler completed a cycle, so /readyz can surface freshness
