@@ -201,6 +201,29 @@ release to diff against.
 
 ### Fixed
 
+- **A manifest the inspector cannot read no longer erases an extension's permissions** (#274).
+  `_read_manifest_json` parsed with a plain `json.loads`, which rejects a UTF-8 BOM and JS-style
+  comments — both of which Chrome itself tolerates, so such packages are live in the stores. The
+  parse failure was swallowed and analysis continued with `manifest=None`, and because that
+  analysis object is still *truthy*, `services._effective_values` preferred its empty permission
+  list over the stored one: an `<all_urls>` + `webRequest` extension silently lost up to 25
+  permission points **and** fired a spurious `permission_change` "removal" alert. (The #142
+  keep-stale guard only covered `analysis is None`.) Manifests are now decoded with `utf-8-sig`
+  and re-parsed with comments stripped by a string-aware stripper, and a manifest that genuinely
+  cannot be read — unparsable, wrong shape, or over the size limit — raises instead, taking the
+  same keep-stale path as a failed download. The highest-priority candidate present is
+  authoritative, with no fallthrough: a Chrome extension with a corrupt `manifest.json` that also
+  ships npm metadata in `package.json` would otherwise match that instead, be classified as VS Code
+  on the filename, and have its permissions cleared anyway. **Behaviour change:** an over-limit manifest
+  previously produced an analysis with no permissions; it now aborts the inspection, so scoring
+  falls back to the unknown-midpoint rather than a falsely clean zero.
+- **VS Code extension packs and API-only extensions are no longer reported as Chrome Manifest V2**
+  (#274). The classifier tested `"contributes" in manifest`, which misses extension packs
+  (`extensionPack`) and API-only extensions (`main` + `activationEvents`). Those fell through to
+  the Chrome path, where `manifest_version` defaulted to 2 and produced a "Manifest V2 extension"
+  medium finding — a Chrome-specific claim rendered on a VSIX, worth +2 on the code-behaviour
+  score. Packages are now classified by the file the manifest came from (`package.json` ⇒ VS Code,
+  information `_load_manifest` already had and discarded), with `engines.vscode` as a second signal.
 - **The Helm chart's database wiring now actually resolves** (#276). Three defects, none of
   which any gate could catch because nothing in CI rendered or installed the chart.
   - The Deployment referenced its DB Secret and host as `<release>-iceberg-ebs-postgresql`,

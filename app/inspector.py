@@ -225,9 +225,10 @@ def inspect_package(data: bytes) -> PackageAnalysis:
     analysis.file_count = len(infolist)
     analysis.total_size_bytes = total_declared
 
-    manifest = _load_manifest(zf)
-    if manifest:
-        _extract_manifest_fields(manifest, analysis)
+    loaded = _load_manifest(zf)
+    manifest = loaded[0] if loaded else None
+    if loaded:
+        _extract_manifest_fields(loaded[0], analysis, loaded[1])
 
     for name in _script_files(zf, manifest):
         info = zf.getinfo(name)
@@ -481,23 +482,43 @@ def _zip_payload(data: bytes) -> bytes:
     return data[offset:]
 
 
-def _load_manifest(zf: zipfile.ZipFile) -> dict | None:
-    """Load manifest.json (Chrome/Edge) or extension/package.json (VS Code)."""
+def _load_manifest(zf: zipfile.ZipFile) -> tuple[dict, str] | None:
+    """Load manifest.json (Chrome/Edge) or extension/package.json (VS Code).
+
+    Returns the parsed manifest together with the archive entry it came from —
+    the caller needs the *name* to tell a VS Code package from a Chrome one, a
+    distinction the manifest body alone does not reliably carry (#274).
+
+    ``None`` means the package declares no manifest at all. A manifest that is
+    present but unparsable **raises** instead: proceeding would hand back an
+    analysis with ``permissions == []`` that is still truthy, which
+    ``services._effective_values`` prefers over the stored values — silently
+    zeroing a real extension's permissions and firing a spurious
+    ``permission_change`` removal alert. Raising routes it through the same
+    keep-stale path as a failed download (#142).
+
+    **The highest-priority candidate present is authoritative — there is no
+    fallthrough.** Trying the next candidate when a higher-priority one fails to
+    parse rebuilds the very bug this exists to prevent: a Chrome extension whose
+    `manifest.json` is corrupt but which also ships npm/build metadata in
+    `package.json` (common) would match that instead, be classified as VS Code
+    on the filename, and have its permissions cleared to ``[]`` — permission
+    erasure and a spurious removal alert, by a longer route. If the file that
+    should describe this package cannot be read, we do not know what it said,
+    and guessing from a lesser file is worse than keeping the stored values.
+    """
     candidates = ["manifest.json", "extension/package.json", "package.json"]
-    for name in candidates:
-        if name in zf.namelist():
-            try:
-                return _read_manifest_json(zf, name)
-            except Exception:  # nosec B112 - try the next manifest-name candidate on any read/parse error
-                continue
-    # Try case-insensitive search
-    lower_map = {n.lower(): n for n in zf.namelist()}
+    names = zf.namelist()
+    lower_map = {n.lower(): n for n in names}
+
     for candidate in candidates:
-        if candidate in lower_map:
-            try:
-                return _read_manifest_json(zf, lower_map[candidate])
-            except Exception:  # nosec B112 - try the next manifest-name candidate on any read error
-                continue
+        name = candidate if candidate in names else lower_map.get(candidate)
+        if name is None:
+            continue
+        try:
+            return _read_manifest_json(zf, name), name
+        except Exception as exc:
+            raise InspectorError(f"Manifest present but unparsable ({name}: {exc})") from exc
     return None
 
 
@@ -508,10 +529,69 @@ def _read_manifest_json(zf: zipfile.ZipFile, name: str) -> dict:
     raw = zf.read(name)
     if len(raw) > _MAX_MANIFEST_BYTES:
         raise InspectorError(f"Manifest too large ({len(raw)} bytes)")
-    return json.loads(raw.decode("utf-8", errors="replace"))
+    # Chrome itself tolerates a UTF-8 BOM and JS-style comments in manifest.json,
+    # so packages carrying both are live in the stores; a strict json.loads on a
+    # utf-8-decoded string rejects them ("Unexpected UTF-8 BOM"). utf-8-sig eats
+    # an optional BOM and is otherwise plain utf-8 (#274).
+    text = raw.decode("utf-8-sig", errors="replace")
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError:
+        parsed = json.loads(_strip_json_comments(text))
+    if not isinstance(parsed, dict):
+        # Valid JSON, wrong shape (a bare list or scalar). Treated as unparsable
+        # so it takes the keep-stale path rather than AttributeError-ing in
+        # _extract_manifest_fields — the #61/#150 bug class.
+        raise InspectorError(f"Manifest is not a JSON object ({type(parsed).__name__})")
+    return parsed
 
 
-def _extract_manifest_fields(manifest: dict, analysis: PackageAnalysis) -> None:
+def _strip_json_comments(text: str) -> str:
+    """Remove ``//`` and ``/* */`` comments from JSON, ignoring string bodies.
+
+    String-aware on purpose: a naive strip would cut ``"homepage_url":
+    "https://example.com"`` at the ``//``, turning a valid manifest into a
+    parse error — the very failure this exists to avoid. Comment bytes become
+    spaces (newlines preserved) so byte offsets in any parse error still line
+    up with the original file.
+    """
+    out: list[str] = []
+    i, n = 0, len(text)
+    in_string = False
+    while i < n:
+        ch = text[i]
+        if in_string:
+            out.append(ch)
+            if ch == "\\" and i + 1 < n:  # escape: copy the pair verbatim
+                out.append(text[i + 1])
+                i += 2
+                continue
+            if ch == '"':
+                in_string = False
+            i += 1
+            continue
+        if ch == '"':
+            in_string = True
+            out.append(ch)
+            i += 1
+            continue
+        if ch == "/" and i + 1 < n and text[i + 1] == "/":
+            while i < n and text[i] != "\n":
+                out.append(" ")
+                i += 1
+            continue
+        if ch == "/" and i + 1 < n and text[i + 1] == "*":
+            end = text.find("*/", i + 2)
+            end = n if end == -1 else end + 2
+            out.append("".join(" " if c != "\n" else "\n" for c in text[i:end]))
+            i = end
+            continue
+        out.append(ch)
+        i += 1
+    return "".join(out)
+
+
+def _extract_manifest_fields(manifest: dict, analysis: PackageAnalysis, manifest_name: str) -> None:
     analysis.manifest_version = manifest.get("manifest_version", 2)
     analysis.version = str(manifest.get("version", ""))
     # "author" may be a string or {"email": ..., "url": ...} dict
@@ -544,12 +624,40 @@ def _extract_manifest_fields(manifest: dict, analysis: PackageAnalysis) -> None:
 
     # VS Code package.json — no traditional permissions model and no Chrome
     # manifest-version semantics.
-    is_vscode_package = "contributes" in manifest and "manifest_version" not in manifest
-    if is_vscode_package:
+    if _is_vscode_package(manifest, manifest_name):
         analysis.permissions = []  # VS Code doesn't use Chrome-style permissions
         return
 
     _analyse_manifest_risks(manifest, analysis)
+
+
+def _is_vscode_package(manifest: dict, manifest_name: str) -> bool:
+    """Whether this manifest is a VS Code ``package.json``, not a Chrome manifest.
+
+    Classified primarily by **which file it came from**: ``_load_manifest`` only
+    falls through to ``package.json`` when there is no ``manifest.json``, so the
+    filename is a far stronger signal than anything in the body — and it was
+    already known and thrown away (#274).
+
+    The old test — ``"contributes" in manifest`` — missed extension packs
+    (``extensionPack``, no ``contributes``) and API-only extensions (just
+    ``main`` + ``activationEvents``). Those fell through to the Chrome path,
+    where ``manifest.get("manifest_version", 2)`` defaulted to 2 and produced a
+    bogus "Manifest V2 extension" finding: a Chrome-specific claim rendered on a
+    VSIX, worth +2 on the code-behaviour score.
+
+    A body check on ``engines.vscode`` is kept as a second signal for the case
+    where a VSIX ships a ``manifest.json`` too, so the path check alone would
+    read it as Chrome.
+    """
+    if manifest_name.rsplit("/", 1)[-1].lower() == "package.json":
+        return True
+    engines = manifest.get("engines")
+    if isinstance(engines, dict) and "vscode" in engines:
+        return True
+    # Retained from the original heuristic: a Chrome manifest always declares
+    # manifest_version, so `contributes` without one is a VS Code package.
+    return "contributes" in manifest and "manifest_version" not in manifest
 
 
 def _analyse_manifest_risks(manifest: dict, analysis: PackageAnalysis) -> None:
