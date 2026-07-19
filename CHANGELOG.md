@@ -218,6 +218,11 @@ release to diff against.
 
 ### Fixed
 
+- **`ICEBERG_EBS_OIDC_SESSION_MAX_AGE` is now actually forwarded to the container** (#285).
+  The SSO session cap (#221) was documented as tunable but appeared in neither the Compose
+  `app.environment` block nor the Helm ConfigMap, so an operator shortening the window to speed
+  up IdP-disable propagation got a silent no-op — sessions kept the 1h default (the #87 trap).
+  Forwarded in both stacks and added to the deploy-env regression list.
 - **A manifest the inspector cannot read no longer erases an extension's permissions** (#274).
   `_read_manifest_json` parsed with a plain `json.loads`, which rejects a UTF-8 BOM and JS-style
   comments — both of which Chrome itself tolerates, so such packages are live in the stores. The

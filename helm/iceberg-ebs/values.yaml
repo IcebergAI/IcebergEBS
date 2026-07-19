@@ -62,6 +62,7 @@ icebergEbs:
   # unbounded (#22, #87).
   retentionDays: 0
   sessionMaxAge: 86400     # session lifetime in seconds
+  oidcSessionMaxAge: 3600  # SSO session cap in seconds (#221) — bounds IdP-disable propagation
   httpxTimeout: 15.0       # outbound HTTP timeout in seconds
   secureCookies: true
   logJson: false          # emit single-line JSON logs for a collector (#89)

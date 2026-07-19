@@ -79,6 +79,9 @@ services:
       # Also forwarded (advertised as tunable in README): session lifetime + outbound
       # HTTP timeout. Other app/config.py settings use their defaults unless added here.
       ICEBERG_EBS_SESSION_MAX_AGE: ${ICEBERG_EBS_SESSION_MAX_AGE:-86400}
+      # The SSO session cap (#221): bounds how long a stale session/stolen cookie
+      # survives an IdP disable. Documented as tunable, so it must be forwarded (#285).
+      ICEBERG_EBS_OIDC_SESSION_MAX_AGE: ${ICEBERG_EBS_OIDC_SESSION_MAX_AGE:-3600}
       ICEBERG_EBS_HTTPX_TIMEOUT: ${ICEBERG_EBS_HTTPX_TIMEOUT:-15.0}
       # Extra origins the CSRF origin check trusts (#107, #153), for proxy deployments that
       # rewrite Host so the app-observed origin differs from the browser's. Empty ⇒ same-origin
