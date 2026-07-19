@@ -1,5 +1,7 @@
 """Server-side pagination / filtering / search on the dashboard UI (#23)."""
 
+from pathlib import Path
+
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.models import Extension
@@ -100,6 +102,51 @@ async def test_dashboard_tolerates_non_numeric_page(client, test_db, admin_user)
         assert "Showing 1–3 of 3" in r.text  # fell back to page 1
 
 
+async def test_detail_page_permission_tiers_derive_from_single_source(client, test_db, admin_user):
+    # The rendered tier badges must come from app.permissions (via permission_tier),
+    # not a hand-copied template list — the copy had drifted and rendered
+    # declarativeNetRequestWithHostAccess (CRITICAL, maxes the score) as a grey
+    # "low" tag (#281).
+    async with AsyncSession(test_db) as s:
+        ext = Extension(
+            user_id=admin_user.id,
+            store="chrome",
+            extension_id="c" * 32,
+            name="Tiered",
+            publisher="Acme",
+            version="1.0",
+            store_url="https://example.com",
+            permissions='["declarativeNetRequestWithHostAccess", "pageCapture", "storage", "someUnknownPerm"]',
+            package_analysis='{"host_permissions": ["*://*/*", "https://example.com/*"]}',
+        )
+        s.add(ext)
+        await s.commit()
+        await s.refresh(ext)
+        ext_id = ext.id
+
+    r = await client.get(f"/extensions/{ext_id}")
+    assert r.status_code == 200
+    # API permissions, tiered from the CRITICAL/HIGH/MEDIUM sets + low fallback.
+    assert '<span class="perm-tag perm-critical">declarativeNetRequestWithHostAccess</span>' in r.text
+    assert '<span class="perm-tag perm-high">pageCapture</span>' in r.text
+    assert '<span class="perm-tag perm-medium">storage</span>' in r.text
+    assert '<span class="perm-tag perm-low">someUnknownPerm</span>' in r.text
+    # Host permissions: every BROAD_HOST_PATTERNS spelling is critical (the template
+    # copy missed *://*/*); scoped host access is high.
+    assert '<span class="perm-tag perm-critical">*://*/*</span>' in r.text
+    assert '<span class="perm-tag perm-high">https://example.com/*</span>' in r.text
+
+
+def test_detail_template_carries_no_inlined_tier_or_band_constants():
+    # The single-source rule (#63/#281): tier membership lives in app/permissions.py
+    # and band cut points in scoring.risk_level. Neither may be re-inlined in the
+    # template, where they drift silently.
+    source = (Path(__file__).resolve().parent.parent / "app/templates/extension_detail.html").read_text()
+    assert "'debugger'" not in source, "permission tier list re-inlined in template (#281)"
+    assert "'cookies'" not in source, "permission tier list re-inlined in template (#281)"
+    assert "pct < 25" not in source and "pct < 50" not in source, "band thresholds re-inlined in template (#281)"
+
+
 async def test_detail_page_tolerates_malformed_json(client, test_db, admin_user):
     # A partial write / manual edit can leave invalid JSON in the stored columns;
     # the detail page must fall back instead of 500-ing, like the JSON API (#61).
@@ -151,3 +198,30 @@ async def test_detail_page_tolerates_wrong_shaped_json(client, test_db, admin_us
     r = await client.get(f"/extensions/{ext_id}")
     assert r.status_code == 200
     assert "Misshaped" in r.text
+
+
+async def test_detail_page_tolerates_non_string_host_permission_member(client, test_db, admin_user):
+    # A valid JSON list whose member is a dict/list (partial write / manual edit) must
+    # not 500 the detail page: the tier classifier's set-membership check raises
+    # TypeError on unhashable members without the string filter (#281 review; same
+    # threat model the API DTO already guards, #150).
+    async with AsyncSession(test_db) as s:
+        ext = Extension(
+            user_id=admin_user.id,
+            store="chrome",
+            extension_id="d" * 32,
+            name="OddHosts",
+            publisher="Acme",
+            version="1.0",
+            store_url="https://example.com",
+            permissions='["storage"]',
+            package_analysis='{"host_permissions": ["https://ok.example.com/*", {"bad": 1}, ["nested"], 7]}',
+        )
+        s.add(ext)
+        await s.commit()
+        await s.refresh(ext)
+        ext_id = ext.id
+
+    r = await client.get(f"/extensions/{ext_id}")
+    assert r.status_code == 200
+    assert '<span class="perm-tag perm-high">https://ok.example.com/*</span>' in r.text

@@ -38,6 +38,7 @@ from app.models import AlertDestination, AlertRule, ApiKey, Extension, FetchLog,
 from app.oidc import service as oidc_service
 from app.oidc.config import EDITABLE_FIELDS as OIDC_EDITABLE_FIELDS
 from app.oidc.config import client_secret_status
+from app.permissions import host_permission_tier, permission_tier
 from app.ratelimit import login_limiter
 from app.scoring import risk_level
 from app.threat_intel import build_threat_intel_indicators
@@ -328,7 +329,9 @@ async def _fleet_stats(session: AsyncSession, user_id: int, now: datetime, stale
 
     return FleetStats(
         extensions_count=len(snapshot),
-        high_risk=sum(1 for r in snapshot if r.risk_score is not None and r.risk_score >= 50),
+        # "High & critical" = at/above the high band's floor — from RISK_BANDS (the
+        # render-side mirror of scoring.risk_level), never a re-inlined cut point (#281).
+        high_risk=sum(1 for r in snapshot if r.risk_score is not None and r.risk_score >= RISK_BANDS["high"][0]),
         watchlist_count=sum(1 for r in snapshot if r.watchlist),
         last_refresh=last_refresh,
         next_refresh=next_refresh,
@@ -530,6 +533,18 @@ async def bulk_import_page(
 # ---------------------------------------------------------------------------
 
 
+# Score-breakdown row definitions for the detail page: (label, risk_detail key,
+# category max, note). Rendered via `risk_rows` in extension_detail.
+_RISK_ROW_DEFS = [
+    ("Permissions", "permissions", 25, "Danger level of declared permissions"),
+    ("Popularity", "popularity", 20, "Install count / sudden drop"),
+    ("Publisher", "publisher", 15, "Ownership change / verification"),
+    ("Staleness", "staleness", 15, "Time since last author update"),
+    ("Code behaviour", "code_behaviour", 15, "eval / remote code / obfuscation"),
+    ("External domains", "external_domains", 10, "Unknown external URLs in code"),
+]
+
+
 @router.get("/extensions/{ext_id}", response_class=HTMLResponse)
 async def extension_detail(
     ext_id: int,
@@ -567,7 +582,36 @@ async def extension_detail(
         if not isinstance(package_analysis.get("findings"), list):
             package_analysis["findings"] = []
         package_analysis["grouped_findings"] = group_detection_findings(package_analysis["findings"])
-        host_permissions = package_analysis.get("host_permissions", [])
+        # Mirror the API DTO's guard (#150): a wrong-shaped stored value — non-list
+        # container or non-string members — must not reach the tier classifier, whose
+        # set-membership check raises TypeError on unhashable members (#281 review).
+        raw_hosts = package_analysis.get("host_permissions", [])
+        host_permissions = [h for h in raw_hosts if isinstance(h, str)] if isinstance(raw_hosts, list) else []
+    # Tier every rendered permission tag from the app.permissions sets — the single
+    # source shared with the scorer/inspector (#63) — instead of Jinja re-inlining
+    # the tier lists (which had drifted, #281).
+    permission_tags = [{"name": p, "tier": permission_tier(p)} for p in permissions]
+    host_permission_tags = [{"name": p, "tier": host_permission_tier(p)} for p in host_permissions]
+
+    # Score-breakdown rows, banded server-side via risk_level over the category
+    # percentage — the same 75/50/25 cut points as everywhere else (#281); the
+    # template must not re-inline them.
+    risk_rows = []
+    if risk_detail:
+        for label, key, category_max, note in _RISK_ROW_DEFS:
+            value = risk_detail.get(key) or 0
+            pct = round(value / category_max * 100, 1)
+            risk_rows.append(
+                {
+                    "label": label,
+                    "value": value,
+                    "max": category_max,
+                    "note": note,
+                    "pct": pct,
+                    "band": risk_level(int(pct)),
+                }
+            )
+
     threat_intel_indicators = build_threat_intel_indicators(package_analysis)
     threat_intel_primary_indicators = [
         indicator for indicator in threat_intel_indicators if indicator.get("section") != "referenced"
@@ -619,9 +663,10 @@ async def extension_detail(
             "footprint_assets": footprint_assets,
             "footprint_departments": footprint_departments,
             "exposure": exposure,
-            "permissions": permissions,
-            "host_permissions": host_permissions,
+            "permission_tags": permission_tags,
+            "host_permission_tags": host_permission_tags,
             "risk_detail": risk_detail,
+            "risk_rows": risk_rows,
             "package_analysis": package_analysis,
             "threat_intel_indicators": threat_intel_indicators,
             "threat_intel_primary_indicators": threat_intel_primary_indicators,

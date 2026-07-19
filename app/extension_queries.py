@@ -14,19 +14,19 @@ from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.models import Extension
+from app.scoring import RISK_LEVEL_THRESHOLDS
 
 # Exposure ("blast radius", #29) is risk × org footprint — derived, never stored.
 # A SQL expression lets it be ORDER BY'd without a denormalised column; NULL when
 # either factor is NULL, so the existing nullslast/nullsfirst handling applies.
 EXPOSURE_EXPR = Extension.risk_score * Extension.install_footprint
 
-# Risk band → score range [low, high) used to filter by risk level. Mirrors the
-# thresholds in app.scoring.risk_level (75/50/25) — the single source of truth.
+# Risk band → score range [low, high) used to filter by risk level. DERIVED from
+# scoring.RISK_LEVEL_THRESHOLDS — the single home of the cut points — so this map
+# can never drift from risk_level() (#281 review; it used to re-hardcode 75/50/25).
 RISK_BANDS: dict[str, tuple[int, int | None]] = {
-    "critical": (75, None),
-    "high": (50, 75),
-    "medium": (25, 50),
-    "low": (0, 25),
+    band: (lower, RISK_LEVEL_THRESHOLDS[i - 1][1] if i > 0 else None)
+    for i, (band, lower) in enumerate(RISK_LEVEL_THRESHOLDS)
 }
 
 SORT_COLUMNS = {
