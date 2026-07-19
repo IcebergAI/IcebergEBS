@@ -107,6 +107,15 @@ _MAX_EXTERNAL_URLS = 500
 _MAX_NETWORK_CALLOUT_URLS = 500
 _ZIP_MAGIC = b"PK\x03\x04"
 
+# Suffixes the code-behaviour scan reads. Chrome and VS Code both load code
+# from paths that need not end in `.js`, so the suffix list is a floor, not the
+# whole selection — `_script_files` also scans whatever the manifest references
+# by name (#275). `.jsx`/`.mjs`/`.cjs` are shipped by real packages; HTML is in
+# the list because an MV2 background page can hold its payload inline.
+_JS_SUFFIXES = (".js", ".mjs", ".cjs", ".jsx")
+_HTML_SUFFIXES = (".html", ".htm")
+_SCAN_SUFFIXES = _JS_SUFFIXES + _HTML_SUFFIXES
+
 
 # Domains that are noise — well-known CDNs/services not worth flagging
 _SAFE_DOMAINS = {
@@ -129,6 +138,13 @@ _URL_LITERAL_TAIL = r'[^\s\'"`<>{}\\]+'
 _URL_RE = re.compile(r"https?://" + _URL_LITERAL_TAIL)
 _EVAL_RE = re.compile(r"\beval\s*\(|new\s+Function\s*\(")
 _IDENTIFIER_RE = re.compile(r"\b[a-zA-Z_$][a-zA-Z0-9_$]*\b")
+
+_HTML_SCRIPT_BLOCK_RE = re.compile(r"<script\b[^>]*>(.*?)</script\s*>", re.IGNORECASE | re.DOTALL)
+_HTML_REMOTE_SCRIPT_RE = re.compile(r'<script\b[^>]*\bsrc\s*=\s*[\'"]?https?://', re.IGNORECASE)
+_HTML_SCRIPT_SRC_RE = re.compile(
+    r'<script\b[^>]*\bsrc\s*=\s*[\'"]?(https?://' + _URL_LITERAL_TAIL + r")",
+    re.IGNORECASE,
+)
 
 _EVAL_CALL_RE = re.compile(r"\beval\s*\(")
 _NEW_FUNCTION_RE = re.compile(r"\bnew\s+Function\s*\(")
@@ -190,8 +206,7 @@ def inspect_package(data: bytes) -> PackageAnalysis:
     if manifest:
         _extract_manifest_fields(manifest, analysis)
 
-    js_files = [n for n in zf.namelist() if n.endswith(".js")]
-    for name in js_files:
+    for name in _script_files(zf, manifest):
         info = zf.getinfo(name)
         if info.file_size > _MAX_JS_BYTES:
             continue  # skip oversized files
@@ -203,13 +218,171 @@ def inspect_package(data: bytes) -> PackageAnalysis:
             source = raw.decode("utf-8", errors="replace")
         except Exception:  # nosec B112 - best-effort scan: skip unreadable/corrupt entries
             continue
-        _analyse_js(source, analysis, name)
+        if name.lower().endswith(_HTML_SUFFIXES):
+            _analyse_html(source, analysis, name)
+        else:
+            _analyse_js(source, analysis, name)
 
     analysis.external_domains = sorted(set(analysis.external_domains))[:_MAX_EXTERNAL_DOMAINS]
     analysis.external_urls = sorted(set(analysis.external_urls))[:_MAX_EXTERNAL_URLS]
     analysis.network_callout_urls = sorted(set(analysis.network_callout_urls))[:_MAX_NETWORK_CALLOUT_URLS]
     analysis.obfuscation_score = min(analysis.obfuscation_score, 10)
     return analysis
+
+
+def _script_files(zf: zipfile.ZipFile, manifest: dict | None) -> list[str]:
+    """Every archive entry worth running the code-behaviour scan over.
+
+    Selecting on ``.js`` alone made the whole static-analysis stage evadable by
+    renaming a file (#275): Chrome loads whatever path the manifest points at,
+    and a VS Code ``main`` is routinely ``.cjs``/``.mjs``. A payload in
+    ``bg.mjs`` scored zero on eval, remote code, obfuscation and external
+    domains — i.e. *below* an extension whose package could not be downloaded
+    at all, which gets the unknown-midpoint. So take the union of
+
+    * anything with a script-ish or HTML suffix, and
+    * anything the manifest actually references as executable, whatever its
+      name — the authoritative list, since that is what the browser loads.
+
+    Returned in archive order, deduped. The overall ``_MAX_FILE_COUNT`` cap
+    already bounds how many entries this can yield.
+    """
+    referenced = _manifest_referenced_paths(zf, manifest)
+    names = [n for n in zf.namelist() if n.lower().endswith(_SCAN_SUFFIXES) or n in referenced]
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for name in names:
+        if name not in seen:
+            seen.add(name)
+            ordered.append(name)
+    return ordered
+
+
+def _manifest_referenced_paths(zf: zipfile.ZipFile, manifest: dict | None) -> set[str]:
+    """Archive entries referenced as executable code by the manifest.
+
+    Covers the Chrome/Edge entry points (service worker, background scripts and
+    page, content scripts, popup/options/devtools pages) and the VS Code ones
+    (``main``/``browser``). Extensions are irrelevant here on purpose — the
+    point is to catch code the manifest loads under a name the suffix filter
+    would miss.
+    """
+    if not manifest:
+        return set()
+
+    raw: list[object] = []
+    background = manifest.get("background")
+    if isinstance(background, dict):
+        raw.extend([background.get("service_worker"), background.get("page")])
+        scripts = background.get("scripts")
+        if isinstance(scripts, list):
+            raw.extend(scripts)
+
+    content_scripts = manifest.get("content_scripts")
+    if isinstance(content_scripts, list):
+        for entry in content_scripts:
+            if isinstance(entry, dict) and isinstance(entry.get("js"), list):
+                raw.extend(entry["js"])
+
+    for key in ("devtools_page", "options_page", "main", "browser"):
+        raw.append(manifest.get(key))
+
+    for key in ("action", "browser_action", "page_action", "options_ui"):
+        section = manifest.get(key)
+        if isinstance(section, dict):
+            raw.extend([section.get("default_popup"), section.get("page")])
+
+    overrides = manifest.get("chrome_url_overrides")
+    if isinstance(overrides, dict):
+        raw.extend(overrides.values())
+
+    sandbox = manifest.get("sandbox")
+    if isinstance(sandbox, dict) and isinstance(sandbox.get("pages"), list):
+        raw.extend(sandbox["pages"])
+
+    names = set(zf.namelist())
+    resolved: set[str] = set()
+    for value in raw:
+        if not isinstance(value, str) or not value:
+            continue
+        resolved.update(_resolve_archive_path(value, names))
+    return resolved
+
+
+def _resolve_archive_path(path: str, names: set[str]) -> set[str]:
+    """Map a manifest-declared path onto the archive entries it could name.
+
+    Manifest paths are extension-root-relative and may be written with a
+    leading ``/`` or ``./``; a VSIX roots everything under ``extension/``.
+    Anything with a ``..`` segment is dropped rather than resolved — a manifest
+    must not reach outside its own package, and honouring it would be a zip-slip
+    lookalike.
+    """
+    candidate = path.split("?", 1)[0].split("#", 1)[0].lstrip("/")
+    if candidate.startswith("./"):
+        candidate = candidate[2:]
+    if not candidate or ".." in candidate.split("/"):
+        return set()
+    return {name for name in (candidate, f"extension/{candidate}") if name in names}
+
+
+def _analyse_html(source: str, analysis: PackageAnalysis, filename: str) -> None:
+    """Run the JS scan over the inline scripts of an HTML page.
+
+    An MV2 ``background.page`` (or a popup/options page) can carry its whole
+    payload in an inline ``<script>`` block, invisible to a scan that only
+    reads ``.js`` files (#275).
+
+    The page is *masked* rather than stripped: everything outside a script body
+    is replaced with spaces, newlines preserved. That keeps the existing
+    regexes and the reported line numbers pointing at real positions in the
+    HTML file, and — just as importantly — keeps markup out of the minification
+    and obfuscation heuristics, which would otherwise fire on any large minified
+    page (the #151 false-positive class).
+    """
+    masked = _mask_non_script(source)
+    if masked.strip():
+        _analyse_js(masked, analysis, filename)
+
+    # A remote <script src> in a packaged page is code the extension does not
+    # ship being executed with the extension's own privileges. Its host counts
+    # as an external domain too — masking hid the attribute from the URL sweep,
+    # and scanning the raw page instead would drag in every href/img.
+    if _HTML_REMOTE_SCRIPT_RE.search(source):
+        analysis.uses_remote_code = True
+        for match in _HTML_SCRIPT_SRC_RE.finditer(source):
+            url = _clean_url(match.group(1))
+            domain = _domain_from_url(url)
+            if domain and not _is_safe_domain(domain.removeprefix("www.")):
+                analysis.external_urls.append(url)
+                analysis.external_domains.append(domain)
+                analysis.network_callout_urls.append(url)
+        _add_js_pattern_finding(
+            analysis,
+            source,
+            filename,
+            _HTML_REMOTE_SCRIPT_RE,
+            code="remote_script_include",
+            severity="critical",
+            title="Remote script in packaged page",
+            detail="A packaged HTML page loads executable JavaScript from a remote URL.",
+        )
+
+
+def _mask_non_script(source: str) -> str:
+    """Blank out everything outside ``<script>`` bodies, preserving line layout."""
+
+    def blank(text: str) -> str:
+        return "".join(ch if ch == "\n" else " " for ch in text)
+
+    out: list[str] = []
+    cursor = 0
+    for match in _HTML_SCRIPT_BLOCK_RE.finditer(source):
+        out.append(blank(source[cursor : match.start(1)]))
+        out.append(match.group(1))
+        cursor = match.end(1)
+    out.append(blank(source[cursor:]))
+    return "".join(out)
 
 
 def _zip_payload(data: bytes) -> bytes:

