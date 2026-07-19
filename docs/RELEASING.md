@@ -33,7 +33,12 @@ so the same version has two forms and you must use the right one in the right pl
 2. **Refresh the lockfile** — `uv lock`, and commit `uv.lock`. `uv.lock` records the
    project's *own* version, so skipping this makes CI's `uv lock --check` fail. This is
    the single most common way to break the build here.
-3. **Close out the changelog.** Rename the working section to the released version and
+3. **Match the chart's `appVersion`** — set `appVersion` in `helm/iceberg-ebs/Chart.yaml`
+   to the same PEP 440 string. It advertises what the chart deploys, and `helm list`
+   reports it as fact; `tests/test_helm_postgres.py` fails if the two drift (#276).
+   (`version:` in that file is the *chart's* own version — bump it only when the chart
+   templates change.)
+4. **Close out the changelog.** Rename the working section to the released version and
    date it, then open a fresh `[Unreleased]` above it:
 
    ```markdown
@@ -41,8 +46,8 @@ so the same version has two forms and you must use the right one in the right pl
 
    ## [0.1.0-beta.1] — 2026-07-14
    ```
-4. **Open a PR** with the bump + lock + changelog, and merge it once CI is green.
-5. **Tag the merge commit** on `main`, in the **SemVer** spelling, and push the tag:
+5. **Open a PR** with the bump + lock + chart + changelog, and merge it once CI is green.
+6. **Tag the merge commit** on `main`, in the **SemVer** spelling, and push the tag:
 
    ```bash
    git checkout main && git pull
@@ -58,7 +63,7 @@ so the same version has two forms and you must use the right one in the right pl
    keylessly with cosign**, and **creates the GitHub Release** with generated notes
    (`--prerelease` when the tag carries any pre-release suffix — `-alpha`/`-beta`/`-rc`). A `workflow_dispatch` run of the
    same workflow is a **build-only dry run** — no push, sign, attest, or release.
-6. **Check the release.** Confirm the workflow run is green, the GitHub Release exists, and the
+7. **Check the release.** Confirm the workflow run is green, the GitHub Release exists, and the
    image verifies (below). Only a stable tag (no `-suffix`) also moves `:latest` / `:MAJOR.MINOR`.
 
 ## Verifying a release

@@ -110,13 +110,30 @@ spec:
             - configMapRef:
                 name: {{ include "iceberg-ebs.fullname" . }}
           env:
+            {{- if .Values.postgresql.enabled }}
+            # Bundled Bitnami subchart. The Secret and Service names come from the
+            # subchart's own naming (<release>-postgresql), not ours — see the
+            # iceberg-ebs.postgresql.fullname helper. The `password` key is the
+            # custom-user password (postgresql.auth.username); Bitnami keeps the
+            # superuser under `postgres-password`, which the app never uses.
             - name: POSTGRES_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: {{ include "iceberg-ebs.fullname" . }}-postgresql
+                  name: {{ include "iceberg-ebs.postgresql.fullname" . }}
                   key: password
             - name: ICEBERG_EBS_DATABASE_URL
-              value: "postgresql+asyncpg://{{ .Values.postgresql.auth.username }}:$(POSTGRES_PASSWORD)@{{ include "iceberg-ebs.fullname" . }}-postgresql/{{ .Values.postgresql.auth.database }}"
+              value: "postgresql+asyncpg://{{ .Values.postgresql.auth.username }}:$(POSTGRES_PASSWORD)@{{ include "iceberg-ebs.postgresql.fullname" . }}/{{ .Values.postgresql.auth.database }}"
+            {{- else }}
+            # External database (postgresql.enabled=false). The DSN carries the
+            # password, so it is only ever read from a Secret — never a ConfigMap,
+            # never a plaintext `value:` here. Either bring your own Secret, or set
+            # externalDatabase.url and let secret.yaml hold it.
+            - name: ICEBERG_EBS_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.externalDatabase.existingSecret | default (include "iceberg-ebs.fullname" .) }}
+                  key: {{ .Values.externalDatabase.existingSecretKey | default "database-url" }}
+            {{- end }}
             - name: ICEBERG_EBS_ADMIN_PASSWORD
               valueFrom:
                 secretKeyRef:

@@ -53,11 +53,12 @@ metadata:
   labels:
     {{- include "iceberg-ebs.labels" . | nindent 4 }}
 spec:
-  # Bitnami postgresql subchart pods.
+  # The bundled Postgres pods (templates/postgres.yaml). These labels were the
+  # Bitnami subchart's and were kept when it was replaced (#276), so this rule
+  # still selects the same pods — see iceberg-ebs.postgresql.selectorLabels.
   podSelector:
     matchLabels:
-      app.kubernetes.io/name: postgresql
-      app.kubernetes.io/instance: {{ .Release.Name }}
+      {{- include "iceberg-ebs.postgresql.selectorLabels" . | nindent 6 }}
   policyTypes:
     - Ingress
   ingress:

@@ -125,20 +125,54 @@ icebergEbs:
   oidcOktaRoleClaim: "groups"
   oidcOktaRoleMap: ""
 
+# Bundled PostgreSQL (templates/postgres.yaml). Set enabled=false and fill in
+# externalDatabase below to point at a managed Postgres instead — recommended for
+# anything beyond a homelab, since this is a single replica with no failover and
+# no backup CronJob.
 postgresql:
+  enabled: true
   auth:
     username: iceberg_ebs
     password: ""           # required — set via --set; never commit a value here
     database: iceberg_ebs
-  # Disable the Bitnami subchart's OWN NetworkPolicy (#103). Kubernetes unions the
-  # ingress allowances of every policy that selects a pod, so if the subchart's policy
-  # stays enabled (its default allows broader ingress) it would re-open Postgres
-  # regardless of our restrictive allow-postgres-from-app rule — the union can only add
-  # access, never revoke it. With this off, our chart's policy is the only one selecting
-  # the Postgres pods, so app-only:5432 actually holds. (No-op when networkPolicy.enabled
-  # is false and you rely on the subchart's instead — but then set its `.ingress` yourself.)
-  networkPolicy:
-    enabled: false
+  image:
+    # docker.io/library/postgres — NOT bitnami/postgresql, whose versioned tags
+    # moved to `bitnamilegacy` in Broadcom's 2025 catalog migration and no longer
+    # pull (#276). This is the same image Compose and the CI service container
+    # use, and the tag is held in lockstep with docker-compose.yml by
+    # tests/test_helm_postgres.py::test_helm_postgres_major_matches_compose —
+    # Dependabot cannot see Helm values, so that test is what forces the two to
+    # move together. Bump both in the same PR.
+    repository: postgres
+    tag: "18-alpine"
+    pullPolicy: IfNotPresent
+  persistence:
+    size: 10Gi
+    # Empty = the cluster's default StorageClass.
+    storageClass: ""
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: "1"
+      memory: 1Gi
+
+# External database, used when postgresql.enabled=false. Recommended for anything
+# beyond a homelab: a managed Postgres gets you backups, failover and patching that
+# a single-replica in-cluster StatefulSet does not.
+#
+# The DSN carries a password, so it is only ever read from a Secret. Either set
+# `url` (the chart puts it in its own Secret) or point `existingSecret` at a Secret
+# you manage — the latter keeps the credential out of your values file and out of
+# `helm get values`. Leaving both unset fails the render rather than deploying a
+# pod that cannot reach a database.
+externalDatabase:
+  # Full SQLAlchemy/asyncpg DSN, e.g.
+  # postgresql+asyncpg://user:password@db.example.com:5432/iceberg_ebs
+  url: ""
+  existingSecret: ""
+  existingSecretKey: database-url
 
 ingress:
   host: icebergebs.example.com

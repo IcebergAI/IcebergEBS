@@ -3,8 +3,15 @@ name: iceberg-ebs
 description: Extension risk monitor — tracks browser and editor extensions and scores them for risk
 type: application
 version: 0.1.0
-appVersion: "1.0.0"
-dependencies:
-  - name: postgresql
-    version: "~15.x.x"
-    repository: https://charts.bitnami.com/bitnami
+# The application version this chart deploys. Kept equal to [project].version in
+# pyproject.toml (the SemVer single source of truth) and gated by
+# tests/test_helm_postgres.py — "1.0.0" against an 0.1.0b1 app was a cosmetic lie
+# that `helm list` reported as fact (#276). Bump with the app version; see
+# docs/RELEASING.md.
+appVersion: "0.1.0b1"
+# No dependencies. The bundled PostgreSQL used to be the Bitnami postgresql
+# subchart, pinned at ~15.x.x; templates/postgres.yaml now carries it directly on
+# docker.io/library/postgres — the same image Compose and CI use. See the header
+# of that file for why (Broadcom's 2025 Bitnami catalog migration left the old
+# pin unpullable and the current chart unable to pin a PostgreSQL version on the
+# free tier). #276
