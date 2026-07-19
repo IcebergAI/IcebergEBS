@@ -1160,7 +1160,13 @@ naming this section. Do not work around it; do this instead.
 set -euo pipefail          # a failed pg_dump must NOT look like a successful one
 NS=icebergebs
 REL=icebergebs
+# Two credentials, and the difference matters below: `password` is the application
+# role, `postgres-password` is the superuser. The Bitnami chart creates the custom
+# role WITHOUT the CREATEDB attribute, so the scratch database in step 3 has to be
+# created by the superuser (verified: `createdb -U iceberg_ebs` fails with
+# "permission denied to create database").
 PGPW=$(kubectl -n "$NS" get secret "$REL"-postgresql -o jsonpath='{.data.password}' | base64 -d)
+PGSUPERPW=$(kubectl -n "$NS" get secret "$REL"-postgresql -o jsonpath='{.data.postgres-password}' | base64 -d)
 
 # 1. Stop writes. (The Deployment is <release>-<chart>.)
 kubectl -n "$NS" scale deploy/"$REL"-iceberg-ebs --replicas=0
@@ -1174,11 +1180,12 @@ kubectl -n "$NS" exec "$REL"-postgresql-0 -- \
   > icebergebs-premigration.pgc
 
 # 3. VERIFY BY RESTORING, not by reading the header. `pg_restore --list` only
-#    parses the table of contents — an archive truncated after its TOC passes it
-#    while missing every data block. Restore into a scratch database and check the
-#    data is actually there.
+#    parses the table of contents, so an archive truncated after its TOC passes it
+#    while missing every data block. Measured: a 65,751-byte dump truncated to 30%
+#    still passed BOTH `pg_restore --list` and `test -s`, yet restored 0 of 5000
+#    rows per table. Restore into a scratch database and compare counts instead.
 kubectl -n "$NS" exec "$REL"-postgresql-0 -- \
-  env PGPASSWORD="$PGPW" createdb -U iceberg_ebs migration_verify
+  env PGPASSWORD="$PGSUPERPW" createdb -U postgres -O iceberg_ebs migration_verify
 kubectl -n "$NS" exec -i "$REL"-postgresql-0 -- \
   env PGPASSWORD="$PGPW" pg_restore -U iceberg_ebs -d migration_verify \
   < icebergebs-premigration.pgc
@@ -1192,7 +1199,7 @@ done
 # The two lines MUST match. If they do not, STOP — nothing has been deleted yet.
 
 kubectl -n "$NS" exec "$REL"-postgresql-0 -- \
-  env PGPASSWORD="$PGPW" dropdb -U iceberg_ebs migration_verify
+  env PGPASSWORD="$PGSUPERPW" dropdb -U postgres migration_verify
 
 # 4. Retain the underlying volume BEFORE deleting the PVC. Kubernetes cannot
 #    rename a PVC, and the new StatefulSet's volumeClaimTemplate wants the same
