@@ -17,6 +17,9 @@ CRITICAL_PERMISSIONS = {
     "webRequest",
     "webRequestBlocking",
     "declarativeNetRequestWithHostAccess",
+    # Arbitrary screen capture — every window and app on the desktop, not just the
+    # browser. The capability spyware screen-recorders are built on (#280).
+    "desktopCapture",
 }
 
 HIGH_PERMISSIONS = {
@@ -29,6 +32,13 @@ HIGH_PERMISSIONS = {
     "clipboardRead",
     "contentSettings",
     "pageCapture",
+    # The capture/telemetry family (#280): live tab audio/video recording, device
+    # capture, and the full browsing graph (webNavigation sees every navigation
+    # event across every site — history-grade telemetry without the history API).
+    "tabCapture",
+    "audioCapture",
+    "videoCapture",
+    "webNavigation",
 }
 
 MEDIUM_PERMISSIONS = {
@@ -39,6 +49,15 @@ MEDIUM_PERMISSIONS = {
     "identity",
     "geolocation",
     "scripting",
+    # Surveillance-adjacent additions (#280): browser privacy-setting control,
+    # recently-closed-tab access, most-visited sites, traffic rules without host
+    # access (the WithHostAccess variant is CRITICAL above), and clipboard seeding
+    # (reading is HIGH above).
+    "privacy",
+    "sessions",
+    "topSites",
+    "declarativeNetRequest",
+    "clipboardWrite",
 }
 
 # Host-permission patterns broad enough to reach across many/all sites.
