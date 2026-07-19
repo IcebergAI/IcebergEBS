@@ -11,8 +11,8 @@ image:
   pullPolicy: IfNotPresent
 
 # Edge reverse proxy sidecar (#188). The cluster ingress terminates TLS and forwards to
-# this Caddy on 8080; Caddy sets the canonical security headers and proxies to the app on
-# localhost:8000. Pinned to a minor (a floating `caddy:alpine` would drift the edge on
+# this Caddy on 8080; Caddy proxies to the app on localhost:8000 (the app owns the
+# canonical security headers; Caddy carries only a set-if-absent fallback). Pinned to a minor (a floating `caddy:alpine` would drift the edge on
 # every pull). Dependabot does NOT see this file (its `docker` ecosystem reads Dockerfile
 # `FROM` lines and `docker-compose` reads the compose files — neither parses Helm values),
 # so this tag is kept in lockstep with the Compose Caddy image by

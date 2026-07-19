@@ -31,7 +31,7 @@ IcebergEBS runs on PostgreSQL (dev, test, and production — SQLite is not suppo
 | `.env.example` | Template for required env vars |
 | `caddy/Caddyfile` | Compose edge config (TLS termination, headers, proxy — /static included) |
 | `caddy/Caddyfile.k8s` | In-pod sidecar config for Kubernetes (plain HTTP behind the ingress) |
-| `caddy/headers.caddy` | Canonical security headers — the single CSP home, imported by both Caddyfiles |
+| `caddy/headers.caddy` | Minimal set-if-absent fallback headers for Caddy-generated responses — the app owns the canonical set (`app/main.py:security_headers`) |
 | `caddy/generate-dev-cert.sh` | One-shot self-signed cert for local dev |
 | `static/css/input.css` | Tailwind v4 entry point — built to the gitignored `static/css/output.css` (#85) |
 | `static/js/vendor/` | Vendored, version-pinned Alpine.js (no CDN at runtime, #85) |
@@ -538,32 +538,30 @@ For production: mount a Let's Encrypt cert (e.g. via Certbot) or any CA-issued c
 
 ---
 
-## 9. `caddy/headers.caddy`
+## 9. Security headers: the app is canonical, `caddy/headers.caddy` is fallback
 
-The **single** home for the canonical security headers, imported by both `caddy/Caddyfile` (Compose) and `caddy/Caddyfile.k8s` (the Kubernetes sidecar) via `import headers.caddy`. Consolidating the CSP here — one definition, not the pre-#188 pair in `nginx/security_headers.conf` **and** the Helm ingress snippet — is the point of the Caddy migration. (The Helm ConfigMap embeds a test-guarded mirror because Helm can't read files above the chart; `tests/test_csp_strict.py` and `tests/test_helm_caddy.py` fail if the copies drift.)
+The **app** is the single source of truth for security headers: `app/main.py:security_headers` (the outermost middleware) hard-sets the full canonical set on every response it generates — proxied or not, including error responses and static files:
 
-```caddy
-# script-src is a strict 'self' (#106): no inline scripts exist, so there is no hash
-# to maintain. Caddy's `header` SETs (replaces) each value, so exactly one canonical
-# copy reaches the client even though the app emits a baseline.
-header {
-	Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; object-src 'none'; form-action 'self'"
-	Strict-Transport-Security "max-age=63072000; includeSubDomains; preload"
-	X-Content-Type-Options "nosniff"
-	X-Frame-Options "DENY"
-	Referrer-Policy "same-origin"
-	Permissions-Policy "accelerometer=(), camera=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), payment=(), usb=()"
-	-Server
-}
+```
+Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; style-src-elem 'self'; style-src-attr 'unsafe-inline'; font-src 'self'; img-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; object-src 'none'; form-action 'self'
+Strict-Transport-Security: max-age=63072000; includeSubDomains; preload   (only when ICEBERG_EBS_SECURE_COOKIES is on — the prod/HTTPS signal)
+X-Content-Type-Options: nosniff
+X-Frame-Options: DENY
+Referrer-Policy: same-origin
+Permissions-Policy: accelerometer=(), camera=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), payment=(), usb=()
 ```
 
-Note on `style-src 'unsafe-inline'`: the templates carry pervasive inline `style="…"` attributes (dynamic widths, token-var colours), which this directive permits. Style injection is not a script-execution vector; tightening it further is tracked with the strict-CSP work (#106). No directive references a third-party origin — every asset is self-hosted (#85).
+Owning the headers app-side means the strict CSP holds on **every** deployment path — behind Caddy, behind the Helm sidecar, or on a bare uvicorn checkout — instead of existing only at the proxy. `tests/test_security_headers.py` and `tests/test_csp_strict.py` assert this set on real responses.
+
+`caddy/headers.caddy` (imported by both Caddyfiles via `import headers.caddy`) is now only a **minimal static fallback** for responses Caddy itself generates and the app never sees — Caddy's own 502 when the app is down, and the :80→HTTPS redirect. Every op in it uses Caddy's `?` (set-if-absent) prefix, so on a proxied response the app's canonical header already exists and the fallback stands down; its CSP is a tiny static deny-all (`default-src 'none'; frame-ancestors 'none'`) that never needs syncing with the app policy. A hard SET must never reappear there — it would clobber the app's canonical values (`tests/test_security_headers.py` enforces ?-only ops), and the block's `defer` is what makes `?` evaluate after the upstream headers are copied. (The Helm ConfigMap embeds a test-guarded mirror because Helm can't read files above the chart; `tests/test_helm_caddy.py` fails if the copies drift.)
+
+Notes on the CSP: `style-src-attr 'unsafe-inline'` permits the templates' pervasive inline `style="…"` attributes (dynamic widths, token-var colours) — style injection is not a script-execution vector — while `style-src-elem 'self'` blocks injected `<style>` elements (no first-party code creates any); the plain `style-src 'self' 'unsafe-inline'` remains as the pre-CSP3 browser fallback. No directive references a third-party origin — every asset is self-hosted (#85) — and `img-src` carries no `data:` source (nothing uses data: URIs).
 
 ---
 
 ## 10. `caddy/Caddyfile` (Compose) and `caddy/Caddyfile.k8s` (Kubernetes)
 
-The Compose Caddyfile terminates TLS on :443, sets the canonical headers, and proxies everything — including `/static`, which the app serves via StaticFiles — to the app (same topology as the K8s sidecar; since #85 the built `output.css` exists only inside the app image, so there is nothing on the host for Caddy to serve). A plain-HTTP :80 site answers the container healthcheck and redirects everything else to HTTPS. The repo files are authoritative — abbreviated here:
+The Compose Caddyfile terminates TLS on :443, imports the fallback headers, and proxies everything — including `/static`, which the app serves via StaticFiles — to the app (same topology as the K8s sidecar; since #85 the built `output.css` exists only inside the app image, so there is nothing on the host for Caddy to serve). A plain-HTTP :80 site answers the container healthcheck and redirects everything else to HTTPS. The repo files are authoritative — abbreviated here:
 
 ```caddy
 {
@@ -572,6 +570,8 @@ The Compose Caddyfile terminates TLS on :443, sets the canonical headers, and pr
 }
 
 :80 {
+	import headers.caddy      # fallback headers on the Caddy-generated redirects too
+
 	handle /caddy-health {
 		respond "ok" 200
 	}
@@ -587,7 +587,7 @@ The Compose Caddyfile terminates TLS on :443, sets the canonical headers, and pr
 	request_body {
 		max_size 2MB           # == nginx client_max_body_size 2m
 	}
-	import headers.caddy      # the single canonical-headers source (section 9)
+	import headers.caddy      # set-if-absent fallback headers (section 9) — the app owns the canonical set
 
 	handle {
 		reverse_proxy app:8000 {
@@ -617,7 +617,7 @@ The Compose Caddyfile terminates TLS on :443, sets the canonical headers, and pr
 5. `Dockerfile`, `.dockerignore`, `.env.example`
 6. `docker-compose.yml`
 7. `caddy/generate-dev-cert.sh`
-8. `caddy/headers.caddy` — the strict same-origin CSP
+8. `caddy/headers.caddy` — the set-if-absent fallback headers (the strict CSP lives in `app/main.py`)
 9. `caddy/Caddyfile` and `caddy/Caddyfile.k8s`
 
 ---
@@ -741,8 +741,8 @@ icebergEbs:
   apiRateLimitEnabled: true   # app-side API rate limit (#188; Caddy has no rate_limit)
   loginRateLimitEnabled: true # app-side POST /login rate limit (#196)
 
-# Caddy edge sidecar (#188): the cluster ingress forwards to it on :8080; it sets the
-# canonical security headers and proxies to the app on localhost:8000.
+# Caddy edge sidecar (#188): the cluster ingress forwards to it on :8080; it proxies to
+# the app on localhost:8000 (the app owns the canonical security headers).
 caddy:
   image:
     repository: caddy
@@ -953,7 +953,7 @@ spec:
 
 ## `helm/iceberg-ebs/templates/ingress.yaml`
 
-The topology is **cluster ingress → in-pod Caddy sidecar (:8080) → app (localhost:8000)** (#188). The ingress still terminates TLS (cert-manager), redirects HTTP→HTTPS, sets body-size/read-timeout, and **rate-limits at the true cluster edge** (`limit-rps`/`limit-connections`). What it no longer does is set security headers: the Caddy sidecar owns the canonical CSP/HSTS/etc. via `caddy/headers.caddy`, so the old `configuration-snippet` CSP (a second copy that had drifted from the Compose one) is gone.
+The topology is **cluster ingress → in-pod Caddy sidecar (:8080) → app (localhost:8000)** (#188). The ingress still terminates TLS (cert-manager), redirects HTTP→HTTPS, sets body-size/read-timeout, and **rate-limits at the true cluster edge** (`limit-rps`/`limit-connections`). What it no longer does is set security headers: the app owns the canonical CSP/HSTS/etc. (`app/main.py:security_headers` — see section 9), the sidecar carries only the set-if-absent fallback, and the old `configuration-snippet` CSP (a second copy that had drifted from the Compose one) is gone.
 
 > **HSTS (operator action, #201):** ingress-nginx's HSTS is a **controller-wide ConfigMap** setting (`hsts`, `hsts-max-age`, `hsts-preload`), **not** a per-Ingress annotation — there is no `nginx.ingress.kubernetes.io/hsts` annotation (an earlier version of this chart set one; it was silently ignored). On a **default** controller (`hsts: true`) the controller emits its own `Strict-Transport-Security` (`max-age=15724800; includeSubDomains`, no preload) which **overrides** the Caddy sidecar's canonical one (`max-age=63072000; includeSubDomains; preload`). To make Caddy's the single copy, set `hsts: "false"` in the **ingress-nginx-controller ConfigMap** (cluster-wide, e.g. via the controller's own Helm values `controller.config.hsts: "false"`). Not a security regression either way — both values enforce HTTPS — but Caddy's stronger, preload-enabled policy only reaches clients once the controller stops setting its own.
 
@@ -969,10 +969,10 @@ metadata:
     nginx.ingress.kubernetes.io/proxy-read-timeout: "120"
     nginx.ingress.kubernetes.io/limit-rps: "2"
     nginx.ingress.kubernetes.io/limit-connections: "20"
-    # Security headers are set by the Caddy sidecar (caddy/headers.caddy), not here — no
+    # Security headers are set by the app (app/main.py:security_headers), not here — no
     # configuration-snippet CSP, and NO per-ingress HSTS annotation (it doesn't exist; #201).
-    # Disable the controller's own HSTS at its ConfigMap (`hsts: "false"`) so Caddy's is the
-    # single copy — see the HSTS note above.
+    # Disable the controller's own HSTS at its ConfigMap (`hsts: "false"`) so the app's is
+    # the single copy — see the HSTS note above.
     {{- if .Values.ingress.certManagerIssuer }}
     cert-manager.io/cluster-issuer: {{ .Values.ingress.certManagerIssuer | quote }}
     {{- end }}
@@ -995,7 +995,7 @@ spec:
                   number: 8080   # the pod's Caddy sidecar (it proxies to the app on 8000)
 ```
 
-`ingressClassName` and the `nginx.ingress.kubernetes.io/*` annotations refer to the **cluster nginx-ingress controller** (unchanged — it sits in front of Caddy). All response security headers now come from the Caddy sidecar; verify with `curl -sI https://your-host/ | grep -i -E "content-security|permissions|strict-transport"`.
+`ingressClassName` and the `nginx.ingress.kubernetes.io/*` annotations refer to the **cluster nginx-ingress controller** (unchanged — it sits in front of Caddy). All response security headers come from the app; verify with `curl -sI https://your-host/ | grep -i -E "content-security|permissions|strict-transport"`.
 
 ---
 

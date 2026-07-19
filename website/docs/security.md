@@ -99,12 +99,14 @@ deployments need no configuration.
 
 ## Headers and CSP
 
-Caddy is the single source of truth for security headers, in both the Compose stack
-and the Kubernetes sidecar:
+The app is the single source of truth for security headers: its outermost
+middleware sets the full canonical set on every response, so the same policy holds
+behind Caddy, behind the Kubernetes sidecar, or on a bare uvicorn deployment:
 
 ```
 Content-Security-Policy: default-src 'self'; script-src 'self';
-  style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data:;
+  style-src 'self' 'unsafe-inline'; style-src-elem 'self';
+  style-src-attr 'unsafe-inline'; font-src 'self'; img-src 'self';
   connect-src 'self'; frame-ancestors 'none'; base-uri 'self';
   object-src 'none'; form-action 'self'
 Strict-Transport-Security: max-age=63072000; includeSubDomains; preload
@@ -114,12 +116,18 @@ Referrer-Policy: same-origin
 Permissions-Policy: (camera, microphone, geolocation, payment, usb, … all denied)
 ```
 
+Caddy keeps only a tiny static **set-if-absent** fallback for responses it
+generates itself (its own 502 when the app is down, the HTTP→HTTPS redirect); on
+every proxied response the app's canonical headers already exist and the fallback
+stands down.
+
 `script-src` is a strict `'self'` — **no** `unsafe-inline`, **no** `unsafe-eval`, and
 no hash allowances. Every asset is self-hosted (no CDN), the frontend uses the
 CSP-safe Alpine build, and there are no inline scripts anywhere in the templates.
-This is enforced two ways in CI: a static test rejects inline `<script>` and `on*=`
-handlers across every template and checks the Caddy config and its Kubernetes mirror
-have not drifted, and a browser-based job boots the full stack and **fails on any
+This is enforced two ways in CI: static tests assert the exact header set on real
+app responses, reject inline `<script>` and `on*=` handlers across every template,
+and require the Caddy fallback to stay set-if-absent only (so it can never clobber
+the app's policy); and a browser-based job boots the full stack and **fails on any
 console error**, which is how a CSP violation that only manifests at runtime gets
 caught.
 
