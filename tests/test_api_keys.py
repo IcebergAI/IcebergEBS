@@ -234,16 +234,18 @@ async def _sso_user_with_key(test_db, *, key_age_days: float = 0.0, username: st
         s.add(user)
         await s.commit()
         await s.refresh(user)
+        # Capture before the ApiKey commit re-expires the instance (expired attribute
+        # access lazy-loads synchronously -> MissingGreenlet under asyncpg).
+        user_id = user.id
         s.add(
             ApiKey(
-                user_id=user.id,
+                user_id=user_id,
                 label="soar",
                 key_hash=hash_api_key(raw_key),
                 created_at=datetime.now(timezone.utc) - timedelta(days=key_age_days),
             )
         )
         await s.commit()
-        user_id = user.id
     return raw_key, user_id
 
 
