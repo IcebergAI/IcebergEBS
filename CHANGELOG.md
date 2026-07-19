@@ -87,6 +87,13 @@ release to diff against.
 
 ### Changed
 
+- **Permission tiers now cover the surveillance/capture family** (#280): `desktopCapture`
+  (arbitrary screen recording) is CRITICAL; `tabCapture`/`audioCapture`/`videoCapture` and
+  `webNavigation` (full browsing-graph telemetry) are HIGH; `privacy`, `sessions`, `topSites`,
+  plain `declarativeNetRequest`, and `clipboardWrite` are MEDIUM. Previously all of these
+  scored **zero** — an extension requesting only screen/tab recording was indistinguishable
+  from one requesting nothing. Extensions carrying these permissions re-score higher on their
+  next refresh, which can move a `risk_level` band (and may fire `risk_level_change` alerts).
 - **Security headers are now owned by the app, not the edge.** The FastAPI `security_headers`
   middleware emits the full canonical set on every response — CSP (`script-src 'self'`), HSTS
   (`max-age=63072000; includeSubDomains; preload`, upgraded from the app's old 1-year no-preload

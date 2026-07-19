@@ -41,6 +41,27 @@ def test_permissions_empty():
     assert score_permissions([], []) == 0
 
 
+def test_permissions_surveillance_family_scores():
+    # The capture/telemetry family must not score zero (#280): screen recording is
+    # critical, tab/audio/video capture and the browsing graph are high, and the
+    # surveillance-adjacent settings/history-ish permissions are medium.
+    assert score_permissions(["desktopCapture"], []) == 25
+    for perm in ("tabCapture", "audioCapture", "videoCapture", "webNavigation"):
+        assert score_permissions([perm], []) == 15, perm
+    for perm in ("privacy", "sessions", "topSites", "declarativeNetRequest", "clipboardWrite"):
+        assert score_permissions([perm], []) == 7, perm
+
+
+def test_permission_tiers_are_disjoint():
+    # A permission in two tiers would classify differently depending on evaluation
+    # order — the #63 drift class inside a single file. Keep the sets disjoint.
+    from app.permissions import CRITICAL_PERMISSIONS, HIGH_PERMISSIONS, MEDIUM_PERMISSIONS
+
+    assert not (CRITICAL_PERMISSIONS & HIGH_PERMISSIONS)
+    assert not (CRITICAL_PERMISSIONS & MEDIUM_PERMISSIONS)
+    assert not (HIGH_PERMISSIONS & MEDIUM_PERMISSIONS)
+
+
 def test_host_permissions_all_urls_critical():
     assert score_permissions([], ["<all_urls>"]) == 25
 
