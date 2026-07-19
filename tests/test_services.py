@@ -20,7 +20,7 @@ from app.inspector import PackageAnalysis
 from app.models import Extension, InstallCountHistory
 from app.scoring import compute_risk_score
 from app.services import _apply_fetch_results, _effective_values, fetch_and_store
-from tests.conftest import make_fake_crx
+from tests.conftest import make_fake_crx, make_zip
 
 RECENT = datetime.now(timezone.utc) - timedelta(days=5)
 
@@ -295,3 +295,73 @@ def test_apply_fetch_results_writes_fresh_values():
     assert json.loads(ext.package_analysis)["host_permissions"] == ["<all_urls>"]
     assert ext.risk_score == _risk().total
     assert ext.last_fetched_at is not None
+
+
+async def test_bomd_manifest_does_not_clobber_permissions_or_fire_a_removal_alert(test_db, admin_user):
+    """#274 end to end.
+
+    A manifest Chrome tolerates but `json.loads` rejects (here a UTF-8 BOM) used
+    to leave `manifest=None` while the analysis object itself stayed truthy — so
+    `_effective_values` took its empty permission list over the stored one,
+    `_apply_fetch_results` wrote `permissions = "[]"`, and the extension lost its
+    permission points *and* fired a spurious `permission_change` "removal".
+    """
+    ext_id = await _make_ext(test_db, admin_user.id)
+    good = make_fake_crx(
+        {
+            "manifest_version": 3,
+            "name": "Test Ext",
+            "version": "1.0.0",
+            "permissions": ["tabs", "webRequest"],
+            "host_permissions": ["<all_urls>"],
+        }
+    )
+    ext, _ = await _fetch(test_db, ext_id, _meta(), pkg=good)
+    assert set(json.loads(ext.permissions)) == {"tabs", "webRequest"}
+    score_before = ext.risk_score
+
+    # Same extension, next refresh: the store now serves a BOM'd manifest.
+    bomd = make_zip(
+        {
+            "manifest.json": "﻿"
+            + json.dumps(
+                {
+                    "manifest_version": 3,
+                    "name": "Test Ext",
+                    "version": "1.0.0",
+                    "permissions": ["tabs", "webRequest"],
+                    "host_permissions": ["<all_urls>"],
+                }
+            ),
+            "background.js": "console.log(1);",
+        }
+    )
+    ext, events = await _fetch(test_db, ext_id, _meta(), pkg=bomd)
+
+    # It parses now, so nothing changed at all.
+    assert set(json.loads(ext.permissions)) == {"tabs", "webRequest"}
+    assert ext.risk_score == score_before
+    assert [e.event for e in events] == []
+
+
+async def test_unparsable_manifest_keeps_stored_permissions(test_db, admin_user):
+    """The guard behind the parse fix: even when a manifest genuinely cannot be
+    read, the stored permissions must survive rather than being zeroed."""
+    ext_id = await _make_ext(test_db, admin_user.id)
+    good = make_fake_crx(
+        {
+            "manifest_version": 3,
+            "name": "Test Ext",
+            "version": "1.0.0",
+            "permissions": ["tabs", "webRequest"],
+            "host_permissions": ["<all_urls>"],
+        }
+    )
+    ext, _ = await _fetch(test_db, ext_id, _meta(), pkg=good)
+    assert set(json.loads(ext.permissions)) == {"tabs", "webRequest"}
+
+    broken = make_zip({"manifest.json": "{ not valid json", "background.js": "console.log(1);"})
+    ext, events = await _fetch(test_db, ext_id, _meta(), pkg=broken)
+
+    assert set(json.loads(ext.permissions)) == {"tabs", "webRequest"}
+    assert "permission_change" not in [e.event for e in events]

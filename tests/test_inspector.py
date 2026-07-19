@@ -3,7 +3,7 @@ from hashlib import sha256
 
 import pytest
 
-from app.inspector import InspectorError, PackageAnalysis, inspect_package
+from app.inspector import InspectorError, PackageAnalysis, _strip_json_comments, inspect_package
 from tests.conftest import make_zip
 
 
@@ -400,16 +400,26 @@ def test_obfuscation_score_two_char_tier():
     assert score == 3
 
 
-def test_oversized_manifest_is_skipped():
+def test_oversized_manifest_raises_rather_than_reporting_no_permissions():
+    """Changed by #274: this used to return an analysis with `permissions == []`
+    and the JS findings.
+
+    That analysis is truthy, so services._effective_values preferred its empty
+    permission list over the stored one — silently zeroing a real extension's
+    permissions and firing a spurious `permission_change` removal alert. An
+    over-limit manifest is the same situation as an unparsable one: the package
+    declares permissions we did not read, so we must not claim it has none.
+    Raising routes it through the keep-stale path, and scoring falls back to the
+    unknown-midpoint rather than a falsely clean zero.
+    """
     data = make_zip(
         {
             "manifest.json": b"{" + (b" " * (1024 * 1024 + 1)) + b"}",
             "background.js": "eval('alert(1)');",
         }
     )
-    result = inspect_package(data)
-    assert result.permissions == []
-    assert "eval_usage" in _finding_codes(result)
+    with pytest.raises(InspectorError, match="unparsable"):
+        inspect_package(data)
 
 
 def test_findings_are_capped():
@@ -914,3 +924,137 @@ def test_duplicate_type_does_not_create_a_false_positive_either():
         }
     )
     assert inspect_package(data).uses_eval is False
+
+
+# --- #274: a tolerated manifest must parse, and an unparsable one must not ------
+#     silently pass off an empty analysis as a real one
+
+
+def test_manifest_with_utf8_bom_is_parsed():
+    """Chrome tolerates a BOM, so BOM'd manifests are live in the stores;
+    `json.loads` on a utf-8-decoded string rejects them outright."""
+    manifest = json.dumps({"manifest_version": 3, "name": "x", "version": "1", "permissions": ["tabs"]})
+    data = make_zip({"manifest.json": "﻿" + manifest})
+    assert inspect_package(data).permissions == ["tabs"]
+
+
+def test_manifest_with_comments_is_parsed():
+    """Chrome also tolerates JS-style comments in manifest.json."""
+    raw = """{
+  // leading line comment
+  "manifest_version": 3,
+  /* block
+     comment */
+  "name": "x",
+  "version": "1",
+  "permissions": ["tabs", "storage"]  // trailing comment
+}"""
+    result = inspect_package(make_zip({"manifest.json": raw}))
+    assert result.permissions == ["tabs", "storage"]
+
+
+def test_comment_stripping_does_not_cut_urls_inside_strings():
+    """A naive strip would cut `"https://example.com"` at the `//`, turning a
+    valid manifest into the very parse error this exists to avoid."""
+    raw = '{"manifest_version": 3, "name": "x", "version": "1", "homepage_url": "https://example.com/a", "permissions": ["tabs"]}'
+    result = inspect_package(make_zip({"manifest.json": raw}))
+    assert result.permissions == ["tabs"]
+
+
+def test_comment_stripping_preserves_escaped_quotes():
+    raw = r'{"manifest_version": 3, "name": "a \" b // not a comment", "version": "1", "permissions": ["tabs"]}'
+    result = inspect_package(make_zip({"manifest.json": raw}))
+    assert result.permissions == ["tabs"]
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "{ this is not json at all",
+        '["a", "list", "not", "an", "object"]',  # valid JSON, wrong shape
+        '"just a string"',
+    ],
+)
+def test_unparsable_manifest_raises_rather_than_zeroing_permissions(body):
+    """The whole point of #274: an analysis with permissions==[] is still truthy,
+    so services._effective_values would prefer it over the stored values and
+    overwrite a real extension's permissions with nothing."""
+    data = make_zip({"manifest.json": body, "bg.js": "console.log(1);"})
+    with pytest.raises(InspectorError):
+        inspect_package(data)
+
+
+def test_package_with_no_manifest_at_all_still_analyses():
+    """Absent is not the same as unparsable — nothing stored can be clobbered by
+    a manifest that was never claimed."""
+    result = inspect_package(make_zip({"bg.js": "eval('x');"}))
+    assert result.uses_eval is True
+    assert result.permissions == []
+
+
+@pytest.mark.parametrize(
+    "package_json",
+    [
+        {"name": "e", "version": "1", "extensionPack": ["ms.python"]},  # extension pack
+        {"name": "e", "version": "1", "main": "./out/ext.js", "activationEvents": ["*"]},  # API-only
+        {"name": "e", "version": "1", "contributes": {}},  # the case that already worked
+    ],
+)
+def test_vscode_package_without_contributes_is_not_flagged_manifest_v2(package_json):
+    """`"contributes" in manifest` missed extension packs and API-only extensions;
+    they fell through to the Chrome path, where manifest_version defaulted to 2
+    and produced a Chrome-specific MV2 finding on a VSIX, worth +2 on the score."""
+    data = make_zip({"extension/package.json": json.dumps(package_json), "extension/out/ext.js": "x=1;"})
+    result = inspect_package(data)
+    assert "manifest_v2" not in _finding_codes(result)
+    assert result.permissions == []
+
+
+def test_vscode_package_identified_by_engines_despite_a_chrome_manifest_filename():
+    """`engines.vscode` is the second signal, for a package whose manifest sits at
+    a Chrome-looking path but is really a VS Code one — there the filename check
+    says "Chrome" and only the body can correct it.
+
+    (Deliberately a root `manifest.json`: that is what `_load_manifest` actually
+    matches. An `extension/manifest.json` is not a candidate at all, so a test
+    using one would pass vacuously — no manifest loaded, hence no finding.)
+    """
+    data = make_zip(
+        {
+            "manifest.json": json.dumps(
+                {"name": "e", "version": "1", "engines": {"vscode": "^1.80.0"}, "main": "./ext.js"}
+            ),
+            "ext.js": "x=1;",
+        }
+    )
+    result = inspect_package(data)
+    assert "manifest_v2" not in _finding_codes(result)
+    assert result.permissions == []
+
+
+def test_a_real_chrome_mv2_extension_is_still_flagged():
+    """The classifier must not swing the other way and stop flagging real MV2."""
+    data = make_zip({"manifest.json": json.dumps({"manifest_version": 2, "name": "x", "version": "1"})})
+    assert "manifest_v2" in _finding_codes(inspect_package(data))
+
+
+@pytest.mark.parametrize(
+    "manifest",
+    [
+        {"manifest_version": 3, "name": "x", "version": "1"},
+        # Strings that look like comments — the stripper must not touch any of them.
+        {"manifest_version": 3, "homepage_url": "https://example.com/a//b", "name": "x", "version": "1"},
+        {"manifest_version": 3, "content_scripts": [{"matches": ["*://*/*", "https://*/*"]}], "version": "1"},
+        {"manifest_version": 3, "description": "uses /* glob */ syntax", "version": "1"},
+        {"manifest_version": 3, "description": 'quote " then // not a comment', "version": "1"},
+        {"manifest_version": 3, "description": "backslash \\ at end", "version": "1"},
+        {"manifest_version": 3, "csp": "script-src 'self' https://cdn.example.com//x", "version": "1"},
+    ],
+)
+def test_comment_stripping_round_trips_valid_json(manifest):
+    """Property check: stripping comments from JSON that has none must be a no-op
+    on the parsed value. The stripper only runs as a fallback, but a bug here
+    would turn a *valid* manifest into an InspectorError — the keep-stale path —
+    and quietly freeze that extension's analysis."""
+    text = json.dumps(manifest)
+    assert json.loads(_strip_json_comments(text)) == manifest
