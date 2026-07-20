@@ -36,10 +36,11 @@ that exercise the transport without the app lifecycle.
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass
 from enum import StrEnum
 from ipaddress import ip_address, ip_network
-from urllib.parse import quote, urlsplit, urlunsplit
+from urllib.parse import quote, unquote, urlsplit, urlunsplit
 
 from app.config import Settings, settings
 
@@ -213,14 +214,86 @@ def validate_proxy_settings(s: Settings | None = None) -> None:
             )
 
 
+_URL_USERINFO_RE = re.compile(r"(?<=://)[^/@\s]+(?=@)")
+
+
+def _redact_secret(text: str, secret: str, *, decoded: bool = False) -> str:
+    """Replace every spelling of ``secret`` in ``text`` with ``***``.
+
+    scrub() runs inside every egress error handler, so it must never raise on
+    hostile input. ``quote()``/``unquote()`` can fail on pathological values —
+    a proxy env var may carry surrogate-escaped bytes (invalid UTF-8 decoded by
+    ``os.environ`` via ``surrogateescape``, e.g. ``\\udcff``), which ``urlsplit``
+    accepts but ``quote`` rejects with ``UnicodeEncodeError``. A spelling that
+    can't be built is skipped; the raw form is always redacted. ``str.replace``
+    is total on any ``str``.
+
+    ``decoded`` also redacts the ``unquote`` spelling — used **only** for env-URL
+    userinfo, which urlsplit keeps percent-encoded while an exception message may
+    carry the decoded form. It is deliberately **not** applied to the explicit
+    credentials: unquoting a %-shaped credential (e.g. ``%2F`` → ``/``) would
+    inject a structural char whose replacement could dismantle URL syntax and
+    disable the generic backstop (#228 review). scrub() also runs that backstop
+    first, so it can never be undone by a later secret-form replacement.
+    """
+    if not secret:
+        return text
+    forms = [secret]
+    builders = [lambda s: quote(s, safe="")]
+    if decoded:
+        builders.append(unquote)
+    for build in builders:
+        try:
+            forms.append(build(secret))
+        except (UnicodeError, ValueError):
+            continue
+    for form in forms:
+        text = text.replace(form, "***")
+    return text
+
+
 def scrub(text: str) -> str:
     """Redact any credential the exception text may have echoed back.
 
     httpx exception messages can embed the proxy URL, and the resolved URL
-    carries the env-only credentials — never let the raw string reach a log line.
+    carries credentials — never let the raw string reach a log line or a
+    persisted error column. Three layers (#228):
+
+    - the explicit ``ICEBERG_EBS_PROXY_USERNAME``/``_PASSWORD`` values (raw and
+      %-quoted), the EXPLICIT-mode credentials;
+    - userinfo carried inside the proxy env vars themselves — in SYSTEM mode
+      (the default) the resolved proxy URL is the raw ``HTTP(S)_PROXY``/
+      ``ALL_PROXY`` value, whose embedded credentials the settings-based pass
+      cannot see;
+    - a generic ``scheme://user:pass@`` strip as the backstop for any other URL
+      userinfo the message may carry.
+
+    The generic backstop runs **first**, so no later secret-form replacement (a
+    decoded credential can collapse to a structural char like ``/``) can dismantle
+    the ``://…@`` syntax it relies on and disable it (#228 review). Every credential
+    spelling is then redacted through :func:`_redact_secret`, which keeps scrub()
+    total against hostile env input (malformed URLs, surrogate escapes) — the
+    sanitizer in an error path must not itself raise.
     """
+    # Generic backstop first (see above) — it can't be undone by a later pass.
+    text = _URL_USERINFO_RE.sub("***", text)
+    # Explicit EXPLICIT-mode credentials: raw + %-quoted only (no decoded form).
     for secret in (settings.proxy_password.get_secret_value(), settings.proxy_username):
-        if secret:
-            text = text.replace(secret, "***")
-            text = text.replace(quote(secret, safe=""), "***")
+        text = _redact_secret(text, secret)
+    # SYSTEM-mode env userinfo: urlsplit keeps it percent-encoded, but a message
+    # may carry the decoded spelling too — include it (decoded=True).
+    for env_name in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy"):
+        raw = os.environ.get(env_name, "").strip()
+        if not raw:
+            continue
+        try:
+            parsed = urlsplit(raw)
+        except ValueError:
+            # A malformed proxy env value (e.g. the unterminated IPv6 literal
+            # ``http://[``) makes urlsplit raise ValueError. Skip this var's
+            # userinfo pass — the backstop above already redacted URL userinfo.
+            continue
+        for env_secret in (parsed.password, parsed.username):
+            if env_secret:
+                text = _redact_secret(text, env_secret, decoded=True)
     return text

@@ -278,6 +278,88 @@ def test_scrub_redacts_raw_and_encoded_credentials(monkeypatch):
     assert "p%40ss%20word" not in scrubbed
 
 
+def test_scrub_redacts_system_mode_env_credentials(monkeypatch):
+    # SYSTEM mode (the default) resolves the raw HTTP(S)_PROXY/ALL_PROXY env value,
+    # whose embedded userinfo never touches settings.proxy_username/password — scrub
+    # must read the env too, or the one scrubbed sink is unsafe in the default mode (#228).
+    monkeypatch.setattr(settings, "proxy_username", "")
+    monkeypatch.setattr(settings, "proxy_password", SecretStr(""))
+    monkeypatch.setenv("HTTPS_PROXY", "http://carol:t0p%20secret@proxy.corp:3128")
+    text = "ProxyError connecting via http://carol:t0p%20secret@proxy.corp:3128 as carol / t0p secret"
+    scrubbed = proxy.scrub(text)
+    assert "carol" not in scrubbed
+    assert "t0p secret" not in scrubbed
+    assert "t0p%20secret" not in scrubbed
+
+
+def test_scrub_strips_any_url_userinfo_as_backstop(monkeypatch):
+    # Even with no configured credentials anywhere, a scheme://user:pass@ in the text
+    # (e.g. httpx.Proxy's "Unknown scheme for proxy URL {url!r}") must not survive (#228).
+    monkeypatch.setattr(settings, "proxy_username", "")
+    monkeypatch.setattr(settings, "proxy_password", SecretStr(""))
+    for env in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy"):
+        monkeypatch.delenv(env, raising=False)
+    scrubbed = proxy.scrub("Unknown scheme for proxy URL 'socks5://eve:pw123@203.0.113.9:1080'")
+    assert "eve" not in scrubbed
+    assert "pw123" not in scrubbed
+    assert "203.0.113.9" in scrubbed  # only the userinfo is redacted, not the host
+
+
+def test_scrub_survives_malformed_proxy_env(monkeypatch):
+    # scrub() runs inside every egress error handler, so a malformed proxy env value
+    # (urlsplit('http://[') raises ValueError: Invalid IPv6 URL) must not turn a handled
+    # failure into a 500 / aborted error-record — it stays total and the generic
+    # scheme://user:pass@ backstop still redacts the text (#228).
+    monkeypatch.setattr(settings, "proxy_username", "")
+    monkeypatch.setattr(settings, "proxy_password", SecretStr(""))
+    monkeypatch.setenv("HTTPS_PROXY", "http://[")
+    scrubbed = proxy.scrub("ProxyError via http://dave:sekret@proxy.corp:3128")
+    assert "dave" not in scrubbed
+    assert "sekret" not in scrubbed
+    assert "proxy.corp" in scrubbed  # host preserved; only userinfo redacted
+
+
+def test_scrub_survives_surrogateescape_proxy_env(monkeypatch):
+    # os.environ decodes invalid UTF-8 bytes via surrogateescape, so a proxy env
+    # value can carry a lone surrogate (\udcff). urlsplit() accepts it, but
+    # quote(secret) raises UnicodeEncodeError — scrub() must stay total and still
+    # redact the credential (#228).
+    monkeypatch.setattr(settings, "proxy_username", "")
+    monkeypatch.setattr(settings, "proxy_password", SecretStr(""))
+    secret = "s\udcffcret"
+    monkeypatch.setenv("HTTPS_PROXY", f"http://user:{secret}@proxy.corp:3128")
+    scrubbed = proxy.scrub(f"ProxyError via http://user:{secret}@proxy.corp:3128")
+    assert secret not in scrubbed
+    assert "proxy.corp" in scrubbed  # host preserved; only userinfo redacted
+
+
+def test_scrub_survives_surrogateescape_explicit_credentials(monkeypatch):
+    # The same surrogate-escape hazard applies to the explicit EXPLICIT-mode
+    # credentials, whose quote() spelling scrub() also builds (#228).
+    monkeypatch.setattr(settings, "proxy_username", "user")
+    monkeypatch.setattr(settings, "proxy_password", SecretStr("p\udcffss"))
+    for env in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy"):
+        monkeypatch.delenv(env, raising=False)
+    scrubbed = proxy.scrub("ProxyError authenticating user with p\udcffss")
+    assert "p\udcffss" not in scrubbed
+
+
+def test_scrub_percent_shaped_explicit_credential_keeps_backstop(monkeypatch):
+    # A %-shaped explicit credential (e.g. %2F) must not disable the generic
+    # URL-userinfo backstop: unquote(%2F)=='/' as a redaction form would replace
+    # every slash, destroying '://' before the backstop runs and leaking
+    # unrelated userinfo. scrub() applies no decoded form to explicit creds and
+    # runs the backstop first, so unrelated userinfo is still redacted (#228 review).
+    monkeypatch.setattr(settings, "proxy_username", "")
+    monkeypatch.setattr(settings, "proxy_password", SecretStr("%2F"))
+    for env in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy"):
+        monkeypatch.delenv(env, raising=False)
+    scrubbed = proxy.scrub("ProxyError via http://eve:pw123@proxy.corp:3128")
+    assert "eve" not in scrubbed
+    assert "pw123" not in scrubbed
+    assert "proxy.corp" in scrubbed  # backstop still redacted the userinfo
+
+
 # ---------------------------------------------------------------------------
 # ProxyRoutingTransport
 # ---------------------------------------------------------------------------

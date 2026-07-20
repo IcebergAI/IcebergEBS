@@ -8,6 +8,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
+from app import proxy
 from app.config import settings
 from app.database import engine
 from app.fetchers.base import FetchError
@@ -93,13 +94,17 @@ async def _refresh_one(ext_id: int, client: httpx.AsyncClient) -> _Outcome:
             # httpx.TransportError propagated after RetryTransport exhausted its retries
             # (connect refused, timeout, read/write error). Both are evidence the *store*
             # is unreachable, so they count toward the circuit breaker.
-            logger.warning("Fetch failed for %s/%s: %s", ext.store, ext.extension_id, exc)
+            # Scrub before logging AND before persisting: a proxy-layer failure can
+            # echo the credential-injected proxy URL, and error_message is rendered
+            # on the dashboard/detail pages to non-admin owners (#228).
+            error_message = proxy.scrub(str(exc))
+            logger.warning("Fetch failed for %s/%s: %s", ext.store, ext.extension_id, error_message)
             await session.rollback()
             session.add(
                 FetchLog(
                     extension_id=ext_id,
                     success=False,
-                    error_message=str(exc),
+                    error_message=error_message,
                     risk_score_before=score_before,
                 )
             )

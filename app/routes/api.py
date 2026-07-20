@@ -16,6 +16,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
+from app import proxy
 from app.database import engine
 from app.deps import CurrentUser, SessionDep, get_owned_or_404
 from app.extension_queries import ExtensionFilters, build_extension_query, count_rows, exposure
@@ -393,12 +394,15 @@ async def _fetch_and_score(
         # needed. Match the scheduler's _refresh_one so the interactive path also records
         # a failure FetchLog (visible to the dashboard's fetch-health) and returns a 502
         # rather than a raw 500 (#148).
-        logger.warning("Fetch failed for extension %d: %s", ext.id, exc)
+        # Scrub before logging AND persisting (#228): a proxy-layer failure can echo
+        # the credential-injected proxy URL, and error_message is rendered to owners.
+        error_message = proxy.scrub(str(exc))
+        logger.warning("Fetch failed for extension %d: %s", ext.id, error_message)
         session.add(
             FetchLog(
                 extension_id=ext.id,
                 success=False,
-                error_message=str(exc),
+                error_message=error_message,
                 risk_score_before=score_before,
             )
         )

@@ -443,3 +443,25 @@ async def test_edge_fetch_404():
         fetcher = EdgeFetcher(client)
         with pytest.raises(FetchError):
             await fetcher.fetch_metadata("doesnotexist")
+
+
+@respx.mock
+async def test_package_download_failure_log_is_scrubbed(caplog):
+    # The best-effort package paths log the raw exception; a proxy-layer failure can
+    # echo the credential-injected proxy URL there (#228 review).
+    import logging
+    from unittest.mock import AsyncMock, patch
+
+    respx.get("https://chromewebstore.google.com/detail/cjpalhdlnbpafiamejdnhcphjbkeiagm").mock(
+        return_value=httpx.Response(200, text=CHROME_HTML)
+    )
+    async with httpx.AsyncClient() as client:
+        fetcher = ChromeFetcher(client)
+        leaky = httpx.ProxyError("CONNECT via http://bob:hunter2@proxy.corp:3128 refused")
+        with patch.object(fetcher, "download_package", AsyncMock(side_effect=leaky)):
+            with caplog.at_level(logging.WARNING):
+                metadata, package = await fetcher.fetch("cjpalhdlnbpafiamejdnhcphjbkeiagm")
+    assert package is None
+    assert "hunter2" not in caplog.text
+    assert "bob:" not in caplog.text
+    assert "proxy.corp" in caplog.text  # only the userinfo is redacted

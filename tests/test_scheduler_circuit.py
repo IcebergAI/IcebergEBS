@@ -71,6 +71,43 @@ def test_internal_error_outcome_is_neutral():
     assert not b.is_open("chrome")
 
 
+async def test_fetch_failure_error_message_is_scrubbed(test_db, admin_user, monkeypatch):
+    # FetchLog.error_message is rendered to non-admin owners on the dashboard and
+    # detail pages; a proxy-layer failure can echo the credential-injected proxy URL
+    # in the exception text, so it must pass proxy.scrub before persisting (#228).
+    monkeypatch.setattr(scheduler, "engine", test_db)
+
+    async with AsyncSession(test_db) as s:
+        s.add(
+            Extension(
+                user_id=admin_user.id,
+                store="vscode",
+                extension_id="pub.scrubme",
+                name="Scrub Me",
+                publisher="pub",
+                version="1.0",
+                store_url="https://example.com",
+                risk_score=10,
+                watchlist=True,
+            )
+        )
+        await s.commit()
+
+    leaky = FetchError("CONNECT via http://bob:hunter2@proxy.corp:3128 failed")
+    with patch("app.fetchers.VSCodeFetcher") as MockFetcher:
+        MockFetcher.return_value.fetch = AsyncMock(side_effect=leaky)
+        async with httpx.AsyncClient() as http:
+            await scheduler.refresh_watchlist(http)
+
+    async with AsyncSession(test_db) as s:
+        logs = (await s.exec(select(FetchLog))).all()
+    assert len(logs) == 1
+    assert logs[0].success is False
+    assert "hunter2" not in logs[0].error_message
+    assert "bob" not in logs[0].error_message
+    assert "proxy.corp" in logs[0].error_message  # only the userinfo is redacted
+
+
 # ---- integration: refresh_watchlist records store outages ------------------
 
 

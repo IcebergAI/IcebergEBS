@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
+from app import proxy
 from app.config import settings
 from app.models import AlertDestination, AlertLog, AlertRule, Extension
 from app.scoring import risk_level as _risk_level
@@ -228,13 +229,17 @@ async def fire_alerts(
                     )
                 except Exception as exc:
                     success = False
-                    error = str(exc)[:2000]
+                    # Scrub before persisting AND logging: delivery through the
+                    # outbound proxy can echo the credential-injected proxy URL,
+                    # and AlertLog.error is returned by GET /api/alerts/log and
+                    # rendered in the UI (#228).
+                    error = proxy.scrub(str(exc))[:2000]
                     logger.warning(
                         "Alert webhook failed: event=%s ext=%d dest=%d error=%s",
                         event.event_type,
                         extension.id,
                         dest.id,
-                        exc,
+                        error,
                     )
 
                 session.add(

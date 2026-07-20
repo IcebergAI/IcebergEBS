@@ -225,6 +225,15 @@ release to diff against.
 
 ### Fixed
 
+- **Proxy credentials can no longer leak through persisted or logged error text** (#228).
+  `proxy.scrub` was applied at exactly one sink (the admin connectivity test) and only knew the
+  explicit `ICEBERG_EBS_PROXY_USERNAME`/`_PASSWORD` values — in the default SYSTEM mode the
+  resolved proxy URL is the raw `HTTP(S)_PROXY`/`ALL_PROXY` env value whose embedded userinfo
+  passed through untouched. `scrub` now also redacts env-carried credentials and generically
+  strips any `scheme://user:pass@` userinfo, and is applied at every sink that can see a
+  proxy-layer exception: the transport retry log, the scheduler's log + persisted
+  `FetchLog.error_message` (rendered to non-admin owners), and `fire_alerts`' persisted
+  `AlertLog.error` (returned by the API and rendered in the UI).
 - **Detail-page permission badges no longer contradict the score** (#281). The template
   hand-copied the permission-tier sets and had drifted: `declarativeNetRequestWithHostAccess`
   (CRITICAL — maxes the permissions score), `pageCapture` (HIGH), and the `*://*/*` broad-host

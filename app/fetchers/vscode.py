@@ -3,6 +3,7 @@ from datetime import datetime
 
 import httpx
 
+from app import proxy
 from app.fetchers.base import BaseFetcher, ExtensionMetadata, FetchError
 
 logger = logging.getLogger(__name__)
@@ -95,7 +96,8 @@ class VSCodeFetcher(BaseFetcher):
             logger.warning(
                 "VS Code VSIX download failed for %s (%s) — JS analysis skipped",
                 extension_id,
-                exc,
+                # A proxy-layer failure can echo the credential-injected proxy URL (#228).
+                proxy.scrub(str(exc)),
             )
             package = None
         return metadata, package
