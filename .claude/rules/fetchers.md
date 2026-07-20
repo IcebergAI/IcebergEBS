@@ -11,7 +11,7 @@ paths:
 - Scrapes `https://chromewebstore.google.com/detail/{extension_id}?hl=en` with BeautifulSoup4 — the `hl=en` pin + `Accept-Language: en-US,en` header are load-bearing (#279): Google localizes by egress IP, and the label lookups + English-month `_parse_date` silently break on a localized page (staleness then scores 10 "unknown" forever)
 - Publisher extracted via `_find_detail_value(soup, "offered by")` — finds text node then reads next sibling element
 - Last updated extracted via `_find_detail_value(soup, "updated")` then `_parse_date()`
-- Version extracted via `_find_detail_value(soup, "version", exact=True)` (exact label match, so description prose containing "Version" can't hijack it, #279), validated against `[0-9][0-9.]*`; the whole-visible-page regex remains as fallback for pages carrying only the inline "Version: x.y.z" form
+- Version extracted via `_find_detail_value(soup, "version", exact=True)` (exact label match, so description prose containing "Version" can't hijack it, #279), validated against `[0-9][0-9.]*`; the fallback for pages carrying only the inline "Version: x.y.z" form matches **per text node, anchored** (`re.fullmatch(r"Version\s*:\s*…")` over `stripped_strings`) — the version must be essentially the whole node, so a description/What's-new sentence that merely embeds "Version: 9.9.9 …" can't win the search, even with a colon (#279). Never reintroduce a whole-visible-page `re.search` here
 - Downloads CRX from `clients2.google.com/service/update2/crx`
 - CRX3 format: a binary header precedes the zip payload. The fetchers download the raw CRX as-is; the header is stripped downstream by `inspector._zip_payload()`, which seeks the `PK\x03\x04` zip magic before reading the archive (the fetchers do **not** pre-strip it)
 

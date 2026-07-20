@@ -69,26 +69,29 @@ def _parse_page(html: str, extension_id: str, url: str) -> ExtensionMetadata:
     if not re.fullmatch(r"[0-9][0-9.]*", version):
         version = ""
 
-    # The version and user-count regexes take the FIRST match, so they must
-    # only see *visible* page text: the raw document's <head> meta description
-    # (an attribute, invisible to get_text) and body <script> JSON blobs both
-    # re-embed the description, where e.g. "Join 1,000,000 users" would hijack
-    # the real count (#142). Decompose scripts/styles last — the soup-based
-    # extractions above are done with it.
+    # The user-count regex takes the FIRST match, so it must only see *visible*
+    # page text: the raw document's <head> meta description (an attribute, invisible
+    # to get_text) and body <script> JSON blobs both re-embed the description, where
+    # e.g. "Join 1,000,000 users" would hijack the real count (#142). Decompose
+    # scripts/styles last — the soup-based extractions above are done with it.
     for tag in soup.find_all(["script", "style"]):
         tag.decompose()
-    visible = soup.get_text(" ")
 
     if not version:
         # Fallback for pages carrying only the inline "Version: x.y.z" form (no
-        # label/value split for exact-label lookup). Require the COLON separator
-        # (#279 review): a whitespace-tolerant `Version[:\s]+` still let earlier
-        # description prose like "New in Version 9.9.9" win over the real
-        # "Version: 1.54.0", reproducing the very hijack this fix targets.
-        version_m = re.search(r"Version\s*:\s*([0-9][0-9.]*)", visible)
-        if version_m:
-            version = version_m.group(1)
+        # label/value split for exact-label lookup). Match per text NODE, anchored
+        # (#279 review): the version must be essentially the WHOLE node
+        # ("Version: 1.54.0"), so description / What's-new prose that merely embeds
+        # "Version: 9.9.9 …" inside a longer sentence can't hijack it — even when
+        # that prose uses a colon. Searching the combined visible page and taking
+        # the first "Version:" match let earlier prose win.
+        for fragment in soup.stripped_strings:
+            version_m = re.fullmatch(r"Version\s*:\s*([0-9][0-9.]*)", fragment)
+            if version_m:
+                version = version_m.group(1)
+                break
 
+    visible = soup.get_text(" ")
     install_count = None
     count_m = re.search(r"([\d,]+)\s+users?", visible, re.IGNORECASE)
     if count_m:
