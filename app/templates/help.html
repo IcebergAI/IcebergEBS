@@ -182,8 +182,14 @@
     </p>
     <ul class="text-[13.5px] leading-relaxed pl-5 list-disc" style="color:var(--ink-soft)">
       <li>The full key is shown <strong>once</strong> at creation — only a prefix/suffix is stored for display.</li>
+      <li>Creating a key requires signing in interactively — a bearer token <strong>cannot</strong> mint another
+          key, so a key can't renew itself past its lifetime.</li>
       <li>Keys can be <strong>read-only</strong>: they work for GET requests and are rejected (403) for anything state-changing.</li>
       <li>Changing your password revokes all of your API keys along with other-device sessions.</li>
+      <li>Keys owned by <strong>single sign-on</strong> accounts expire a bounded number of days after
+          creation (default 30; <span class="mono">ICEBERG_EBS_API_KEY_SSO_MAX_AGE_DAYS</span>) — an
+          IdP-side offboarding can't reach the app, so the lifetime bound is what contains those
+          tokens. Re-create the key to keep an integration running.</li>
     </ul>
   </div>
 

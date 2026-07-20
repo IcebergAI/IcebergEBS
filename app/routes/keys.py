@@ -6,7 +6,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlmodel import select
 
 from app.auth import generate_api_key, hash_api_key
-from app.deps import CurrentUser, SessionDep, get_owned_or_404
+from app.deps import CurrentUser, SessionDep, SessionUser, get_owned_or_404
 from app.models import ApiKey
 
 router = APIRouter(prefix="/api", tags=["api-keys"])
@@ -47,9 +47,12 @@ async def list_keys(
 @router.post("/keys", status_code=201)
 async def create_key(
     body: ApiKeyCreateIn,
-    current_user: CurrentUser,
+    current_user: SessionUser,
     session: SessionDep,
 ) -> ApiKeyCreateOut:
+    # SessionUser (not CurrentUser): key creation requires an interactive session,
+    # so a Bearer key can't mint a replacement and let an SSO key outlive its cap
+    # (#278 review).
     raw_key = generate_api_key()
     key_prefix = raw_key[:12]
     key_suffix = raw_key[-4:]

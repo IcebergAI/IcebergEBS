@@ -1,9 +1,12 @@
 """Tests for M2M API key creation, listing, revocation, and authentication."""
 
+from datetime import datetime, timedelta, timezone
+
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.auth import generate_api_key, hash_api_key
+from app.config import settings
 from app.models import ApiKey, User
 from tests.conftest import cached_password_hash
 
@@ -206,6 +209,148 @@ async def test_readonly_key_blocks_delete(readonly_api_key_client, test_db, admi
     assert r.status_code == 403
 
 
+async def test_bearer_key_cannot_create_key(api_key_client):
+    # Key creation is session-only (#278 review): a Bearer-authenticated key must
+    # not mint a replacement, or an SSO key could self-renew past its bounded
+    # lifetime and persist forever, defeating offboarding containment.
+    r = await api_key_client.post("/api/keys", json={"label": "renewal"})
+    assert r.status_code == 401
+    assert "session" in r.json()["detail"].lower()
+
+
 async def test_readonly_key_blocks_creating_new_key(readonly_api_key_client):
+    # Bearer key creation is rejected outright (session-only) — a read-only key is
+    # doubly barred. 401 (session required), not 403 (read-only), since the Bearer
+    # path never reaches the readonly check for this route now (#278 review).
     r = await readonly_api_key_client.post("/api/keys", json={"label": "new-key"})
-    assert r.status_code == 403
+    assert r.status_code == 401
+
+
+# ---------------------------------------------------------------------------
+# SSO revocation controls on the bearer path (#278)
+# ---------------------------------------------------------------------------
+
+
+async def _sso_user_with_key(test_db, *, key_age_days: float = 0.0, username: str = "ssokey"):
+    """Seed an SSO-provisioned user (no local password) owning one API key."""
+    raw_key = generate_api_key()
+    # Model reality: an SSO account's password_changed_at is set at provisioning,
+    # before any key it later mints — so the revocation cutoff (created_at >=
+    # password_changed_at) passes and the SSO-age fence is what a stale key trips.
+    # Align the marker to the key's creation time; leaving it at the default "now"
+    # while backdating only the key would trip the revocation fence first.
+    created = datetime.now(timezone.utc) - timedelta(days=key_age_days)
+    async with AsyncSession(test_db) as s:
+        user = User(
+            username=username,
+            password_hash=None,
+            oidc_subject=f"sub-{username}",
+            auth_provider="authentik",
+            oidc_issuer="https://idp.test/",
+            role_managed_by_idp=True,
+            password_changed_at=created,
+        )
+        s.add(user)
+        await s.commit()
+        await s.refresh(user)
+        # Capture before the ApiKey commit re-expires the instance (expired attribute
+        # access lazy-loads synchronously -> MissingGreenlet under asyncpg).
+        user_id = user.id
+        s.add(
+            ApiKey(
+                user_id=user_id,
+                label="soar",
+                key_hash=hash_api_key(raw_key),
+                created_at=created,
+            )
+        )
+        await s.commit()
+    return raw_key, user_id
+
+
+async def test_sso_key_older_than_cap_is_rejected(anon_client, test_db):
+    # Mirrors test_sso_session_expired_is_rejected for the bearer path (#278): an
+    # offboarded SSO user's key must die within the bounded lifetime, because no
+    # app-side event will ever revoke it.
+    raw_key, _ = await _sso_user_with_key(test_db, key_age_days=settings.api_key_sso_max_age_days + 1)
+    r = await anon_client.get("/api/extensions", headers={"Authorization": f"Bearer {raw_key}"})
+    assert r.status_code == 401
+    assert "expired" in r.json()["detail"].lower()
+
+
+async def test_sso_key_within_cap_is_accepted(anon_client, test_db):
+    raw_key, _ = await _sso_user_with_key(test_db, key_age_days=1, username="ssofresh")
+    r = await anon_client.get("/api/extensions", headers={"Authorization": f"Bearer {raw_key}"})
+    assert r.status_code == 200
+
+
+async def test_local_key_unaffected_by_sso_cap(anon_client, test_db):
+    # Local accounts keep unbounded keys — their revocation path is change_password,
+    # which deletes keys outright.
+    raw_key = generate_api_key()
+    old = datetime.now(timezone.utc) - timedelta(days=400)
+    async with AsyncSession(test_db) as s:
+        # password_changed_at at/ before the key so the revocation cutoff passes —
+        # the point of this test is that the SSO-age fence does not apply to a local
+        # account, not that the generic revocation cutoff rejects an old key.
+        user = User(
+            username="localkey",
+            password_hash=cached_password_hash("pw12345678"),
+            password_changed_at=old,
+        )
+        s.add(user)
+        await s.commit()
+        await s.refresh(user)
+        s.add(
+            ApiKey(
+                user_id=user.id,
+                label="old-local",
+                key_hash=hash_api_key(raw_key),
+                created_at=old,
+            )
+        )
+        await s.commit()
+    r = await anon_client.get("/api/extensions", headers={"Authorization": f"Bearer {raw_key}"})
+    assert r.status_code == 200
+
+
+async def test_key_minted_before_password_change_is_rejected(anon_client, test_db):
+    # The password_changed_at marker is the generic revocation cutoff (#32): the
+    # IdP-driven sync bumps it to revoke sessions — keys must fall with them
+    # instead of surviving as a side door (#278).
+    raw_key, user_id = await _sso_user_with_key(test_db, key_age_days=2, username="ssobumped")
+    async with AsyncSession(test_db) as s:
+        user = await s.get(User, user_id)
+        user.password_changed_at = datetime.now(timezone.utc) - timedelta(days=1)
+        s.add(user)
+        await s.commit()
+    r = await anon_client.get("/api/extensions", headers={"Authorization": f"Bearer {raw_key}"})
+    assert r.status_code == 401
+    assert "revoked" in r.json()["detail"].lower()
+
+
+async def test_key_created_sub_second_before_password_change_is_rejected(anon_client, test_db):
+    # ApiKey.created_at keeps microsecond precision, so unlike the cookie cutoff
+    # there is no 1s tolerance: a key minted 500ms before password_changed_at is
+    # revoked, not accepted until its age cap (#278 review).
+    raw_key = generate_api_key()
+    base = datetime.now(timezone.utc) - timedelta(days=1)
+    async with AsyncSession(test_db) as s:
+        user = User(
+            username="subsec",
+            password_hash=None,
+            oidc_subject="sub-subsec",
+            auth_provider="authentik",
+            oidc_issuer="https://idp.test/",
+            role_managed_by_idp=True,
+            password_changed_at=base + timedelta(milliseconds=500),
+        )
+        s.add(user)
+        await s.commit()
+        await s.refresh(user)
+        user_id = user.id
+        s.add(ApiKey(user_id=user_id, label="soar", key_hash=hash_api_key(raw_key), created_at=base))
+        await s.commit()
+    r = await anon_client.get("/api/extensions", headers={"Authorization": f"Bearer {raw_key}"})
+    assert r.status_code == 401
+    assert "revoked" in r.json()["detail"].lower()

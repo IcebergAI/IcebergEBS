@@ -20,6 +20,19 @@ release to diff against.
 
 ### Added
 
+- **API keys now fall under the SSO revocation controls** (#278). Bearer keys sat outside
+  every session-revocation mechanism: an employee offboarded by disabling their IdP account
+  lost their session within the hour (#221) but their API key worked **forever**, with no
+  app-side signal. Two fences on the bearer path: keys minted before the user's
+  `password_changed_at` are rejected (so the IdP-driven marker bump that already revokes
+  cookies now revokes bearer tokens too), and SSO-owned keys expire a bounded number of days
+  after creation (`ICEBERG_EBS_API_KEY_SSO_MAX_AGE_DAYS`, default 30, forwarded in both deploy
+  stacks; 0 disables). Local accounts are unaffected — their keys are still deleted outright on
+  password change. Key **creation** now requires an interactive session — a bearer key can no
+  longer mint a replacement, so an SSO key can't self-renew past its lifetime. The revocation
+  cutoff uses a strict timestamp compare (no cookie-style 1s tolerance, since `created_at` keeps
+  microsecond precision).
+
 - **Public documentation site** under `website/`, built with Zensical and deployed to
   GitHub Pages at https://icebergai.github.io/IcebergEBS/ by `.github/workflows/docs.yml`
   (pinned `zensical` version; the job holds `pages: write` + `id-token: write`). Styled to
