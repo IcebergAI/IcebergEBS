@@ -521,20 +521,29 @@ CHROME_HTML_DESCRIPTION_PROSE_AND_INLINE_VERSION = """
 <html><head><meta name="description" content="Best ad blocker"></head>
 <body>
 <h1>uBlock Origin</h1>
-<p>What's new — Version: 9.9.9 improves everything!</p>
+<p>What's new</p>
+<p>Version: 9.9.9</p>
+<div>
+  <div>Offered by</div>
+  <div>gorhill</div>
+</div>
+<div>
+  <div>Updated</div>
+  <div>January 10, 2024</div>
+</div>
+<div>Version: 1.54.0</div>
 <div>10,000,000 users</div>
-<p>Version: 1.54.0</p>
 </body></html>
 """
 
 
 @respx.mock
-async def test_chrome_inline_version_fallback_not_hijacked_by_description_prose():
-    # The combined case (#279 review): no Details label/value split, so exact-label
-    # extraction returns empty and the inline fallback runs — but a colon-bearing
-    # description sentence "Version: 9.9.9 improves everything" precedes the real
-    # "Version: 1.54.0". Anchored per-node matching means the embedding sentence can't
-    # win: only the standalone "Version: 1.54.0" node matches.
+async def test_chrome_inline_version_not_hijacked_by_earlier_version_node():
+    # The hardest case (#279 review): a standalone "Version: 9.9.9" prose node in the
+    # What's-new section renders BEFORE the Details region, which also carries the real
+    # inline "Version: 1.54.0". A plain document-order scan would take 9.9.9 first.
+    # Anchoring the inline search to the Details labels (Updated / Offered by) — which
+    # render after the description — means only the real version is in scope.
     respx.get("https://chromewebstore.google.com/detail/cjpalhdlnbpafiamejdnhcphjbkeiagm").mock(
         return_value=httpx.Response(200, text=CHROME_HTML_DESCRIPTION_PROSE_AND_INLINE_VERSION)
     )

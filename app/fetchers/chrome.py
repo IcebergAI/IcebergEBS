@@ -78,18 +78,25 @@ def _parse_page(html: str, extension_id: str, url: str) -> ExtensionMetadata:
         tag.decompose()
 
     if not version:
-        # Fallback for pages carrying only the inline "Version: x.y.z" form (no
-        # label/value split for exact-label lookup). Match per text NODE, anchored
-        # (#279 review): the version must be essentially the WHOLE node
-        # ("Version: 1.54.0"), so description / What's-new prose that merely embeds
-        # "Version: 9.9.9 …" inside a longer sentence can't hijack it — even when
-        # that prose uses a colon. Searching the combined visible page and taking
-        # the first "Version:" match let earlier prose win.
-        for fragment in soup.stripped_strings:
-            version_m = re.fullmatch(r"Version\s*:\s*([0-9][0-9.]*)", fragment)
-            if version_m:
-                version = version_m.group(1)
+        # Inline "Version: x.y.z" form: real Chrome uses this for Version even though it
+        # uses the split label/value form for Updated / Offered by. Anchor the search to
+        # the Details region (#279 review): the description / What's-new section renders
+        # BEFORE it, so a standalone "Version: 9.9.9" prose node there would win a plain
+        # document-order scan. Search only text nodes AFTER a Details label ("Updated" /
+        # "Offered by"), each required (via fullmatch) to be essentially just
+        # "Version: x.y.z" — so neither an embedding sentence nor an earlier prose node
+        # can hijack it. No anchor (a partial page) → leave version empty (keep-stale).
+        anchor = None
+        for anchor_label in ("Updated", "Offered by"):
+            anchor = soup.find(string=re.compile(rf"^\s*{re.escape(anchor_label)}\s*$", re.IGNORECASE))
+            if anchor is not None:
                 break
+        if anchor is not None:
+            for fragment in anchor.find_all_next(string=True):
+                version_m = re.fullmatch(r"Version\s*:\s*([0-9][0-9.]*)", fragment.strip())
+                if version_m:
+                    version = version_m.group(1)
+                    break
 
     visible = soup.get_text(" ")
     install_count = None

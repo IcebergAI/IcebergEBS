@@ -264,7 +264,9 @@ release to diff against.
   locale-pinned** (#279). The version regex ran over the whole visible page, where the
   description renders before the Details section — a description saying "New in Version 9.9.9"
   produced a spurious `new_version` alert and then a permanently wrong stored version. The
-  version now comes from exact label adjacency in the Details section (regex as fallback only).
+  version now comes from the Details section only: exact label adjacency for the split form,
+  and for Chrome's inline `Version: x.y.z` node an extraction anchored to the Details labels
+  (searched after "Updated"/"Offered by") so an earlier description node can't hijack it.
   The detail request also pins `hl=en` + `Accept-Language: en-US,en`: without it Google
   localizes by egress IP, the English label/month parsing finds nothing, `last_updated` stays
   `None`, and staleness silently scores 10 ("unknown") for any non-US deployment.
