@@ -119,6 +119,29 @@ release to diff against.
 
 ### Changed
 
+- **The rail is grouped by privilege, breadcrumbs come from the shell, and search has one home.**
+  Seven scoped UI fixes; no restyling and no IA change beyond the rail split.
+  - The single **Admin** rail group held per-user settings (alerts/webhooks, API keys, help)
+    alongside the conditionally-rendered admin-only pages, so the heading was wrong for regular
+    members and the two privilege levels looked identical. Split into **Account** (everyone) and
+    **Administration** (gated on `is_admin`).
+  - `iceberg.css` shipped `.topbar-crumb`/`.crumb-*` with no markup rendering them, while the
+    extension-detail and account pages each hand-rolled a *different* inline breadcrumb and the
+    dashboard had none. One breadcrumb now renders in the top bar; pages set only the leaf via
+    `{% block crumb %}`.
+  - The dashboard carried its own search form submitting to the same place as the top-bar box —
+    two inputs, one behaviour. The in-page form is gone; an active query shows as a clear-chip.
+    That form's hidden inputs were what carried `store`/`risk`/`sort` through a search, so
+    `topbar-search.js` now forwards the existing query string instead of hard-coding `/?q=` —
+    without it, searching would silently reset the active filters.
+  - Store and risk filters read as one nine-pill strip once the row wrapped and the divider was
+    lost; each axis now sits in its own labelled group.
+  - Table rows navigate on click but only the Refresh button said so — added a muted trailing
+    chevron (outside the `@click.stop` group, so the row click still fires).
+  - **Delete** on the extension-detail page sat flush with the benign actions; it is now isolated
+    behind the same divider the watchlist switch already uses.
+  - The per-signal note in the score breakdown lives in a `hidden md:block` column, so below `md`
+    the six bars carried no explanation of what each measures — now also a native `title`.
 - **Permission tiers now cover the surveillance/capture family** (#280): `desktopCapture`
   (arbitrary screen recording) is CRITICAL; `tabCapture`/`audioCapture`/`videoCapture` and
   `webNavigation` (full browsing-graph telemetry) are HIGH; `privacy`, `sessions`, `topSites`,

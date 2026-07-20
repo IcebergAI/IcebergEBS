@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% block title %}IcebergEBS — Alerts &amp; webhooks{% endblock %}
+{% block crumb %}Alerts &amp; webhooks{% endblock %}
 {% block nav_account %}active{% endblock %}
 
 {% block content %}
@@ -14,11 +15,6 @@
 } | tojson }}</script>
 <div x-data="accountPrefs">
 
-<div class="flex items-center gap-2 text-[12.5px] mb-2" style="color:var(--muted)">
-  <span>Account</span>
-  <span>/</span>
-  <span style="color:var(--ink-soft)">Alerts &amp; webhooks</span>
-</div>
 <h1 class="page-title">Alerts &amp; webhooks</h1>
 <p class="page-sub mb-5">Notify Slack, Teams, email, or a Jira/ServiceNow ticket — or any webhook — when a watched extension changes risk, publisher, permissions, or version.</p>
 

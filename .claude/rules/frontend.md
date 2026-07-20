@@ -33,6 +33,30 @@ If you touch `caddy/headers.caddy`, re-mirror `helm/iceberg-ebs/templates/caddy-
 ## Branding (IcebergAI mark)
 The brand mark is the **IcebergAI** iceberg SVG, shipped under `static/img/` as `icebergai-mark.svg` (dark chip — used in the rail and the login auth-card), `icebergai-mark-light.svg` (light variant), and `icebergai-icon.svg` (glyph — the SVG favicon). Canonical sources live in `~/Projects/.github/profile/assets/`. The rasterised `favicon-32.png` / `apple-touch-icon.png` are generated from `icebergai-icon.svg` with `rsvg-convert -w {32,180}`. The rail lockup is `.rail-brand` (`.rail-mark` + `.rail-wordmark` "Iceberg<b>EBS</b>" + `.rail-kicker`); the login page uses the house `.auth-shell`/`.auth-card` with the same mark. The old Aperture mark and its `.brand-tile*`/`.login-split` CSS are retired (#105).
 
+## Shell contracts every page template must honour
+`base.html` owns the rail, the top bar, and the breadcrumb; pages fill blocks rather than
+re-implementing any of the three.
+- **Rail groups are split by privilege**: **Workspace** (everyone), **Account** — personal
+  settings: alerts/webhooks, API keys, help — and **Administration**, wrapped as a whole in
+  `{% if is_admin %}`. Put a new per-user page in Account and a new admin page in Administration;
+  never re-merge them into one group (the retired single "Admin" heading mislabelled the personal
+  pages for regular members and made the two privilege levels visually identical). Admin-only
+  links must stay inside the `is_admin` guard — the rail is the visible half of an authorisation
+  boundary whose real enforcement is `require_admin_ui`.
+- **One breadcrumb, rendered by the shell.** `.topbar-crumb`/`.crumb-*` live in iceberg.css and
+  are rendered once in `base.html`'s top bar; a page sets only its leaf via
+  `{% block crumb %}…{% endblock %}`. **A page that omits the block silently inherits the default
+  leaf "Dashboard"** — nothing errors, so a new template must always set it. Never hand-roll a
+  crumb row in page content again (two pages had drifted into two different shapes, and the
+  shipped CSS went unused).
+- **Search has exactly one home: the top bar.** `static/js/topbar-search.js` submits to `/?q=…`
+  and **forwards the current query string** (dropping `page`), which is what preserves the active
+  `store`/`risk`/`sort` filters — that forwarding replaced the dashboard form's hidden inputs, so
+  removing it silently resets the user's view on every search. Don't add a second in-page search
+  input; an active query surfaces as a `.chip` that clears it.
+`tests/test_nav_structure.py` pins all three (rail groups per role, one search input, one crumb
+per page with the right leaf).
+
 ## Alpine components — the CSP-build registry pattern (#106)
 The `@alpinejs/csp` build cannot evaluate an inline `x-data` object that defines methods or getters, so **every component is a factory registered via `Alpine.data()` inside an `alpine:init` listener in a same-origin file**: shell components in `static/js/app.js` (`userMenu`), page components in `static/js/pages/<page>.js`, loaded through the `{% block page_js %}` head block. **Load order is an invariant**: deferred scripts execute in document order, and base.html loads `app.js` → `topbar-search.js` → `{% block page_js %}` → **the Alpine CSP build last**, so every registry's `alpine:init` listener exists when Alpine boots. Never load a registry script after Alpine, and never put page scripts at the end of `<body>`.
 

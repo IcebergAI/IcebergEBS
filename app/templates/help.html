@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% block title %}IcebergEBS — Help{% endblock %}
+{% block crumb %}Help{% endblock %}
 {% block nav_help %}active{% endblock %}
 
 {% block content %}
@@ -23,7 +24,9 @@
       <a href="/extensions/add">add page</a>. The store is auto-detected from URLs.
       To add many at once, use <a href="/extensions/bulk">bulk import</a> — paste one
       <code class="mono">store,id</code> (or store URL) per line. The dashboard list can be
-      filtered/searched/sorted and exported to CSV or JSON.
+      filtered by store and risk, sorted by any column, and exported to CSV or JSON.
+      Search from the box in the top bar (press <code class="mono">/</code> to focus it) — it
+      keeps the filters and sort you already have applied.
     </p>
     <div style="overflow-x:auto;border:1px solid var(--line);border-radius:8px">
     <table>

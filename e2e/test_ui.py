@@ -83,6 +83,29 @@ def test_topbar_search_interaction(page: Page, collect_errors):
     _assert_no_critical_errors(collect_errors)
 
 
+def test_topbar_search_preserves_active_filters(page: Page, collect_errors):
+    """The dashboard's own search form used to forward store/risk/sort as hidden
+    inputs. That form is gone — the top bar is the single entry point — so
+    topbar-search.js must forward the existing query string instead, or searching
+    silently resets the user's view. Only a browser can prove this: the behaviour
+    lives entirely in the JS keydown handler.
+    """
+    _login(page)
+    page.goto(f"{BASE_URL}/?store=chrome&sort=name&order=asc&page=2")
+    search = page.locator(".search input")
+    search.fill("example")
+    search.press("Enter")
+    page.wait_for_url("**/?*q=example*")
+
+    url = page.url
+    assert "store=chrome" in url, f"store filter dropped on search: {url}"
+    assert "sort=name" in url and "order=asc" in url, f"sort dropped on search: {url}"
+    # A new query has no page 3 — paging restarts rather than stranding the user
+    # on an out-of-range page of different results.
+    assert "page=" not in url, f"page should reset on a new search: {url}"
+    _assert_no_critical_errors(collect_errors)
+
+
 def test_theme_picker_roundtrip(page: Page, collect_errors):
     """The system/light/dark picker (#106): drives the Alpine userMenu component —
     the first CI proof that Alpine interactivity actually works behind the strict

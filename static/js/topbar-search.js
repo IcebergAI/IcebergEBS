@@ -22,8 +22,16 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   input.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') {
-      location.href = '/?q=' + encodeURIComponent(input.value.trim());
-    }
+    if (e.key !== 'Enter') return;
+    // The dashboard's in-page search form is gone — the top bar is the single entry
+    // point — so this must forward the active store/risk/sort filters the way that
+    // form's hidden inputs did, or searching silently resets the current view.
+    // Paging restarts at 1: results for a new query have no page 3.
+    const q = input.value.trim();
+    const p = new URLSearchParams(location.search);
+    if (q) p.set('q', q); else p.delete('q');
+    p.delete('page');
+    const qs = p.toString();
+    location.href = qs ? '/?' + qs : '/';
   });
 });
