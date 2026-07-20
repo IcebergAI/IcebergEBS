@@ -20,6 +20,7 @@ from app.senders import (
 )
 from app.senders.email import EmailSender, _is_valid_address
 from app.senders.tickets import _SECRET_ENV_PREFIX
+from app.webhooks import WebhookValidationError
 
 _EXPECTED_KINDS = ("webhook", "slack", "teams", "email", "jira", "servicenow")
 
@@ -229,6 +230,36 @@ def test_webhook_slack_teams_allow_http():
         assert get_sender(kind).require_https is False
     assert get_sender("jira").require_https is True
     assert get_sender("servicenow").require_https is True
+
+
+@pytest.mark.parametrize(
+    ("kind", "config"),
+    [
+        ("jira", {"project_key": "SEC", "account_email": "a@b.com", "secret_ref": "T"}),
+        ("servicenow", {"username": "svc", "secret_ref": "T"}),
+    ],
+)
+async def test_ticket_senders_reject_malformed_url_as_config_error(kind, config, monkeypatch):
+    """The https guard must not let urlparse's ValueError on a malformed bracketed host
+    (e.g. "https://[") escape as a 500 — it degrades to a DestinationConfigError (422),
+    the same way validate_webhook_url already handles a malformed URL (bot review)."""
+    monkeypatch.setenv(_SECRET_ENV_PREFIX + "T", "tok")
+    with _patch_resolver():
+        with pytest.raises(DestinationConfigError):
+            await get_sender(kind).validate("https://[", config)
+
+
+@respx.mock
+async def test_ticket_sender_malformed_url_at_send_is_handled(monkeypatch):
+    """At send time a malformed URL surfaces as a handled WebhookValidationError (not a bare
+    ValueError), and no request is made."""
+    monkeypatch.setenv(_SECRET_ENV_PREFIX + "T", "tok")
+    config = {"project_key": "SEC", "account_email": "a@b.com", "secret_ref": "T"}
+    with _patch_resolver():
+        async with httpx.AsyncClient() as http:
+            with pytest.raises(WebhookValidationError):
+                await get_sender("jira").send(http, "https://[", config, _msg())
+    assert respx.calls.call_count == 0
 
 
 # ---------------------------------------------------------------------------

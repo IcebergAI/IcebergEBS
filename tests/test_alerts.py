@@ -1292,6 +1292,22 @@ async def test_create_jira_destination_requires_secret(client, monkeypatch):
     assert "tok" not in str(r2.json())
 
 
+async def test_create_jira_destination_malformed_url_is_422_not_500(client, monkeypatch):
+    """A malformed ticket URL must be a validation error (422), not a 500 from an
+    unhandled urlparse ValueError in the https guard (bot review)."""
+    monkeypatch.setenv(_DEST_SECRET_ENV, "tok")
+    r = await client.post(
+        "/api/alerts/destinations",
+        json={
+            "label": "Bad Jira",
+            "kind": "jira",
+            "target": "https://[",
+            "config": {"project_key": "SEC", "account_email": "bot@example.com", "secret_ref": "JIRA_TOKEN"},
+        },
+    )
+    assert r.status_code == 422
+
+
 async def test_patch_kind_change_revalidates_resulting_state(client):
     """Changing kind alone must revalidate the existing target/config under the new
     adapter (the #217 resulting-state rule) — a webhook target is not a valid Jira

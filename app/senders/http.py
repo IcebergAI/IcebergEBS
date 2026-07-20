@@ -66,7 +66,16 @@ class HttpJsonSender:
     # --- shared implementation ------------------------------------------------
 
     def _needs_https(self, url: str) -> bool:
-        return self.require_https and urlparse(url).scheme != "https"
+        if not self.require_https:
+            return False
+        try:
+            return urlparse(url).scheme != "https"
+        except ValueError:
+            # Malformed URL (e.g. an invalid bracketed IPv6 host like "https://[").
+            # Don't let urlparse's ValueError escape as a 500 — defer to
+            # validate_webhook_url, which reports it as a DestinationConfigError (422)
+            # at validate time, and as a WebhookValidationError at send time.
+            return False
 
     async def validate(self, target: str, config: Mapping[str, str]) -> None:
         url = self.endpoint_url(target, config)
