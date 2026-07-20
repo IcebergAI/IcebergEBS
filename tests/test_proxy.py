@@ -186,7 +186,7 @@ def test_explicit_bypasses_no_proxy_target(no_credentials):
 
 
 # ---------------------------------------------------------------------------
-# Webhook interplay: send_webhook pins the URL netloc to a validated IP, so the
+# Webhook interplay: send_pinned_request pins the URL netloc to a validated IP, so the
 # routing decision runs against the IP — bypass needs IP/CIDR entries.
 # ---------------------------------------------------------------------------
 

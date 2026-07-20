@@ -15,7 +15,7 @@ from app.main import app as fastapi_app
 from app.models import AlertDestination, AlertLog, AlertRule, Extension
 from app.notifications import ChangeEvent, build_alert_payload, detect_changes, fire_alerts
 from app.services import fetch_and_store, fire_pending_alerts
-from app.webhooks import WebhookValidationError, send_webhook, validate_webhook_url
+from app.webhooks import WebhookValidationError, send_pinned_request, validate_webhook_url
 
 # A fixed public IP the webhook resolver is patched to return, so the SSRF-pinning
 # send path is exercised deterministically without real DNS. The pinned request
@@ -463,30 +463,30 @@ async def test_fire_alerts_extension_scoped_rule(test_db, admin_user):
 
 
 # ---------------------------------------------------------------------------
-# send_webhook SSRF protection (IP pinning at send time)
+# send_pinned_request SSRF protection (IP pinning at send time)
 # ---------------------------------------------------------------------------
 
 
 @respx.mock
-async def test_send_webhook_pins_to_validated_ip():
-    """send_webhook connects to the resolved IP while preserving the Host header."""
+async def test_send_pinned_request_pins_to_validated_ip():
+    """send_pinned_request connects to the resolved IP while preserving the Host header."""
     route = respx.post(f"https://{_PINNED_IP}/hook").mock(return_value=httpx.Response(200))
     with _patch_resolver():
         async with httpx.AsyncClient() as http:
-            resp = await send_webhook(http, "https://feed.example.com/hook", {"x": 1})
+            resp = await send_pinned_request(http, "https://feed.example.com/hook", json={"x": 1})
     assert resp.status_code == 200
     assert route.called
     assert route.calls[0].request.headers["Host"] == "feed.example.com"
 
 
-async def test_send_webhook_blocks_rebind_to_private_ip():
+async def test_send_pinned_request_blocks_rebind_to_private_ip():
     """If the host resolves to a private IP at send time, no request is made."""
     posted = AsyncMock()
     fake_client = MagicMock()
     fake_client.post = posted
     with patch("app.webhooks._resolve_host", new=AsyncMock(return_value=["10.0.0.5"])):
         with pytest.raises(WebhookValidationError):
-            await send_webhook(fake_client, "https://rebind.example.com/hook", {"x": 1})
+            await send_pinned_request(fake_client, "https://rebind.example.com/hook", json={"x": 1})
     posted.assert_not_awaited()
 
 

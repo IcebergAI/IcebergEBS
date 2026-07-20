@@ -38,7 +38,7 @@ async def validate_webhook_url(url: str) -> list[str]:
     """Validate a webhook URL against SSRF and return its validated IP addresses.
 
     Every returned IP has been confirmed global/public. Callers that actually send
-    a request should connect to one of these IPs directly (see ``send_webhook``) so
+    a request should connect to one of these IPs directly (see ``send_pinned_request``) so
     the hostname cannot be re-resolved to a private address between validation and
     connection (DNS rebinding).
 
@@ -148,19 +148,3 @@ async def send_pinned_request(
         follow_redirects=False,
         extensions=extensions,
     )
-
-
-async def send_webhook(
-    client: httpx.AsyncClient,
-    url: str,
-    payload: dict,
-    *,
-    timeout: float = _WEBHOOK_TIMEOUT,
-) -> httpx.Response:
-    """POST a JSON payload to a webhook URL with SSRF protection.
-
-    A thin wrapper over ``send_pinned_request`` kept for the existing call sites
-    (``notifications``/``alerts`` webhook delivery); see that function for the
-    pinning + redirect semantics.
-    """
-    return await send_pinned_request(client, url, json=payload, timeout=timeout)
