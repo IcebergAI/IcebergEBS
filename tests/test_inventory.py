@@ -398,17 +398,17 @@ async def test_inventory_recompute_ignores_stale_observations(client, test_db, m
 
     async with AsyncSession(test_db) as s:
         ext = (await s.exec(select(Extension).where(Extension.extension_id == "a" * 32))).one()
+        ext_id = ext.id  # capture before the commit expires the instance (asyncpg lazy-load -> MissingGreenlet)
         # Backdate a second observation beyond the freshness window.
         s.add(
             InstallObservation(
-                extension_id=ext.id,
+                extension_id=ext_id,
                 asset_id="host-gone",
                 first_seen=datetime.now(timezone.utc) - timedelta(days=60),
                 last_seen=datetime.now(timezone.utc) - timedelta(days=60),
             )
         )
         await s.commit()
-        ext_id = ext.id
 
     # A new push touching the extension recomputes over fresh observations only.
     r = await client.post(
