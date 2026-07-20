@@ -708,7 +708,11 @@ async def test_history_is_bounded_and_supports_since(client, test_db):
     assert counts == sorted(counts)  # ascending timeline
     assert 1005 in counts  # the MOST RECENT points were kept
 
-    r_since = await client.get(f"/api/extensions/{ext_id}/history?since={(base + timedelta(days=4)).isoformat()}")
+    # Pass `since` via params so httpx percent-encodes the "+00:00" offset — a bare
+    # "+" in the query string decodes to a space server-side and 422s the datetime.
+    r_since = await client.get(
+        f"/api/extensions/{ext_id}/history", params={"since": (base + timedelta(days=4)).isoformat()}
+    )
     since_counts = [p["install_count"] for p in r_since.json() if p["install_count"] >= 1000]
     assert set(since_counts) == {1004, 1005}
 

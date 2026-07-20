@@ -688,7 +688,10 @@ async def export_extensions(
     # the scalar export columns instead of materialising full ORM rows with their JSON
     # blobs. with_only_columns preserves the WHERE/ORDER BY built above.
     stmt = build_extension_query(current_user.id, filters).with_only_columns(*_EXPORT_COLUMNS)
-    rows = [_export_row(e) for e in (await session.exec(stmt)).all()]
+    # session.execute (not .exec): the statement is still typed Select[Extension], so
+    # SQLModel's exec() would .scalars() it down to the first column (id). execute()
+    # returns Rows with named-attribute access, which _export_row reads (#284).
+    rows = [_export_row(e) for e in (await session.execute(stmt)).all()]
 
     if format == "json":
         return JSONResponse(
