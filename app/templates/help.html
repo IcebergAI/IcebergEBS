@@ -326,6 +326,11 @@
           <td style="color:var(--muted)">session lifetime in seconds</td>
         </tr>
         <tr>
+          <td class="mono" style="white-space:nowrap">ICEBERG_EBS_OIDC_SESSION_MAX_AGE</td>
+          <td style="color:var(--muted)">3600</td>
+          <td style="color:var(--muted)">session lifetime for SSO users — shorter than the local session so an IdP-side disable is bounded (#221)</td>
+        </tr>
+        <tr>
           <td class="mono" style="white-space:nowrap">ICEBERG_EBS_FETCH_INTERVAL_MINUTES</td>
           <td style="color:var(--muted)">60</td>
           <td style="color:var(--muted)">background refresh cadence</td>
@@ -334,6 +339,16 @@
           <td class="mono" style="white-space:nowrap">ICEBERG_EBS_RETENTION_DAYS</td>
           <td style="color:var(--muted)">0</td>
           <td style="color:var(--muted)">prune fetch/install/alert history older than N days (0 = disabled)</td>
+        </tr>
+        <tr>
+          <td class="mono" style="white-space:nowrap">ICEBERG_EBS_INVENTORY_FRESHNESS_DAYS</td>
+          <td style="color:var(--muted)">30</td>
+          <td style="color:var(--muted)">inventory observations not re-seen within N days stop counting toward footprint/exposure (0 = disabled)</td>
+        </tr>
+        <tr>
+          <td class="mono" style="white-space:nowrap">ICEBERG_EBS_API_KEY_SSO_MAX_AGE_DAYS</td>
+          <td style="color:var(--muted)">30</td>
+          <td style="color:var(--muted)">API keys owned by SSO accounts expire N days after creation</td>
         </tr>
         <tr>
           <td class="mono" style="white-space:nowrap">ICEBERG_EBS_APP_BASE_URL</td>

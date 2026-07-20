@@ -89,7 +89,7 @@ redirecting to the login page.
 | Group | Endpoints |
 |---|---|
 | **Extensions** | `GET /api/extensions` (paginated, filter by store/risk/publisher/query), `POST /api/extensions`, `POST /api/extensions/bulk`, `POST /api/inventory`, `GET /api/extensions/export?format=csv\|json` |
-| **One extension** | `GET`, `DELETE`, `POST …/refresh`, `PATCH …/watchlist`, `GET …/history` under `/api/extensions/{id}` |
+| **One extension** | `GET`, `DELETE`, `POST …/refresh`, `PATCH …/watchlist`, `GET …/history` (install-count timeline; bounded — `limit` ≤ 500, newest points, oldest→newest, plus a `since` cursor for increments) under `/api/extensions/{id}` |
 | **Alerts** | `/api/alerts/destinations`, `/api/alerts/rules` (both full CRUD), `POST /api/alerts/destinations/{id}/test`, `GET /api/alerts/log` |
 | **API keys** | `GET`, `POST`, `DELETE` under `/api/keys` |
 | **Users** *(admin)* | `/api/users`, plus self-service `PATCH /api/users/me/password` |
