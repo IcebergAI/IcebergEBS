@@ -44,18 +44,11 @@ with sync_playwright() as p:
     page.on("console", lambda m: errors.append(m.text) if m.type == "error" else None)
     page.on("pageerror", lambda e: errors.append(str(e)))
 
-    # Sign in as the dedicated demo account seed_demo.py owns — NOT the real admin,
-    # which owns none of the demo data (and whose data the seed must never touch).
-    user = os.environ.get("ICEBERG_EBS_SCREENSHOT_DEMO_USER", "demo")
-    password = os.environ.get("ICEBERG_EBS_SCREENSHOT_DEMO_PASSWORD")
-    if not password:
-        raise SystemExit(
-            "set ICEBERG_EBS_SCREENSHOT_DEMO_PASSWORD to the same value used when running "
-            "scripts/screenshots/seed_demo.py"
-        )
+    # The admin of the dedicated screenshot database — seeded by the app on first
+    # start against it, from the same ICEBERG_EBS_ADMIN_* values as any other instance.
     page.goto(f"{BASE}/login")
-    page.fill('input[name="username"]', user)
-    page.fill('input[name="password"]', password)
+    page.fill('input[name="username"]', os.environ["ICEBERG_EBS_ADMIN_USERNAME"])
+    page.fill('input[name="password"]', os.environ["ICEBERG_EBS_ADMIN_PASSWORD"])
     page.click('button[type="submit"]')
     page.wait_for_url(f"{BASE}/")
 

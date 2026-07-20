@@ -12,12 +12,11 @@ import json
 import os
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import delete, tuple_
+from sqlalchemy import delete
 from sqlalchemy.engine import make_url
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from app.auth import hash_password
 from app.config import settings
 from app.database import engine
 from app.inspector import PackageAnalysis, PackageFinding
@@ -291,111 +290,65 @@ PERMS = {
 
 
 DEST_LABEL = "SOC Slack #ext-alerts"
-DEMO_KEYS = [(e[1], e[3]) for e in EXTS]  # (store, extension_id) pairs this script seeds
 OPT_IN_ENV = "ICEBERG_EBS_SCREENSHOT_SEED"
-DEMO_USER_ENV = "ICEBERG_EBS_SCREENSHOT_DEMO_USER"
-DEMO_PASSWORD_ENV = "ICEBERG_EBS_SCREENSHOT_DEMO_PASSWORD"
-
-# The demo data is owned by a dedicated account, never the real admin — see
-# _ensure_demo_user for why (store IDs are not script-owned identifiers).
-DEMO_USER = os.environ.get(DEMO_USER_ENV, "demo")
-DEMO_PASSWORD = os.environ.get(DEMO_PASSWORD_ENV, "")
+# The target must be a database created for this purpose and nothing else. See
+# _assert_safe_target: this is the entire safety model, replacing any attempt to
+# work out which rows or accounts the script "owns".
+REQUIRED_DB_MARKER = "screenshot"
 
 
 def _assert_safe_target() -> None:
-    """Fail closed unless this is plainly a local development database.
+    """Fail closed unless the target is a database created solely for screenshots.
 
-    This script deletes rows, and deleting an Extension cascades into its FetchLog,
-    InstallCountHistory, InstallObservation, AlertRule and AlertLog history. A README
-    warning is not a control, so refuse outright rather than trusting the operator to
-    have pointed ICEBERG_EBS_DATABASE_URL somewhere disposable.
+    This script deletes every extension and every piece of alert configuration in the
+    target database, and deleting an Extension cascades into its FetchLog,
+    InstallCountHistory, InstallObservation, AlertRule and AlertLog history.
+
+    Earlier revisions tried to work out which rows the script "owned" — first by
+    (store, extension_id), then by a dedicated account. Both were wrong (bot review,
+    #315): the seed uses REAL store IDs, and no property of an existing account proves
+    the script created it, so touching one risks clobbering a real user (including
+    writing a password onto an SSO identity, which would enable password login for it).
+
+    So ownership is not inferred at all. The requirement is a disposable database whose
+    name says what it is for; everything in it is then expendable by construction, and
+    this script never creates a user, never writes a credential, and never inspects an
+    account to guess its provenance.
     """
     if os.environ.get(OPT_IN_ENV) != "1":
-        raise SystemExit(
-            f"refusing to seed: set {OPT_IN_ENV}=1 to confirm this database is disposable.\n"
-            "It is the same database a bare `uv run pytest` truncates — never a real one."
-        )
+        raise SystemExit(f"refusing to seed: set {OPT_IN_ENV}=1 to confirm this database is disposable.")
     url = make_url(settings.database_url)
     host = (url.host or "").lower()
     if host not in {"localhost", "127.0.0.1", "::1", ""}:
         raise SystemExit(
-            f"refusing to seed: database host {host!r} is not local. This script is for a local dev database only."
+            f"refusing to seed: database host {host!r} is not local. This script is for a local database only."
         )
-    if not DEMO_PASSWORD:
-        # No committed default: the demo account is a real admin login, so its
-        # credential comes from the operator's environment, never from this file.
+    name = (url.database or "").lower()
+    if REQUIRED_DB_MARKER not in name:
         raise SystemExit(
-            f"refusing to seed: set {DEMO_PASSWORD_ENV} to the password for the "
-            f"dedicated demo account ({DEMO_USER!r}). shoot.py signs in with the same value."
+            f"refusing to seed: database {name!r} is not a dedicated screenshot database.\n"
+            "This script DELETES every extension and all alert configuration in its target, so it\n"
+            f"requires a disposable database whose name contains {REQUIRED_DB_MARKER!r} — never your\n"
+            "normal dev database. See scripts/screenshots/README.md for the two-command setup."
         )
-
-
-async def _ensure_demo_user(s: AsyncSession) -> int:
-    """Return the id of the dedicated demo account, creating it if absent.
-
-    The demo data must be owned by an account this script owns. Scoping deletes by
-    ``(store, extension_id)`` is NOT sufficient: DEMO_KEYS holds *real* store IDs
-    (uBlock Origin's actual Chrome ID, `ms-python.python`, …), and this is an
-    extension-tracking app — a developer's database plausibly already watches one, so
-    a "scoped" delete would still destroy a legitimate Extension and cascade through
-    its fetch history, inventory observations, rules and alert log (bot review, #315).
-
-    A pre-existing account under this username that owns anything outside the demo set
-    is treated as a collision and refused, rather than assumed to be ours.
-    """
-    existing = (await s.exec(select(User).where(User.username == DEMO_USER))).first()
-    if existing is None:
-        user = User(
-            username=DEMO_USER,
-            password_hash=await hash_password(DEMO_PASSWORD),
-            is_admin=True,  # so the rail renders the Administration group
-        )
-        s.add(user)
-        await s.commit()
-        await s.refresh(user)
-        return user.id
-
-    uid = existing.id
-    foreign_ext = (
-        await s.exec(
-            select(Extension.name)
-            .where(Extension.user_id == uid)
-            .where(tuple_(Extension.store, Extension.extension_id).notin_(DEMO_KEYS))
-            .limit(1)
-        )
-    ).first()
-    foreign_dest = (
-        await s.exec(
-            select(AlertDestination.label)
-            .where(AlertDestination.user_id == uid)
-            .where(AlertDestination.label != DEST_LABEL)
-            .limit(1)
-        )
-    ).first()
-    if foreign_ext or foreign_dest:
-        owns = foreign_ext or foreign_dest
-        raise SystemExit(
-            f"refusing to seed: user {DEMO_USER!r} already exists and owns data this script "
-            f"did not create (e.g. {owns!r}). It is not a screenshot demo account.\n"
-            f"Set {DEMO_USER_ENV} to an unused username."
-        )
-    # Keep the password in step with the env so shoot.py can sign in.
-    existing.password_hash = await hash_password(DEMO_PASSWORD)
-    s.add(existing)
-    await s.commit()
-    return uid
 
 
 async def main() -> None:
     _assert_safe_target()
     async with AsyncSession(engine) as s:
-        uid = await _ensure_demo_user(s)
+        admin = (await s.exec(select(User).where(User.is_admin).order_by(User.id).limit(1))).first()
+        if admin is None:
+            raise SystemExit(
+                "no admin user in the screenshot database — start the app against it once so it "
+                "runs migrations and seeds the admin account."
+            )
+        uid = admin.id
 
-        # Safe to clear wholesale: everything this user owns was put there by a prior
-        # run of this script (enforced by the collision check above).
-        await s.exec(delete(Extension).where(Extension.user_id == uid))
+        # Safe wholesale: _assert_safe_target has established this database exists only
+        # for screenshots. No row here is anyone's real data.
+        await s.exec(delete(Extension))
         # Rules cascade from the destination via the schema's ondelete=CASCADE.
-        await s.exec(delete(AlertDestination).where(AlertDestination.user_id == uid))
+        await s.exec(delete(AlertDestination))
         await s.commit()
 
         made: list[Extension] = []
