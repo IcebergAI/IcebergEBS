@@ -43,7 +43,7 @@ from app.oidc.config import client_secret_status
 from app.permissions import host_permission_tier, permission_tier
 from app.ratelimit import login_limiter
 from app.retention import freshness_cutoff
-from app.scoring import risk_level
+from app.scoring import RiskDetail, risk_level
 from app.threat_intel import build_threat_intel_indicators
 from app.version import get_version
 
@@ -582,7 +582,16 @@ async def extension_detail(
     risk_detail = ext.risk_detail_dict()
     package_analysis = ext.analysis_dict()
 
-    host_permissions = []
+    # Shape-guarded accessor (#150/#291): a stored host_permissions that is a non-list
+    # container or carries non-string members must not reach the tier classifier (whose
+    # set membership raises on unhashable members) or iterate char-by-char.
+    host_permissions = ext.host_permissions_list()
+    if risk_detail:
+        # json_object guards dict-ness but not keys — backfill the RiskDetail fields a
+        # partial write / older schema left missing so the breakdown renders (a blank
+        # `total`, or arithmetic on a missing key, would otherwise misrender/500) (#291).
+        for key, default in RiskDetail.stored_defaults().items():
+            risk_detail.setdefault(key, default)
     if package_analysis:
         # Backfill any keys a partial write / older schema left missing, so the
         # detail page renders without KeyErrors. Defaults are derived from the
@@ -593,11 +602,6 @@ async def extension_detail(
         if not isinstance(package_analysis.get("findings"), list):
             package_analysis["findings"] = []
         package_analysis["grouped_findings"] = group_detection_findings(package_analysis["findings"])
-        # Mirror the API DTO's guard (#150): a wrong-shaped stored value — non-list
-        # container or non-string members — must not reach the tier classifier, whose
-        # set-membership check raises TypeError on unhashable members (#281 review).
-        raw_hosts = package_analysis.get("host_permissions", [])
-        host_permissions = [h for h in raw_hosts if isinstance(h, str)] if isinstance(raw_hosts, list) else []
     # Tier every rendered permission tag from the app.permissions sets — the single
     # source shared with the scorer/inspector (#63) — instead of Jinja re-inlining
     # the tier lists (which had drifted, #281).

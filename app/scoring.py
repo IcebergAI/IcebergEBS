@@ -34,6 +34,16 @@ class RiskDetail(NamedTuple):
     total: int
     risk_level: str
 
+    @classmethod
+    def stored_defaults(cls) -> dict[str, object]:
+        """Zeroed defaults for every field, to backfill a sparse/partial stored
+        ``risk_detail`` dict before rendering. ``json_object`` guards dict-ness but not
+        keys, so a partial write / older schema missing e.g. ``total`` would render as a
+        blank in the detail-page breakdown (and any arithmetic on the raw dict would 500) —
+        this mirrors ``PackageAnalysis.stored_defaults`` (#164) for the same threat (#291).
+        Derived from ``_fields`` so it can't drift from the NamedTuple."""
+        return {f: ("unknown" if f == "risk_level" else 0) for f in cls._fields}
+
 
 def score_permissions(permissions: list[str], host_permissions: list[str] | None = None) -> int:
     all_perms = set(permissions) | set(host_permissions or [])

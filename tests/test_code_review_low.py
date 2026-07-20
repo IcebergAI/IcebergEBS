@@ -106,3 +106,58 @@ def test_legitimate_publishers_not_generic(publisher):
 )
 def test_generic_publishers_flagged(publisher):
     assert _looks_generic(publisher) is True
+
+
+# ───────────────── #291 — wrong-shape stored host_permissions / risk_detail ─────────────────
+
+
+@pytest.mark.parametrize(
+    "stored,expected",
+    [
+        ('{"host_permissions": ["https://a/*", "https://b/*"]}', ["https://a/*", "https://b/*"]),
+        ('{"host_permissions": "https://a/*"}', []),  # a string would iterate char-by-char
+        ('{"host_permissions": {"not": "a list"}}', []),  # non-iterable → would 500 a consumer
+        ('{"host_permissions": ["ok", {"bad": 1}, 7]}', ["ok"]),  # drop non-string members
+        ("{}", []),  # key absent
+        ("{not json", []),  # unparsable analysis
+        (None, []),  # no analysis at all
+    ],
+)
+def test_host_permissions_list_shape_guard(stored, expected):
+    # The single accessor guards every consumer (scorer, notifications diff, JSON DTO,
+    # detail page) against a wrong-shaped stored host_permissions (#291).
+    assert _ext(package_analysis=stored).host_permissions_list() == expected
+
+
+def test_effective_values_ignores_string_host_permissions():
+    # The keep-stale scoring path (#142) reads stored host_permissions when no fresh
+    # analysis is present. A stored string must not iterate char-by-char into
+    # score_permissions' set() and silently maim the score (#291).
+    from app.fetchers.base import ExtensionMetadata
+    from app.scoring import score_permissions
+    from app.services import _effective_values
+
+    ext = _ext(
+        permissions='["storage"]',
+        # A string spelling of "<all_urls>" — char iteration would inject 'a','l','u',… as
+        # bogus permissions, and could even collide with a real permission letter.
+        package_analysis='{"host_permissions": "<all_urls>"}',
+        last_fetched_at=None,
+    )
+    metadata = ExtensionMetadata(name="E", publisher="P", version="1", store_url="https://x")
+    ev = _effective_values(ext, metadata, analysis=None)
+    assert ev.host_permissions == []
+    # storage alone is MEDIUM (7), not maxed — proves no critical leaked in via char-iteration.
+    assert score_permissions(ev.permissions, ev.host_permissions) == 7
+
+
+def test_risk_detail_stored_defaults_backfills_missing_keys():
+    # json_object guards dict-ness but not keys; a partial write missing `total` would
+    # render blank (or 500 on arithmetic) in the detail breakdown. stored_defaults()
+    # backfills every RiskDetail field, derived from _fields so it can't drift (#291).
+    from app.scoring import RiskDetail
+
+    defaults = RiskDetail.stored_defaults()
+    assert set(defaults) == set(RiskDetail._fields)
+    assert defaults["total"] == 0 and defaults["permissions"] == 0
+    assert defaults["risk_level"] == "unknown"

@@ -93,8 +93,11 @@ def _effective_values(
         host_permissions: list[str] = analysis.host_permissions
     else:
         permissions = ext.permissions_list()
-        stored_pkg = ext.analysis_dict() or {}
-        host_permissions = stored_pkg.get("host_permissions", [])
+        # Shape-guarded accessor (#291): a stored host_permissions that is a string (partial
+        # write / manual edit) would otherwise flow into score_permissions' set(...) and
+        # iterate char-by-char — a silently wrong score that persists across keep-stale
+        # refreshes. Same guard the notifications diff and the JSON DTO use.
+        host_permissions = ext.host_permissions_list()
 
     publisher_changed = bool(
         ext.last_fetched_at and ext.publisher and metadata.publisher and ext.publisher != metadata.publisher

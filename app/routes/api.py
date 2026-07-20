@@ -150,10 +150,9 @@ class ExtensionOut(BaseModel):
         # edit can't 500 the endpoint (#17/#61), they log + fall back instead (#167).
         perms = ext.permissions_list()
         analysis_raw = ext.analysis_dict()
-        host_perms_raw = analysis_raw.get("host_permissions", []) if analysis_raw else []
-        # A wrong-shaped stored value must not 500 the list[str] DTO: drop a non-list
-        # container and any non-string members (partial write / manual edit, #150).
-        host_perms = [h for h in host_perms_raw if isinstance(h, str)] if isinstance(host_perms_raw, list) else []
+        # Shape-guarded accessor (#150/#291): a non-list container or non-string members
+        # (partial write / manual edit) must not 500 the list[str] DTO.
+        host_perms = ext.host_permissions_list()
         findings_raw = analysis_raw.get("findings", []) if analysis_raw else []
         # Tolerate malformed findings (non-dict entries, dicts missing required fields, or a
         # non-list `findings`) the way the detail page already does, instead of letting
