@@ -15,10 +15,11 @@ them in the same PR.
 make db
 docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d app
 
-# 2. Seed the demo workspace. The opt-in env var is a required confirmation that this
-#    database is disposable — the script refuses to run without it, and refuses any
-#    non-local database host.
-ICEBERG_EBS_SCREENSHOT_SEED=1 PYTHONPATH="$PWD" uv run python scripts/screenshots/seed_demo.py
+# 2. Seed the demo workspace. Both env vars are required — the script refuses to run
+#    without the opt-in, without a demo password, or against a non-local database.
+export ICEBERG_EBS_SCREENSHOT_SEED=1
+export ICEBERG_EBS_SCREENSHOT_DEMO_PASSWORD='pick-anything-local'
+PYTHONPATH="$PWD" uv run python scripts/screenshots/seed_demo.py
 
 # 3. Shoot. Needs Playwright, which is deliberately NOT in uv.lock (see CLAUDE.md);
 #    install it into a throwaway venv at the version ci.yml pins.
@@ -39,13 +40,19 @@ Alpine component fails the run instead of being quietly baked into a PNG.
   on each extension is backed by real `InstallObservation` rows, so the dashboard's
   Top-exposure ranking (`risk × assets`) is internally consistent rather than a
   number that contradicts the detail page's org-footprint breakdown.
-- **Deletion is scoped to the rows the script itself creates** — the exact
-  `(store, extension_id)` pairs in `EXTS` and the single destination label. It does
-  **not** clear the admin's other data, which matters because deleting an `Extension`
-  cascades into its `FetchLog`, `InstallCountHistory`, `InstallObservation`,
-  `AlertRule` and `AlertLog` history.
+- **All demo data belongs to a dedicated account** (`demo` by default, override with
+  `ICEBERG_EBS_SCREENSHOT_DEMO_USER`). It is an admin, so the rail renders the
+  Administration group. Your real admin account is never read or modified.
+  This ownership is the whole safety model: scoping deletes by `(store, extension_id)`
+  is **not** sufficient, because the seed uses *real* store IDs (uBlock Origin's actual
+  Chrome ID, `ms-python.python`, …) and this is an extension-tracking app — a developer's
+  database plausibly already watches one. Deleting an `Extension` cascades into its
+  `FetchLog`, `InstallCountHistory`, `InstallObservation`, `AlertRule` and `AlertLog`.
+- **Collisions are refused, not assumed.** If the demo username already exists and owns
+  anything outside the seed set, the script aborts and names the offending row rather
+  than treating the account as its own.
 - **The target database is guarded, not merely documented.** `seed_demo.py` refuses to
-  run unless `ICEBERG_EBS_SCREENSHOT_SEED=1` is set *and* the resolved database host is
-  local (`localhost` / `127.0.0.1` / `::1`). Both checks fail closed.
-- The demo workspace is owned by the first admin user, so the rail renders the
-  Administration group; nothing else about that account is touched.
+  run unless `ICEBERG_EBS_SCREENSHOT_SEED=1` is set, a demo password is supplied, *and*
+  the resolved database host is local (`localhost` / `127.0.0.1` / `::1`). All fail closed.
+- The demo password has **no committed default** — the account is a real admin login, so
+  the credential comes from your environment. `shoot.py` reads the same two vars.

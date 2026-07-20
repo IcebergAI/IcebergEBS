@@ -12,10 +12,12 @@ import json
 import os
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import delete, text, tuple_
+from sqlalchemy import delete, tuple_
 from sqlalchemy.engine import make_url
+from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
+from app.auth import hash_password
 from app.config import settings
 from app.database import engine
 from app.inspector import PackageAnalysis, PackageFinding
@@ -25,6 +27,7 @@ from app.models import (
     Extension,
     FetchLog,
     InstallObservation,
+    User,
 )
 
 NOW = datetime.now(timezone.utc)
@@ -288,8 +291,15 @@ PERMS = {
 
 
 DEST_LABEL = "SOC Slack #ext-alerts"
-DEMO_KEYS = [(e[1], e[3]) for e in EXTS]  # (store, extension_id) — the only rows we own
+DEMO_KEYS = [(e[1], e[3]) for e in EXTS]  # (store, extension_id) pairs this script seeds
 OPT_IN_ENV = "ICEBERG_EBS_SCREENSHOT_SEED"
+DEMO_USER_ENV = "ICEBERG_EBS_SCREENSHOT_DEMO_USER"
+DEMO_PASSWORD_ENV = "ICEBERG_EBS_SCREENSHOT_DEMO_PASSWORD"
+
+# The demo data is owned by a dedicated account, never the real admin — see
+# _ensure_demo_user for why (store IDs are not script-owned identifiers).
+DEMO_USER = os.environ.get(DEMO_USER_ENV, "demo")
+DEMO_PASSWORD = os.environ.get(DEMO_PASSWORD_ENV, "")
 
 
 def _assert_safe_target() -> None:
@@ -311,33 +321,81 @@ def _assert_safe_target() -> None:
         raise SystemExit(
             f"refusing to seed: database host {host!r} is not local. This script is for a local dev database only."
         )
+    if not DEMO_PASSWORD:
+        # No committed default: the demo account is a real admin login, so its
+        # credential comes from the operator's environment, never from this file.
+        raise SystemExit(
+            f"refusing to seed: set {DEMO_PASSWORD_ENV} to the password for the "
+            f"dedicated demo account ({DEMO_USER!r}). shoot.py signs in with the same value."
+        )
+
+
+async def _ensure_demo_user(s: AsyncSession) -> int:
+    """Return the id of the dedicated demo account, creating it if absent.
+
+    The demo data must be owned by an account this script owns. Scoping deletes by
+    ``(store, extension_id)`` is NOT sufficient: DEMO_KEYS holds *real* store IDs
+    (uBlock Origin's actual Chrome ID, `ms-python.python`, …), and this is an
+    extension-tracking app — a developer's database plausibly already watches one, so
+    a "scoped" delete would still destroy a legitimate Extension and cascade through
+    its fetch history, inventory observations, rules and alert log (bot review, #315).
+
+    A pre-existing account under this username that owns anything outside the demo set
+    is treated as a collision and refused, rather than assumed to be ours.
+    """
+    existing = (await s.exec(select(User).where(User.username == DEMO_USER))).first()
+    if existing is None:
+        user = User(
+            username=DEMO_USER,
+            password_hash=await hash_password(DEMO_PASSWORD),
+            is_admin=True,  # so the rail renders the Administration group
+        )
+        s.add(user)
+        await s.commit()
+        await s.refresh(user)
+        return user.id
+
+    uid = existing.id
+    foreign_ext = (
+        await s.exec(
+            select(Extension.name)
+            .where(Extension.user_id == uid)
+            .where(tuple_(Extension.store, Extension.extension_id).notin_(DEMO_KEYS))
+            .limit(1)
+        )
+    ).first()
+    foreign_dest = (
+        await s.exec(
+            select(AlertDestination.label)
+            .where(AlertDestination.user_id == uid)
+            .where(AlertDestination.label != DEST_LABEL)
+            .limit(1)
+        )
+    ).first()
+    if foreign_ext or foreign_dest:
+        owns = foreign_ext or foreign_dest
+        raise SystemExit(
+            f"refusing to seed: user {DEMO_USER!r} already exists and owns data this script "
+            f"did not create (e.g. {owns!r}). It is not a screenshot demo account.\n"
+            f"Set {DEMO_USER_ENV} to an unused username."
+        )
+    # Keep the password in step with the env so shoot.py can sign in.
+    existing.password_hash = await hash_password(DEMO_PASSWORD)
+    s.add(existing)
+    await s.commit()
+    return uid
 
 
 async def main() -> None:
     _assert_safe_target()
     async with AsyncSession(engine) as s:
-        admin = (await s.exec(text('SELECT id FROM "user" WHERE is_admin ORDER BY id LIMIT 1'))).first()
-        if admin is None:
-            raise SystemExit("no admin user — start the app once so it seeds the admin")
-        uid = admin[0]
+        uid = await _ensure_demo_user(s)
 
-        # Idempotent, but scoped to the rows THIS script creates — identified by the
-        # exact (store, extension_id) pairs below and the one destination label. A
-        # blanket "delete everything this user owns" would take real extensions and
-        # their history with it (bot review, #315).
-        await s.exec(
-            delete(Extension).where(
-                Extension.user_id == uid,
-                tuple_(Extension.store, Extension.extension_id).in_(DEMO_KEYS),
-            )
-        )
+        # Safe to clear wholesale: everything this user owns was put there by a prior
+        # run of this script (enforced by the collision check above).
+        await s.exec(delete(Extension).where(Extension.user_id == uid))
         # Rules cascade from the destination via the schema's ondelete=CASCADE.
-        await s.exec(
-            delete(AlertDestination).where(
-                AlertDestination.user_id == uid,
-                AlertDestination.label == DEST_LABEL,
-            )
-        )
+        await s.exec(delete(AlertDestination).where(AlertDestination.user_id == uid))
         await s.commit()
 
         made: list[Extension] = []
