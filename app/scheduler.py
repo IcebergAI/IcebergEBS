@@ -186,8 +186,14 @@ async def refresh_watchlist(client: httpx.AsyncClient) -> None:
     try:
         logger.info("Starting watchlist refresh")
         # Re-fire any alerts persisted-but-not-delivered before a prior shutdown/crash (#109),
-        # before the new cycle overwrites the state they describe.
-        await recover_pending_alerts(engine, client)
+        # before the new cycle overwrites the state they describe. Guarded (#282 review):
+        # recover_pending_alerts now isolates per extension internally, but a cycle-level guard
+        # also backstops any error outside that loop (the initial scan query, an unexpected bug)
+        # so recovery can never abort the refresh cycle or leave the /readyz heartbeat stale.
+        try:
+            await recover_pending_alerts(engine, client)
+        except Exception:
+            logger.exception("Pending-alert recovery raised; continuing with refresh cycle")
         async with AsyncSession(engine) as session:
             rows = (
                 await session.exec(

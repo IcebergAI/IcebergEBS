@@ -256,7 +256,10 @@ release to diff against.
   and the `/readyz` scheduler heartbeat left stale. All tails are now guarded, and the driving
   loop carries a breaker-neutral backstop so an escaped internal error records `ERROR` and the
   cycle continues. A failed alert delivery after a committed state change now also retries via
-  the durable pending-alert marker instead of escaping.
+  the durable pending-alert marker instead of escaping. Pending-alert **recovery** (which runs
+  at the head of each cycle, before the refresh loop) is likewise isolated per extension and
+  wrapped in a cycle-level guard, so a concurrent delete or delivery error during recovery can't
+  abort the refresh or leave the `/readyz` heartbeat stale either.
 - **Detail-page permission badges no longer contradict the score** (#281). The template
   hand-copied the permission-tier sets and had drifted: `declarativeNetRequestWithHostAccess`
   (CRITICAL — maxes the permissions score), `pageCapture` (HIGH), and the `*://*/*` broad-host
