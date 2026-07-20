@@ -20,6 +20,10 @@ permissions:
 jobs:
   release:
     runs-on: ubuntu-latest
+    # Cap the job (matching ci.yml) so a wedged step can't burn the 6h default — on a
+    # release that would also leave a half-published release (image pushed, no
+    # signature/attestation/GitHub Release) hanging for hours (#289).
+    timeout-minutes: 30
     permissions:
       contents: write # gh release create
       packages: write # push image to GHCR

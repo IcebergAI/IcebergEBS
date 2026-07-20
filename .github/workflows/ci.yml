@@ -260,7 +260,9 @@ jobs:
           fi
 
   # the Caddy edge proxy) and drives it with Playwright, so a CSP
-  # violation — e.g. the hand-maintained inline-script hash drifting — or a broken
+  # violation — e.g. a dynamically-injected inline script, or an x-data expression the
+  # @alpinejs/csp build can't evaluate (#106 retired the hand-maintained inline-script
+  # hash for the external theme-boot.js) — or a broken
   # Alpine component fails CI. The API/unit suite can see none of that. Playwright is
   # installed into a throwaway venv, not the dev group: like zizmor/vulture it's a
   # standalone tool, so it needs no uv.lock entry (and can't get one here — uv.lock's

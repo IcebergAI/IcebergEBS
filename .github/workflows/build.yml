@@ -20,9 +20,20 @@ permissions:
   contents: read
   packages: write
 
+# Serialize edge builds: two quick merges to main otherwise race, and the older
+# commit's job can push last (build-cache variance), leaving the mutable :edge pointer
+# at the older build until the next merge — the stale-pointer confusion class #88
+# removed :latest to avoid. A superseded main *build* is pure waste (unlike CI's six
+# jobs, whose green record on the commit is the point), so cancel it (#289).
+concurrency:
+  group: build-edge
+  cancel-in-progress: true
+
 jobs:
   build:
     runs-on: ubuntu-latest
+    # Cap the job so a wedged build/push step can't burn the 6h default, matching ci.yml.
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
