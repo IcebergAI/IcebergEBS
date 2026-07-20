@@ -516,6 +516,36 @@ async def test_returning_email_sync_ignores_unverified_claim(session):
     assert a_again.email == "a@old.test"
 
 
+async def test_returning_email_sync_skips_local_account_collision(session):
+    # #288: the uq_user_sso_email partial index only rejects collisions with another SSO
+    # account. A returning SSO account adopting a LOCAL account's address (the break-glass
+    # admin's, say) would commit cleanly through the index — the app-level _email_owner
+    # check must refuse it, symmetric with JIT provisioning.
+    session.add(User(username="breakglass", password_hash="x", email="admin@corp.test", is_admin=True))
+    await session.commit()
+    a, _ = await provision_oidc_user(session, cfg=_cfg(), identity=_identity(subject="sub-a", email="a@corp.test"))
+    a_id = a.id  # capture before later commits expire the instance
+
+    a_again, created = await provision_oidc_user(
+        session, cfg=_cfg(), identity=_identity(subject="sub-a", email="Admin@Corp.Test")
+    )
+    assert created is False
+    assert a_again.id == a_id
+    assert a_again.email == "a@corp.test"  # unchanged — the local admin's address was not adopted
+
+
+def test_standard_adapter_rejects_string_email_verified():
+    # #288: JSON string "false" (seen from custom Auth0 rules / claim-mapping proxies) is
+    # truthy — bool() would fail OPEN and JIT-provision on an unverified email. Only a real
+    # boolean true counts, matching EntraAdapter's `is True`.
+    adapter = get_adapter("authentik")
+    claims = {"iss": "https://i.test", "sub": "s", "email": "e@x.test"}
+    assert adapter.extract_identity({**claims, "email_verified": "false"}, "").email_verified is False
+    assert adapter.extract_identity({**claims, "email_verified": "true"}, "").email_verified is False
+    assert adapter.extract_identity({**claims, "email_verified": True}, "").email_verified is True
+    assert adapter.extract_identity(claims, "").email_verified is False
+
+
 # --------------------------------------------------------------------------- #
 # Adapters
 # --------------------------------------------------------------------------- #

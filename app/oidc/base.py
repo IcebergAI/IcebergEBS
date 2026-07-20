@@ -62,7 +62,12 @@ class StandardOIDCAdapter:
             issuer=issuer,
             subject=subject,
             email=email,
-            email_verified=bool(claims.get("email_verified", False)),
+            # Strict identity, matching EntraAdapter: `bool(...)` fails OPEN on the JSON
+            # string "false" (seen from custom Auth0 rules / claim-mapping proxies) — it's
+            # truthy, so JIT provisioning would proceed on an unverified email, the exact
+            # address-squatting vector provision_oidc_user's verified-email gate blocks
+            # (#288). Only a real boolean true counts as verified.
+            email_verified=claims.get("email_verified") is True,
             groups=_groups_from(claims, role_claim),
         )
 
