@@ -344,6 +344,22 @@ def test_scrub_survives_surrogateescape_explicit_credentials(monkeypatch):
     assert "p\udcffss" not in scrubbed
 
 
+def test_scrub_percent_shaped_explicit_credential_keeps_backstop(monkeypatch):
+    # A %-shaped explicit credential (e.g. %2F) must not disable the generic
+    # URL-userinfo backstop: unquote(%2F)=='/' as a redaction form would replace
+    # every slash, destroying '://' before the backstop runs and leaking
+    # unrelated userinfo. scrub() applies no decoded form to explicit creds and
+    # runs the backstop first, so unrelated userinfo is still redacted (#228 review).
+    monkeypatch.setattr(settings, "proxy_username", "")
+    monkeypatch.setattr(settings, "proxy_password", SecretStr("%2F"))
+    for env in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy"):
+        monkeypatch.delenv(env, raising=False)
+    scrubbed = proxy.scrub("ProxyError via http://eve:pw123@proxy.corp:3128")
+    assert "eve" not in scrubbed
+    assert "pw123" not in scrubbed
+    assert "proxy.corp" in scrubbed  # backstop still redacted the userinfo
+
+
 # ---------------------------------------------------------------------------
 # ProxyRoutingTransport
 # ---------------------------------------------------------------------------
