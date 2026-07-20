@@ -225,3 +225,55 @@ async def test_detail_page_tolerates_non_string_host_permission_member(client, t
     r = await client.get(f"/extensions/{ext_id}")
     assert r.status_code == 200
     assert '<span class="perm-tag perm-high">https://ok.example.com/*</span>' in r.text
+
+
+async def test_latest_fetch_logs_picks_newest_with_deterministic_tiebreak(test_db, admin_user):
+    # The DISTINCT ON rewrite (#284) must keep the latest-log-per-extension contract,
+    # with id DESC breaking exact-timestamp ties (newest row wins).
+    from datetime import datetime, timezone
+
+    from app.models import FetchLog
+    from app.routes.ui import _latest_fetch_logs
+
+    async with AsyncSession(test_db) as s:
+        ext = Extension(
+            user_id=admin_user.id,
+            store="chrome",
+            extension_id="e" * 32,
+            name="Logged",
+            publisher="Acme",
+            version="1.0",
+            store_url="https://example.com",
+        )
+        s.add(ext)
+        await s.commit()
+        await s.refresh(ext)
+        ext_id = ext.id
+        t1 = datetime(2026, 6, 1, 12, 0, tzinfo=timezone.utc)
+        t2 = datetime(2026, 6, 2, 12, 0, tzinfo=timezone.utc)
+        s.add(FetchLog(extension_id=ext_id, success=True, fetched_at=t1))
+        s.add(FetchLog(extension_id=ext_id, success=False, fetched_at=t2))
+        s.add(FetchLog(extension_id=ext_id, success=True, fetched_at=t2))  # same ts, higher id
+        await s.commit()
+
+        latest = await _latest_fetch_logs(s, [ext_id])
+    assert latest[ext_id].fetched_at.replace(tzinfo=timezone.utc) == t2
+    assert latest[ext_id].success is True  # id DESC tie-break: the later insert wins
+
+
+def test_latest_fetch_logs_query_is_bounded_per_extension():
+    # #284 review: the dashboard's latest-log lookup must retrieve ONE indexed row
+    # per extension (a correlated LATERAL ... LIMIT 1), not scan-and-dedupe every
+    # FetchLog row (the earlier DISTINCT ON stayed linear in total history despite
+    # the composite index). Assert on the compiled SQL so a regression back to
+    # DISTINCT ON — which renders neither LATERAL nor LIMIT — fails here.
+    from sqlalchemy.dialects import postgresql
+
+    from app.routes.ui import _latest_fetch_logs_stmt
+
+    sql = str(
+        _latest_fetch_logs_stmt([1, 2, 3]).compile(dialect=postgresql.dialect(), compile_kwargs={"literal_binds": True})
+    ).upper()
+    assert "LATERAL" in sql, sql
+    assert "LIMIT 1" in sql, sql
+    assert "DISTINCT" not in sql, sql

@@ -145,6 +145,20 @@ class Extension(SQLModel, table=True):
 
 
 class FetchLog(SQLModel, table=True):
+    # Composite index for the dashboard's latest-log-per-extension lookup (#284):
+    # the DISTINCT ON query in routes/ui.py:_latest_fetch_logs orders by
+    # (extension_id, fetched_at DESC, id DESC) over every dashboard render, and the
+    # single-column extension_id index degrades to a sort of the whole per-extension
+    # history — the same shape sibling InstallCountHistory already indexes.
+    __table_args__ = (
+        Index(
+            "ix_fetchlog_extension_fetched_id",
+            "extension_id",
+            desc("fetched_at"),
+            desc("id"),
+        ),
+    )
+
     id: Optional[int] = Field(default=None, primary_key=True)
     extension_id: int = Field(foreign_key="extension.id", ondelete="CASCADE", index=True)
     fetched_at: datetime = Field(default_factory=_utcnow, sa_column=_tz_column(nullable=False))

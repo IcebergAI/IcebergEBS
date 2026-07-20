@@ -26,6 +26,7 @@ from app.retention import freshness_cutoff
 from app.scoring import risk_level
 from app.services import fetch_and_store, fire_pending_alerts
 from app.threat_intel import build_threat_intel_indicators
+from app.utils import json_list
 
 logger = logging.getLogger(__name__)
 
@@ -627,8 +628,32 @@ def _csv_safe(value):
     return value
 
 
-def _export_row(ext: Extension) -> dict:
-    perms = ext.permissions_list()
+# The scalar columns _export_row consumes — the export query selects exactly these
+# instead of full ORM rows (#284): a full Extension row drags the multi-KB
+# package_analysis/risk_detail/pending_alert_events JSON blobs into memory for every
+# match, and the export is deliberately unpaginated.
+_EXPORT_COLUMNS = (
+    Extension.id,
+    Extension.store,
+    Extension.extension_id,
+    Extension.name,
+    Extension.publisher,
+    Extension.version,
+    Extension.install_count,
+    Extension.last_updated,
+    Extension.risk_score,
+    Extension.install_footprint,
+    Extension.permissions,
+    Extension.watchlist,
+    Extension.added_at,
+    Extension.last_fetched_at,
+)
+
+
+def _export_row(ext) -> dict:
+    """Build one export dict from a column-only Row (named-attribute access — the
+    same names as the Extension attributes it previously took)."""
+    perms = [p for p in json_list(ext.permissions, "permissions", ext.id) if isinstance(p, str)]
     return {
         "id": ext.id,
         "store": ext.store,
@@ -659,8 +684,14 @@ async def export_extensions(
     """Export the full (filtered) extension set with score + key fields, for
     reporting / downstream ingest. Shares the list endpoint's filter/sort params
     (`build_extension_query`) but is **not** paginated — it returns every match."""
-    stmt = build_extension_query(current_user.id, filters)
-    rows = [_export_row(e) for e in (await session.exec(stmt)).all()]
+    # Column-only projection (#284): keep the shared filter/sort query but select just
+    # the scalar export columns instead of materialising full ORM rows with their JSON
+    # blobs. with_only_columns preserves the WHERE/ORDER BY built above.
+    stmt = build_extension_query(current_user.id, filters).with_only_columns(*_EXPORT_COLUMNS)
+    # session.execute (not .exec): the statement is still typed Select[Extension], so
+    # SQLModel's exec() would .scalars() it down to the first column (id). execute()
+    # returns Rows with named-attribute access, which _export_row reads (#284).
+    rows = [_export_row(e) for e in (await session.execute(stmt)).all()]
 
     if format == "json":
         return JSONResponse(
@@ -921,13 +952,25 @@ async def get_history(
     ext_id: int,
     current_user: CurrentUser,
     session: SessionDep,
+    limit: Annotated[int, Query(ge=1, le=500, description="Most recent points to return")] = 500,
+    since: Annotated[datetime | None, Query(description="Only points recorded at/after this time")] = None,
 ) -> list[HistoryPoint]:
+    """Install-count history, oldest→newest.
+
+    Bounded like ``/alerts/log`` (#284): history accrues ~8.8k rows/extension/year
+    with retention off (the default), and this endpoint returned all of them to
+    every polling SOAR consumer. ``limit`` keeps the MOST RECENT N points (the
+    query walks the ``(extension_id, recorded_at DESC, id DESC)`` index, then the
+    result is re-sorted ascending so consumers still read a forward timeline);
+    ``since`` fetches increments cheaply.
+    """
     await get_owned_or_404(session, Extension, ext_id, current_user.id)
+    stmt = select(InstallCountHistory).where(InstallCountHistory.extension_id == ext_id)
+    if since is not None:
+        stmt = stmt.where(InstallCountHistory.recorded_at >= since)
     rows = (
         await session.exec(
-            select(InstallCountHistory)
-            .where(InstallCountHistory.extension_id == ext_id)
-            .order_by(InstallCountHistory.recorded_at)
+            stmt.order_by(InstallCountHistory.recorded_at.desc(), InstallCountHistory.id.desc()).limit(limit)
         )
     ).all()
-    return [HistoryPoint(recorded_at=r.recorded_at, install_count=r.install_count) for r in rows]
+    return [HistoryPoint(recorded_at=r.recorded_at, install_count=r.install_count) for r in reversed(rows)]

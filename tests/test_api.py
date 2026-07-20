@@ -674,3 +674,50 @@ async def test_interactive_refresh_failure_error_message_is_scrubbed(client, tes
     assert "hunter2" not in message
     assert "bob" not in message
     assert "proxy.corp" in message  # only the userinfo is redacted
+
+
+async def test_history_is_bounded_and_supports_since(client, test_db):
+    # /history returned every row unbounded (~8.8k/extension/year with retention off)
+    # to every polling SOAR consumer (#284). limit keeps the most recent N (returned
+    # oldest→newest so consumers still read a forward timeline); since fetches
+    # increments.
+    from datetime import datetime, timedelta, timezone
+
+    from sqlmodel.ext.asyncio.session import AsyncSession
+
+    from app.models import Extension, InstallCountHistory
+
+    with patch("app.fetchers.VSCodeFetcher") as MockFetcher:
+        MockFetcher.return_value.fetch = AsyncMock(return_value=(_fake_metadata(), None))
+        r = await client.post("/api/extensions", json={"store": "vscode", "extension_id": "testpub.hist-bound"})
+    ext_id = r.json()["id"]
+
+    base = datetime(2026, 6, 1, tzinfo=timezone.utc)
+    async with AsyncSession(test_db) as s:
+        assert await s.get(Extension, ext_id) is not None
+        for i in range(6):
+            s.add(
+                InstallCountHistory(extension_id=ext_id, install_count=1000 + i, recorded_at=base + timedelta(days=i))
+            )
+        await s.commit()
+
+    r_lim = await client.get(f"/api/extensions/{ext_id}/history?limit=3")
+    points = r_lim.json()
+    assert len(points) == 3
+    counts = [p["install_count"] for p in points]
+    assert counts == sorted(counts)  # ascending timeline
+    assert 1005 in counts  # the MOST RECENT points were kept
+
+    # Pass `since` via params so httpx percent-encodes the "+00:00" offset — a bare
+    # "+" in the query string decodes to a space server-side and 422s the datetime.
+    r_since = await client.get(
+        f"/api/extensions/{ext_id}/history", params={"since": (base + timedelta(days=4)).isoformat()}
+    )
+    # Filter to the manually-inserted band (1000–1005); the extension-creation
+    # POST auto-records one real-"now" history point (install_count 50000) that is
+    # also >= `since`, and it's not what this assertion is about.
+    since_counts = [p["install_count"] for p in r_since.json() if 1000 <= p["install_count"] < 2000]
+    assert set(since_counts) == {1004, 1005}
+
+    r_cap = await client.get(f"/api/extensions/{ext_id}/history?limit=501")
+    assert r_cap.status_code == 422  # bounded like /alerts/log
