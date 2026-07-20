@@ -194,7 +194,9 @@ services:
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-iceberg_ebs}
       POSTGRES_USER: ${POSTGRES_USER:-iceberg_ebs}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      # `${VAR:?message}`, never a bare `${VAR}`: a bare ref interpolates to "" behind a
+      # scrolled-past warning and the stack starts with a passwordless DB (#273).
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env - see .env.example, generate with 'openssl rand -hex 32'}"
     volumes:
       # Postgres 18+ wants the volume at /var/lib/postgresql (data lives in a
       # major-version subdirectory); the old .../data mount makes the 18 entrypoint error.
@@ -217,10 +219,10 @@ services:
     tmpfs:
       - /tmp
     environment:
-      ICEBERG_EBS_DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-iceberg_ebs}:${POSTGRES_PASSWORD}@postgres/${POSTGRES_DB:-iceberg_ebs}
-      ICEBERG_EBS_ADMIN_USERNAME: ${ICEBERG_EBS_ADMIN_USERNAME}
-      ICEBERG_EBS_ADMIN_PASSWORD: ${ICEBERG_EBS_ADMIN_PASSWORD}
-      ICEBERG_EBS_SECRET_KEY: ${ICEBERG_EBS_SECRET_KEY}
+      ICEBERG_EBS_DATABASE_URL: "postgresql+asyncpg://${POSTGRES_USER:-iceberg_ebs}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres/${POSTGRES_DB:-iceberg_ebs}"
+      ICEBERG_EBS_ADMIN_USERNAME: "${ICEBERG_EBS_ADMIN_USERNAME:?set ICEBERG_EBS_ADMIN_USERNAME in .env}"
+      ICEBERG_EBS_ADMIN_PASSWORD: "${ICEBERG_EBS_ADMIN_PASSWORD:?set ICEBERG_EBS_ADMIN_PASSWORD in .env}"
+      ICEBERG_EBS_SECRET_KEY: "${ICEBERG_EBS_SECRET_KEY:?set ICEBERG_EBS_SECRET_KEY in .env - generate with 'python -c \"import secrets; print(secrets.token_hex(32))\"'}"
       ICEBERG_EBS_APP_BASE_URL: ${ICEBERG_EBS_APP_BASE_URL:-}
       ICEBERG_EBS_SECURE_COOKIES: "true"
       ICEBERG_EBS_LOG_JSON: ${ICEBERG_EBS_LOG_JSON:-false}
@@ -274,7 +276,8 @@ services:
       - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
       - ./caddy/headers.caddy:/etc/caddy/headers.caddy:ro
       - ./caddy/certs:/etc/caddy/certs:ro
-      - ./static:/srv/static:ro
+      # No ./static mount: since #85 the built static tree (output.css) exists only
+      # inside the app image, so Caddy proxies /static to the app like the K8s sidecar.
     healthcheck:
       # Plain-HTTP local liveness (the /caddy-health handler in the Caddyfile).
       test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:80/caddy-health"]
@@ -303,7 +306,7 @@ services:
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-iceberg_ebs}
       POSTGRES_DB: ${POSTGRES_DB:-iceberg_ebs}
-      PGPASSWORD: ${POSTGRES_PASSWORD}
+      PGPASSWORD: "${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}"
       BACKUP_RETENTION_DAYS: ${BACKUP_RETENTION_DAYS:-7}
       BACKUP_INTERVAL_SECONDS: ${BACKUP_INTERVAL_SECONDS:-86400}
     command: [sh, -c, "…"]   # pg_dump loop — see docker-compose.yml

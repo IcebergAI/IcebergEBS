@@ -22,6 +22,7 @@ from pathlib import Path
 _ROOT = Path(__file__).resolve().parent.parent
 _BASE = _ROOT / "docker-compose.yml"
 _DEV = _ROOT / "docker-compose.dev.yml"
+_DEPLOY = _ROOT / "DEPLOYMENT.md"
 
 # Variables carrying a credential: every reference in the base file must be guarded.
 # An empty value for any of these is a security problem, not just a startup problem —
@@ -71,6 +72,39 @@ def test_every_credential_is_actually_referenced() -> None:
     assert not missing, (
         f"{missing} no longer referenced in {_BASE.name} — if intentionally renamed, update "
         "_MUST_BE_GUARDED so the guard keeps covering it rather than silently passing."
+    )
+
+
+def _deploy_compose_blocks() -> list[str]:
+    """The fenced code blocks in DEPLOYMENT.md that embed the Compose stack.
+
+    The doc's stated purpose is hand-assembling a stack from the snippet, so the snapshot
+    must carry the same guards as the real file — an operator copying it must not
+    reintroduce the empty-string-credential trap (#273/#290). Scanning the whole doc would
+    trip on prose; scope to the fenced block(s) that actually contain the credentials.
+    """
+    fences = re.findall(r"```[^\n]*\n(.*?)```", _DEPLOY.read_text(), re.DOTALL)
+    return [block for block in fences if "POSTGRES_PASSWORD" in block]
+
+
+def test_deployment_md_compose_snapshot_guards_credentials() -> None:
+    """The embedded snapshot must use ${VAR:?} guards and carry no retired ./static mount (#290)."""
+    blocks = _deploy_compose_blocks()
+    assert blocks, "no embedded Compose snippet with credentials found in DEPLOYMENT.md"
+    snippet = "\n".join(blocks)
+    unguarded = {
+        f"{var}{suffix}"
+        for var in _MUST_BE_GUARDED
+        for suffix in _references(snippet, var)
+        if not suffix.startswith(":?")
+    }
+    assert not unguarded, (
+        f"DEPLOYMENT.md Compose snapshot has unguarded credential reference(s): {sorted(unguarded)}. "
+        "Re-sync it with docker-compose.yml (${VAR:?message}) so a copy-pasted stack fails loudly (#273/#290)."
+    )
+    assert "srv/static" not in snippet, (
+        "DEPLOYMENT.md Compose snapshot still mounts ./static into Caddy — retired by #85 "
+        "(the built static tree lives only in the app image; Caddy proxies /static to the app)."
     )
 
 
