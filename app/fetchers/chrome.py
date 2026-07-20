@@ -101,11 +101,15 @@ def _parse_page(html: str, extension_id: str, url: str) -> ExtensionMetadata:
                 anchor = soup.find(string=re.compile(rf"^\s*{re.escape(anchor_label)}\s*$", re.IGNORECASE))
                 if anchor is not None:
                     break
-            version = ""
             if anchor is not None:
+                # Details region present: only a candidate AT OR AFTER it is the real
+                # version. If none follows the anchor, leave version empty (keep-stale) —
+                # never fall back to a pre-anchor description node (#279 review).
                 after = {id(n) for n in anchor.find_all_next(string=True)}
                 version = next((ver for node, ver in candidates if id(node) in after), "")
-            if not version:
+            else:
+                # No Details labels (degraded page): take the last candidate, since the
+                # real version follows any earlier description mention.
                 version = candidates[-1][1]
 
     visible = soup.get_text(" ")
