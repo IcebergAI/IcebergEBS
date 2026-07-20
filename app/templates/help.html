@@ -88,7 +88,10 @@
       <strong>Exposure</strong> ("blast radius") = <span class="mono">risk score × assets installed</span>.
       The dashboard ranks your highest-exposure extensions, and each extension's detail page shows how
       many assets it's on and a per-department breakdown. Sort any list/export by
-      <span class="mono">sort=exposure</span>.
+      <span class="mono">sort=exposure</span>. Footprint <strong>decays</strong>: an observation your
+      SOAR stops re-reporting drops out of the count after
+      <span class="mono">ICEBERG_EBS_INVENTORY_FRESHNESS_DAYS</span> (default 30), so an extension
+      removed from your endpoints stops inflating exposure.
     </p>
   </div>
 

@@ -61,6 +61,7 @@ icebergEbs:
   # 0 disables pruning; set to e.g. 90 for a real watchlist so history doesn't grow
   # unbounded (#22, #87).
   retentionDays: 0
+  inventoryFreshnessDays: 30  # footprint decay window in days (#287); 0 disables
   sessionMaxAge: 86400     # session lifetime in seconds
   oidcSessionMaxAge: 3600  # SSO session cap in seconds (#221) — bounds IdP-disable propagation
   apiKeySsoMaxAgeDays: 30  # SSO-owned API keys expire after N days (#278); 0 disables

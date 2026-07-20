@@ -10,6 +10,7 @@ data:
   ICEBERG_EBS_TRUSTED_ORIGINS:        {{ .Values.icebergEbs.trustedOrigins | quote }}
   ICEBERG_EBS_FETCH_INTERVAL_MINUTES: {{ .Values.icebergEbs.fetchIntervalMinutes | quote }}
   ICEBERG_EBS_RETENTION_DAYS:         {{ .Values.icebergEbs.retentionDays | quote }}
+  ICEBERG_EBS_INVENTORY_FRESHNESS_DAYS: {{ .Values.icebergEbs.inventoryFreshnessDays | quote }}
   ICEBERG_EBS_SESSION_MAX_AGE:        {{ .Values.icebergEbs.sessionMaxAge | quote }}
   ICEBERG_EBS_OIDC_SESSION_MAX_AGE:   {{ .Values.icebergEbs.oidcSessionMaxAge | quote }}
   ICEBERG_EBS_API_KEY_SSO_MAX_AGE_DAYS: {{ .Values.icebergEbs.apiKeySsoMaxAgeDays | quote }}

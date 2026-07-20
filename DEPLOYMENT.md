@@ -734,6 +734,7 @@ icebergEbs:
   appBaseUrl: ""           # e.g. https://icebergebs.example.com
   fetchIntervalMinutes: 60
   retentionDays: 0         # prune history older than N days; 0 disables (#22, #87)
+  inventoryFreshnessDays: 30  # footprint decay window in days (#287); 0 disables
   sessionMaxAge: 86400     # session lifetime in seconds
   oidcSessionMaxAge: 3600  # SSO session cap in seconds (#221) — bounds IdP-disable propagation
   apiKeySsoMaxAgeDays: 30  # SSO-owned API keys expire after N days (#278); 0 disables
@@ -823,6 +824,7 @@ data:
   ICEBERG_EBS_APP_BASE_URL:          {{ .Values.icebergEbs.appBaseUrl | quote }}
   ICEBERG_EBS_FETCH_INTERVAL_MINUTES: {{ .Values.icebergEbs.fetchIntervalMinutes | quote }}
   ICEBERG_EBS_RETENTION_DAYS:        {{ .Values.icebergEbs.retentionDays | quote }}
+  ICEBERG_EBS_INVENTORY_FRESHNESS_DAYS: {{ .Values.icebergEbs.inventoryFreshnessDays | quote }}
   ICEBERG_EBS_SESSION_MAX_AGE:       {{ .Values.icebergEbs.sessionMaxAge | quote }}
   ICEBERG_EBS_OIDC_SESSION_MAX_AGE:  {{ .Values.icebergEbs.oidcSessionMaxAge | quote }}
   ICEBERG_EBS_API_KEY_SSO_MAX_AGE_DAYS: {{ .Values.icebergEbs.apiKeySsoMaxAgeDays | quote }}

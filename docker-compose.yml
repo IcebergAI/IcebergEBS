@@ -75,6 +75,9 @@ services:
       # from the image by .dockerignore) and retention/fetch-interval silently
       # fall back to their defaults (retention off, 60-minute interval).
       ICEBERG_EBS_RETENTION_DAYS: ${ICEBERG_EBS_RETENTION_DAYS:-0}
+      # Install-footprint decay window (#287): observations not re-seen within N days
+      # stop counting toward footprint/exposure (0 disables decay).
+      ICEBERG_EBS_INVENTORY_FRESHNESS_DAYS: ${ICEBERG_EBS_INVENTORY_FRESHNESS_DAYS:-30}
       ICEBERG_EBS_FETCH_INTERVAL_MINUTES: ${ICEBERG_EBS_FETCH_INTERVAL_MINUTES:-60}
       # Also forwarded (advertised as tunable in README): session lifetime + outbound
       # HTTP timeout. Other app/config.py settings use their defaults unless added here.

@@ -22,6 +22,7 @@ from app.deps import CurrentUser, SessionDep, get_owned_or_404
 from app.extension_queries import ExtensionFilters, build_extension_query, count_rows, exposure
 from app.fetchers.base import FetchError
 from app.models import Extension, FetchLog, InstallCountHistory, InstallObservation
+from app.retention import freshness_cutoff
 from app.scoring import risk_level
 from app.services import fetch_and_store, fire_pending_alerts
 from app.threat_intel import build_threat_intel_indicators
@@ -835,13 +836,18 @@ async def ingest_inventory(
             }
         )
 
-    # Recompute the cached footprint (distinct assets) for every touched extension.
+    # Recompute the cached footprint (distinct assets) for every touched extension —
+    # over FRESH observations only (#287), so a stale (extension, asset) pair the
+    # SOAR stopped reporting no longer counts. Extensions absent from every batch
+    # decay via the daily run_footprint_refresh job.
+    cutoff = freshness_cutoff()
     for ext_id in affected:
-        count = await session.scalar(
-            select(func.count(func.distinct(InstallObservation.asset_id))).where(
-                InstallObservation.extension_id == ext_id
-            )
+        count_q = select(func.count(func.distinct(InstallObservation.asset_id))).where(
+            InstallObservation.extension_id == ext_id
         )
+        if cutoff is not None:
+            count_q = count_q.where(InstallObservation.last_seen >= cutoff)
+        count = await session.scalar(count_q)
         ext = await session.get(Extension, ext_id)
         if ext is not None:
             ext.install_footprint = int(count or 0)
