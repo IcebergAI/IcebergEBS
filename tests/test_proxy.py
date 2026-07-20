@@ -319,6 +319,31 @@ def test_scrub_survives_malformed_proxy_env(monkeypatch):
     assert "proxy.corp" in scrubbed  # host preserved; only userinfo redacted
 
 
+def test_scrub_survives_surrogateescape_proxy_env(monkeypatch):
+    # os.environ decodes invalid UTF-8 bytes via surrogateescape, so a proxy env
+    # value can carry a lone surrogate (\udcff). urlsplit() accepts it, but
+    # quote(secret) raises UnicodeEncodeError — scrub() must stay total and still
+    # redact the credential (#228).
+    monkeypatch.setattr(settings, "proxy_username", "")
+    monkeypatch.setattr(settings, "proxy_password", SecretStr(""))
+    secret = "s\udcffcret"
+    monkeypatch.setenv("HTTPS_PROXY", f"http://user:{secret}@proxy.corp:3128")
+    scrubbed = proxy.scrub(f"ProxyError via http://user:{secret}@proxy.corp:3128")
+    assert secret not in scrubbed
+    assert "proxy.corp" in scrubbed  # host preserved; only userinfo redacted
+
+
+def test_scrub_survives_surrogateescape_explicit_credentials(monkeypatch):
+    # The same surrogate-escape hazard applies to the explicit EXPLICIT-mode
+    # credentials, whose quote() spelling scrub() also builds (#228).
+    monkeypatch.setattr(settings, "proxy_username", "user")
+    monkeypatch.setattr(settings, "proxy_password", SecretStr("p\udcffss"))
+    for env in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy"):
+        monkeypatch.delenv(env, raising=False)
+    scrubbed = proxy.scrub("ProxyError authenticating user with p\udcffss")
+    assert "p\udcffss" not in scrubbed
+
+
 # ---------------------------------------------------------------------------
 # ProxyRoutingTransport
 # ---------------------------------------------------------------------------
