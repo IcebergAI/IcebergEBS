@@ -26,9 +26,12 @@ writes a credential, and never inspects an account to guess its provenance.
 ## Process
 
 ```bash
-# 1. Postgres, plus a database that exists only for this.
+# 1. Postgres, plus a database that exists only for this. `set -a` EXPORTS the .env
+#    vars — shoot.py reads ICEBERG_EBS_ADMIN_USERNAME/PASSWORD from os.environ, and a
+#    plain `source` leaves them as shell-local (unexported) so the child process
+#    wouldn't see them.
 make db
-source .env
+set -a; source .env; set +a
 docker exec -e PGPASSWORD="$POSTGRES_PASSWORD" -i "$(docker compose ps -q postgres)" \
   createdb -U "$POSTGRES_USER" iceberg_ebs_screenshots
 
