@@ -418,4 +418,7 @@ async def test_inventory_recompute_ignores_stale_observations(client, test_db, m
     assert r.status_code == 200
     async with AsyncSession(test_db) as s:
         ext = await s.get(Extension, ext_id)
-    assert ext.install_footprint == 1  # host-gone no longer counts
+        # Read inside the session: after it closes the instance is expired, and a
+        # lazy attribute load under asyncpg raises MissingGreenlet.
+        footprint = ext.install_footprint
+    assert footprint == 1  # host-gone no longer counts
