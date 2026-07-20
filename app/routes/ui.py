@@ -7,9 +7,11 @@ from fastapi import APIRouter, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from itsdangerous import URLSafeTimedSerializer
-from sqlalchemy import func
+from sqlalchemy import func, true
+from sqlalchemy.orm import aliased
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
+from sqlmodel.sql.expression import SelectOfScalar
 
 from app import oidc_settings, proxy_settings
 from app.alert_queries import get_alert_log
@@ -246,25 +248,35 @@ def _stale_after() -> timedelta:
     return timedelta(minutes=max(settings.fetch_interval_minutes * 2, 60))
 
 
-async def _latest_fetch_logs(session: AsyncSession, ext_ids: list[int]) -> dict[int, FetchLog]:
-    """Map each extension id to its most recent FetchLog (one query, not N+1).
+def _latest_fetch_logs_stmt(ext_ids: list[int]) -> SelectOfScalar[FetchLog]:
+    """Build the bounded latest-FetchLog-per-extension query.
 
-    Postgres ``DISTINCT ON`` walking the ``(extension_id, fetched_at DESC, id DESC)``
-    composite index (#284) — the previous group-by/max self-join re-sorted every
-    extension's whole history on each dashboard render, which turns the landing page
-    into a multi-second query once a large watchlist accumulates months of logs.
-    ``id DESC`` breaks exact-timestamp ties deterministically (newest row wins).
+    A correlated ``LATERAL`` that walks the ``(extension_id, fetched_at DESC, id DESC)``
+    composite index (#284) and takes ``LIMIT 1`` per extension — so each extension costs
+    one indexed row fetch, independent of how much history it has accumulated. The earlier
+    ``DISTINCT ON`` still read *every* matching FetchLog row before discarding duplicates
+    (the index removed the sort but not the per-extension scan), so the dashboard render
+    stayed linear in total log volume; the ``LATERAL`` bounds it. ``id DESC`` breaks
+    exact-timestamp ties deterministically (newest row wins); an extension with no logs
+    simply drops out of the inner join, exactly as under ``DISTINCT ON``.
     """
+    latest = aliased(
+        FetchLog,
+        select(FetchLog)
+        .where(FetchLog.extension_id == Extension.id)
+        .order_by(FetchLog.fetched_at.desc(), FetchLog.id.desc())
+        .limit(1)
+        .lateral(),
+        name="latest_fetchlog",
+    )
+    return select(latest).select_from(Extension).join(latest, true()).where(Extension.id.in_(ext_ids))
+
+
+async def _latest_fetch_logs(session: AsyncSession, ext_ids: list[int]) -> dict[int, FetchLog]:
+    """Map each extension id to its most recent FetchLog (one query, not N+1)."""
     if not ext_ids:
         return {}
-    rows = (
-        await session.exec(
-            select(FetchLog)
-            .where(FetchLog.extension_id.in_(ext_ids))
-            .distinct(FetchLog.extension_id)
-            .order_by(FetchLog.extension_id, FetchLog.fetched_at.desc(), FetchLog.id.desc())
-        )
-    ).all()
+    rows = (await session.exec(_latest_fetch_logs_stmt(ext_ids))).all()
     return {fl.extension_id: fl for fl in rows}
 
 

@@ -259,3 +259,21 @@ async def test_latest_fetch_logs_picks_newest_with_deterministic_tiebreak(test_d
         latest = await _latest_fetch_logs(s, [ext_id])
     assert latest[ext_id].fetched_at.replace(tzinfo=timezone.utc) == t2
     assert latest[ext_id].success is True  # id DESC tie-break: the later insert wins
+
+
+def test_latest_fetch_logs_query_is_bounded_per_extension():
+    # #284 review: the dashboard's latest-log lookup must retrieve ONE indexed row
+    # per extension (a correlated LATERAL ... LIMIT 1), not scan-and-dedupe every
+    # FetchLog row (the earlier DISTINCT ON stayed linear in total history despite
+    # the composite index). Assert on the compiled SQL so a regression back to
+    # DISTINCT ON — which renders neither LATERAL nor LIMIT — fails here.
+    from sqlalchemy.dialects import postgresql
+
+    from app.routes.ui import _latest_fetch_logs_stmt
+
+    sql = str(
+        _latest_fetch_logs_stmt([1, 2, 3]).compile(dialect=postgresql.dialect(), compile_kwargs={"literal_binds": True})
+    ).upper()
+    assert "LATERAL" in sql, sql
+    assert "LIMIT 1" in sql, sql
+    assert "DISTINCT" not in sql, sql
