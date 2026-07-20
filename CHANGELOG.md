@@ -13,7 +13,9 @@ The running build also reports a build identifier — `v0.1.0b1 · build 74 · 8
 where `build N · sha` identifies the exact commit. That is a *build* identifier, not a
 release version; only the SemVer part appears here.
 
-## [0.1.0-beta.1] — unreleased
+## [Unreleased]
+
+## [0.1.0-beta.1] — 2026-07-21
 
 First beta. Everything below is the work merged to `main` to date; there is no earlier
 release to diff against.
@@ -834,4 +836,5 @@ release to diff against.
   ingress to Postgres. Gated behind `networkPolicy.enabled` (default on); requires a CNI that
   enforces NetworkPolicy (Calico/Cilium).
 
-[0.1.0-beta.1]: https://github.com/IcebergAI/IcebergEBS/commits/main
+[Unreleased]: https://github.com/IcebergAI/IcebergEBS/compare/v0.1.0-beta.1...HEAD
+[0.1.0-beta.1]: https://github.com/IcebergAI/IcebergEBS/releases/tag/v0.1.0-beta.1
