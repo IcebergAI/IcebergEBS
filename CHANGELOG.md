@@ -257,6 +257,18 @@ release to diff against.
 
 ### Fixed
 
+- **The alert-destination Type dropdown is populated again, so destinations can be created from
+  the UI** (#311). `routes/ui.py` passed `destination_kinds` into the account-page context and
+  `senders/base.py:kind_descriptors` documents itself as feeding "both the
+  `GET /api/alerts/destination-kinds` endpoint and the account-page JSON island" — but the island
+  only serialised `destinations`/`rules`/`extensions`/`alert_log`, so `data.destination_kinds` was
+  undefined, `destinationKinds` fell back to `[]`, and the `x-for` produced no `<option>`s. The
+  blast radius ran past the dropdown: `selectedKind` resolved to `null`, so the kind-specific
+  config fields never rendered, the target label degraded to a generic "Target", and the
+  availability warning was suppressed — Slack/Teams/email/Jira/ServiceNow destinations were
+  unreachable from the UI. The page never calls the API endpoint, so the endpoint's own tests
+  could not catch it; the regression test asserts on the **rendered island** and that it matches
+  `kind_descriptors()` exactly, which is the contract that drifted.
 - **Wrong-shape stored `host_permissions`/`risk_detail` can no longer mis-score or blank the UI**
   (#291). Three consumers skipped the #150/#164/#167 defensive-parse guard: the keep-stale scoring
   path fed a stored `host_permissions` **string** into `score_permissions`' `set()` (iterating it
