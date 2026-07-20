@@ -9,7 +9,7 @@ from typing import Annotated, TypeVar
 from fastapi import Depends, HTTPException
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from app.auth import require_admin, require_admin_ui, require_api_auth, require_auth
+from app.auth import require_admin, require_admin_ui, require_api_auth, require_auth, require_session_user
 from app.database import get_session
 from app.models import User
 
@@ -50,6 +50,11 @@ CurrentUser = Annotated[User, Depends(require_api_auth)]
 
 # Authenticated user via the session cookie for HTML routes — redirects to /login.
 WebUser = Annotated[User, Depends(require_auth)]
+
+# Interactive session cookie only (Bearer rejected) for JSON routes that mint
+# credentials — POST /api/keys, so a bearer key can't self-renew (#278 review).
+# Raises JSON 401, never redirects.
+SessionUser = Annotated[User, Depends(require_session_user)]
 
 # Admin-only variants of the two above.
 AdminUser = Annotated[User, Depends(require_admin)]

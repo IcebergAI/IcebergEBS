@@ -28,7 +28,10 @@ release to diff against.
   cookies now revokes bearer tokens too), and SSO-owned keys expire a bounded number of days
   after creation (`ICEBERG_EBS_API_KEY_SSO_MAX_AGE_DAYS`, default 30, forwarded in both deploy
   stacks; 0 disables). Local accounts are unaffected — their keys are still deleted outright on
-  password change.
+  password change. Key **creation** now requires an interactive session — a bearer key can no
+  longer mint a replacement, so an SSO key can't self-renew past its lifetime. The revocation
+  cutoff uses a strict timestamp compare (no cookie-style 1s tolerance, since `created_at` keeps
+  microsecond precision).
 
 - **Public documentation site** under `website/`, built with Zensical and deployed to
   GitHub Pages at https://icebergai.github.io/IcebergEBS/ by `.github/workflows/docs.yml`

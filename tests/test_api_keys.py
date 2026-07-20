@@ -209,9 +209,21 @@ async def test_readonly_key_blocks_delete(readonly_api_key_client, test_db, admi
     assert r.status_code == 403
 
 
+async def test_bearer_key_cannot_create_key(api_key_client):
+    # Key creation is session-only (#278 review): a Bearer-authenticated key must
+    # not mint a replacement, or an SSO key could self-renew past its bounded
+    # lifetime and persist forever, defeating offboarding containment.
+    r = await api_key_client.post("/api/keys", json={"label": "renewal"})
+    assert r.status_code == 401
+    assert "session" in r.json()["detail"].lower()
+
+
 async def test_readonly_key_blocks_creating_new_key(readonly_api_key_client):
+    # Bearer key creation is rejected outright (session-only) — a read-only key is
+    # doubly barred. 401 (session required), not 403 (read-only), since the Bearer
+    # path never reaches the readonly check for this route now (#278 review).
     r = await readonly_api_key_client.post("/api/keys", json={"label": "new-key"})
-    assert r.status_code == 403
+    assert r.status_code == 401
 
 
 # ---------------------------------------------------------------------------
@@ -311,6 +323,33 @@ async def test_key_minted_before_password_change_is_rejected(anon_client, test_d
         user = await s.get(User, user_id)
         user.password_changed_at = datetime.now(timezone.utc) - timedelta(days=1)
         s.add(user)
+        await s.commit()
+    r = await anon_client.get("/api/extensions", headers={"Authorization": f"Bearer {raw_key}"})
+    assert r.status_code == 401
+    assert "revoked" in r.json()["detail"].lower()
+
+
+async def test_key_created_sub_second_before_password_change_is_rejected(anon_client, test_db):
+    # ApiKey.created_at keeps microsecond precision, so unlike the cookie cutoff
+    # there is no 1s tolerance: a key minted 500ms before password_changed_at is
+    # revoked, not accepted until its age cap (#278 review).
+    raw_key = generate_api_key()
+    base = datetime.now(timezone.utc) - timedelta(days=1)
+    async with AsyncSession(test_db) as s:
+        user = User(
+            username="subsec",
+            password_hash=None,
+            oidc_subject="sub-subsec",
+            auth_provider="authentik",
+            oidc_issuer="https://idp.test/",
+            role_managed_by_idp=True,
+            password_changed_at=base + timedelta(milliseconds=500),
+        )
+        s.add(user)
+        await s.commit()
+        await s.refresh(user)
+        user_id = user.id
+        s.add(ApiKey(user_id=user_id, label="soar", key_hash=hash_api_key(raw_key), created_at=base))
         await s.commit()
     r = await anon_client.get("/api/extensions", headers={"Authorization": f"Bearer {raw_key}"})
     assert r.status_code == 401

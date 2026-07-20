@@ -119,6 +119,24 @@ def _session_after_password_change(user, issued_at: datetime) -> bool:
     return issued_at >= changed - timedelta(seconds=1)
 
 
+def _api_key_after_password_change(user, created_at: datetime) -> bool:
+    """True if an API key created at ``created_at`` survives the revocation cutoff.
+
+    The bearer analogue of :func:`_session_after_password_change`, but with **no**
+    tolerance: that helper's 1s slack absorbs the session serializer's whole-second
+    timestamp rounding, whereas ``ApiKey.created_at`` keeps full microsecond
+    precision. A strict ``>=`` means a key minted even microseconds before a
+    password change / IdP-driven ``password_changed_at`` bump is revoked with the
+    sessions, not accepted for up to a second (#278 review).
+    """
+    changed = user.password_changed_at
+    if changed is None:
+        return True
+    if changed.tzinfo is None:
+        changed = changed.replace(tzinfo=timezone.utc)
+    return created_at >= changed
+
+
 def _session_within_sso_max_age(user, issued_at: datetime) -> bool:
     """True unless ``user`` is an SSO account whose cookie is older than the shorter
     SSO session lifetime (#221).
@@ -187,6 +205,28 @@ async def require_auth(
     return user
 
 
+async def require_session_user(
+    request: Request,
+    session: Annotated[AsyncSession, Depends(get_session)],
+):
+    """FastAPI dependency for JSON routes that must reject Bearer tokens — an
+    interactive session cookie only, raising JSON 401 (never a redirect).
+
+    Used for API-key creation (#278 review): ``POST /api/keys`` mints a new
+    credential, so letting a Bearer-authenticated key call it would let an SSO key
+    self-renew before its bounded lifetime and repeat indefinitely, defeating the
+    offboarding containment the rest of #278 builds. Requiring an interactive
+    session means a user whose IdP account is disabled — and who therefore can no
+    longer obtain a session — cannot bootstrap fresh keys. Reuses
+    ``authenticate_session`` so the same password-change / SSO-max-age cutoffs that
+    gate the cookie also gate key creation.
+    """
+    user = await authenticate_session(request, session)
+    if user is None:
+        raise HTTPException(status_code=401, detail="Session authentication required")
+    return user
+
+
 async def require_api_auth(
     request: Request,
     session: Annotated[AsyncSession, Depends(get_session)],
@@ -220,7 +260,7 @@ async def require_api_auth(
         # keys outright; this fence is what makes the IdP-driven bump (the #32
         # is_admin sync, which revokes cookies via the same marker) revoke bearer
         # tokens too, instead of leaving them as a side door.
-        if not _session_after_password_change(user, created_at):
+        if not _api_key_after_password_change(user, created_at):
             raise HTTPException(status_code=401, detail="API key revoked")
         # SSO-owned keys carry a bounded lifetime (#278): an IdP-side disable can't
         # be pushed to us and the offboarded user never logs in again, so nothing
