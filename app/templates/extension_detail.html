@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% block title %}IcebergEBS — {{ ext.name }}{% endblock %}
+{% block crumb %}{{ ext.name }}{% endblock %}
 
 {% block content %}
 {# risk_band comes from the route (app/scoring.risk_level — the single home of
@@ -18,12 +19,7 @@
 <div x-data="extDetail">
 
 {# ── Action row ──────────────────────────────────────────── #}
-<div class="flex items-center justify-between mb-4 flex-wrap gap-3">
-  <div class="flex items-center gap-2 text-[12.5px]" style="color:var(--muted)">
-    <a href="/">Extensions</a>
-    <span>/</span>
-    <span style="color:var(--ink-soft)">{{ ext.name }}</span>
-  </div>
+<div class="flex items-center justify-end mb-4 flex-wrap gap-3">
   <div class="flex items-center gap-2">
     <button class="switch" :class="watchlist && 'on'" @click="toggleWatchlist()" title="Auto-refresh on background scheduler">
       <span class="track"><span class="thumb"></span></span>
@@ -38,6 +34,9 @@
       <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 4h6v6"/><path d="M10 14L21 3"/><path d="M21 14v5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5"/></svg>
       Store page
     </a>
+    {# Isolate the destructive action from the benign ones — the same divider the
+       watchlist switch already uses, so Delete isn't flush with Refresh/Store page. #}
+    <div class="w-px h-5 mx-1" style="background:var(--line)"></div>
     <button class="btn btn-danger btn-sm" @click="deleteExt">Delete</button>
   </div>
 </div>
@@ -140,7 +139,10 @@
          cut points live only in scoring.risk_level, never re-inlined here (#281). #}
       <div class="flex flex-col">
         {% for row in risk_rows %}
-        <div class="flex items-center gap-3 py-2.5" style="border-bottom: 1px solid var(--line)">
+        {# The note column is `hidden md:block`, so carry it in a native title too —
+           below md the six bars would otherwise carry no explanation of what each
+           signal measures, which is exactly where a reviewer needs it. #}
+        <div class="flex items-center gap-3 py-2.5" title="{{ row.note }}" style="border-bottom: 1px solid var(--line)">
           <div class="w-32 text-[13px]" style="color:var(--ink-soft)">{{ row.label }}</div>
           <div class="flex-1 score-bar-track"><div class="score-bar-fill fill-{{ row.band }}" style="width: {{ row.pct }}%"></div></div>
           <div class="mono text-[12.5px] tabular-nums w-16 text-right"><span style="color:var(--ink);font-weight:500">{{ row.value }}</span><span style="color:var(--muted)"> / {{ row.max }}</span></div>

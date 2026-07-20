@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% block title %}IcebergEBS — Dashboard{% endblock %}
+{% block crumb %}Extensions{% endblock %}
 {% block nav_dashboard %}active{% endblock %}
 
 {% block content %}
@@ -110,27 +111,31 @@
 
   {# Filter + search bar (server-driven via query params) #}
   <div class="flex items-center justify-between mb-3 flex-wrap gap-2">
-    <div class="flex items-center gap-1.5 flex-wrap">
-      <a class="badge badge-store" href="{{ qs(store=None, page=1) }}" style="{% if not filter_store %}{{ active_pill }}{% endif %}">All</a>
-      {% for s in ['chrome', 'vscode', 'edge'] %}
-      <a class="badge badge-store badge-{{ s }}" href="{{ qs(store=s, page=1) }}" style="{% if filter_store == s %}{{ active_pill }}{% endif %}"><span class="dot"></span>{{ s }}</a>
-      {% endfor %}
-      <div class="w-px h-4 mx-1.5" style="background:var(--line)"></div>
-      <a class="badge" href="{{ qs(risk=None, page=1) }}" style="{% if not filter_risk %}{{ active_pill }}{% endif %}">Any risk</a>
-      {% for lvl in ['critical', 'high', 'medium', 'low'] %}
-      <a class="badge badge-{{ lvl }}" href="{{ qs(risk=lvl, page=1) }}" style="{% if filter_risk == lvl %}{{ active_pill }}{% endif %}">{{ lvl }}</a>
-      {% endfor %}
+    {# Two independent axes, each in its own labelled group. As one flat pill strip
+       they blurred into nine undifferentiated pills the moment the row wrapped and
+       the 1px divider was lost. #}
+    <div class="flex items-center gap-3 flex-wrap">
+      <div class="flex items-center gap-1.5">
+        <span class="label-cap">Store</span>
+        <a class="badge badge-store" href="{{ qs(store=None, page=1) }}" style="{% if not filter_store %}{{ active_pill }}{% endif %}">All</a>
+        {% for s in ['chrome', 'vscode', 'edge'] %}
+        <a class="badge badge-store badge-{{ s }}" href="{{ qs(store=s, page=1) }}" style="{% if filter_store == s %}{{ active_pill }}{% endif %}"><span class="dot"></span>{{ s }}</a>
+        {% endfor %}
+      </div>
+      <div class="flex items-center gap-1.5">
+        <span class="label-cap">Risk</span>
+        <a class="badge" href="{{ qs(risk=None, page=1) }}" style="{% if not filter_risk %}{{ active_pill }}{% endif %}">Any</a>
+        {% for lvl in ['critical', 'high', 'medium', 'low'] %}
+        <a class="badge badge-{{ lvl }}" href="{{ qs(risk=lvl, page=1) }}" style="{% if filter_risk == lvl %}{{ active_pill }}{% endif %}">{{ lvl }}</a>
+        {% endfor %}
+      </div>
     </div>
-    <form method="get" action="/" class="flex items-center gap-1.5">
-      {% if filter_store %}<input type="hidden" name="store" value="{{ filter_store }}">{% endif %}
-      {% if filter_risk %}<input type="hidden" name="risk" value="{{ filter_risk }}">{% endif %}
-      <input type="hidden" name="sort" value="{{ sort }}">
-      <input type="hidden" name="order" value="{{ order }}">
-      <input type="text" name="q" value="{{ search_q }}" placeholder="Search name, publisher, ID…"
-             class="field" style="min-width:220px;width:auto" autocomplete="off">
-      <button type="submit" class="btn btn-ghost btn-sm">Search</button>
-      {% if search_q %}<a href="{{ qs(q=None, page=1) }}" class="btn btn-ghost btn-sm">Clear</a>{% endif %}
-    </form>
+    {# Search lives once, in the top bar — this page had a second input submitting to
+       the same place. topbar-search.js preserves the active store/risk/sort filters
+       the way this form's hidden inputs used to, so only the clear-chip stays here. #}
+    {% if search_q %}
+    <a class="chip" href="{{ qs(q=None, page=1) }}" title="Clear search">“{{ search_q }}” ✕</a>
+    {% endif %}
   </div>
 
   <div class="text-meta mb-2">
@@ -190,10 +195,18 @@
             <td class="text-right mono tabular-nums" style="color:var(--ink-soft)" x-text="installsText(ext)"></td>
             <td style="color:var(--ink-soft)" x-text="updatedText(ext)"></td>
             <td>
-              <div class="flex justify-end gap-1" @click.stop>
-                <button class="btn btn-ghost btn-sm" title="Refresh" @click="refreshExt(ext.id)">
-                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 15-6.7L21 8"/><path d="M21 3v5h-5"/></svg>
-                </button>
+              <div class="flex items-center justify-end gap-1">
+                <div class="flex gap-1" @click.stop>
+                  <button class="btn btn-ghost btn-sm" title="Refresh" @click="refreshExt(ext.id)">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 15-6.7L21 8"/><path d="M21 3v5h-5"/></svg>
+                  </button>
+                </div>
+                {# Decorative affordance: the whole row opens the detail page (@click),
+                   but the Refresh button was the only visible control saying so. Sits
+                   OUTSIDE the @click.stop group so the row's own @click still fires. #}
+                <svg width="15" height="15" aria-hidden="true" style="color:var(--faint)"
+                     viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                     stroke-linecap="round" stroke-linejoin="round"><path d="m9 6 6 6-6 6"/></svg>
               </div>
             </td>
           </tr>
