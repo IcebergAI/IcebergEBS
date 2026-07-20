@@ -9,11 +9,14 @@ a fabricated number.
 
 import asyncio
 import json
+import os
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import text
+from sqlalchemy import delete, text, tuple_
+from sqlalchemy.engine import make_url
 from sqlmodel.ext.asyncio.session import AsyncSession
 
+from app.config import settings
 from app.database import engine
 from app.inspector import PackageAnalysis, PackageFinding
 from app.models import (
@@ -284,17 +287,57 @@ PERMS = {
 }
 
 
+DEST_LABEL = "SOC Slack #ext-alerts"
+DEMO_KEYS = [(e[1], e[3]) for e in EXTS]  # (store, extension_id) — the only rows we own
+OPT_IN_ENV = "ICEBERG_EBS_SCREENSHOT_SEED"
+
+
+def _assert_safe_target() -> None:
+    """Fail closed unless this is plainly a local development database.
+
+    This script deletes rows, and deleting an Extension cascades into its FetchLog,
+    InstallCountHistory, InstallObservation, AlertRule and AlertLog history. A README
+    warning is not a control, so refuse outright rather than trusting the operator to
+    have pointed ICEBERG_EBS_DATABASE_URL somewhere disposable.
+    """
+    if os.environ.get(OPT_IN_ENV) != "1":
+        raise SystemExit(
+            f"refusing to seed: set {OPT_IN_ENV}=1 to confirm this database is disposable.\n"
+            "It is the same database a bare `uv run pytest` truncates — never a real one."
+        )
+    url = make_url(settings.database_url)
+    host = (url.host or "").lower()
+    if host not in {"localhost", "127.0.0.1", "::1", ""}:
+        raise SystemExit(
+            f"refusing to seed: database host {host!r} is not local. This script is for a local dev database only."
+        )
+
+
 async def main() -> None:
+    _assert_safe_target()
     async with AsyncSession(engine) as s:
         admin = (await s.exec(text('SELECT id FROM "user" WHERE is_admin ORDER BY id LIMIT 1'))).first()
         if admin is None:
             raise SystemExit("no admin user — start the app once so it seeds the admin")
         uid = admin[0]
 
-        # Idempotent: clear prior demo content for this user.
-        await s.exec(text("DELETE FROM alertrule WHERE user_id = :u"), params={"u": uid})
-        await s.exec(text("DELETE FROM alertdestination WHERE user_id = :u"), params={"u": uid})
-        await s.exec(text("DELETE FROM extension WHERE user_id = :u"), params={"u": uid})
+        # Idempotent, but scoped to the rows THIS script creates — identified by the
+        # exact (store, extension_id) pairs below and the one destination label. A
+        # blanket "delete everything this user owns" would take real extensions and
+        # their history with it (bot review, #315).
+        await s.exec(
+            delete(Extension).where(
+                Extension.user_id == uid,
+                tuple_(Extension.store, Extension.extension_id).in_(DEMO_KEYS),
+            )
+        )
+        # Rules cascade from the destination via the schema's ondelete=CASCADE.
+        await s.exec(
+            delete(AlertDestination).where(
+                AlertDestination.user_id == uid,
+                AlertDestination.label == DEST_LABEL,
+            )
+        )
         await s.commit()
 
         made: list[Extension] = []
@@ -359,7 +402,7 @@ async def main() -> None:
 
         dest = AlertDestination(
             user_id=uid,
-            label="SOC Slack #ext-alerts",
+            label=DEST_LABEL,
             kind="slack",
             # Deliberately NOT shaped like a real Slack token: the trailing segment of a
             # genuine incoming-webhook URL is 24 alphanumerics, which GitHub's push

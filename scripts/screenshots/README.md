@@ -15,8 +15,10 @@ them in the same PR.
 make db
 docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d app
 
-# 2. Seed the demo workspace (idempotent — it clears its own prior rows first).
-PYTHONPATH="$PWD" uv run python scripts/screenshots/seed_demo.py
+# 2. Seed the demo workspace. The opt-in env var is a required confirmation that this
+#    database is disposable — the script refuses to run without it, and refuses any
+#    non-local database host.
+ICEBERG_EBS_SCREENSHOT_SEED=1 PYTHONPATH="$PWD" uv run python scripts/screenshots/seed_demo.py
 
 # 3. Shoot. Needs Playwright, which is deliberately NOT in uv.lock (see CLAUDE.md);
 #    install it into a throwaway venv at the version ci.yml pins.
@@ -37,8 +39,13 @@ Alpine component fails the run instead of being quietly baked into a PNG.
   on each extension is backed by real `InstallObservation` rows, so the dashboard's
   Top-exposure ranking (`risk × assets`) is internally consistent rather than a
   number that contradicts the detail page's org-footprint breakdown.
-- **`seed_demo.py` writes to whatever `ICEBERG_EBS_DATABASE_URL` points at**, which
-  for local work is the dev database — the same one a bare `uv run pytest` truncates.
-  Don't point it at anything you care about.
-- The demo workspace is owned by the first admin user; the script deletes that
-  user's extensions, destinations, and rules before reseeding.
+- **Deletion is scoped to the rows the script itself creates** — the exact
+  `(store, extension_id)` pairs in `EXTS` and the single destination label. It does
+  **not** clear the admin's other data, which matters because deleting an `Extension`
+  cascades into its `FetchLog`, `InstallCountHistory`, `InstallObservation`,
+  `AlertRule` and `AlertLog` history.
+- **The target database is guarded, not merely documented.** `seed_demo.py` refuses to
+  run unless `ICEBERG_EBS_SCREENSHOT_SEED=1` is set *and* the resolved database host is
+  local (`localhost` / `127.0.0.1` / `::1`). Both checks fail closed.
+- The demo workspace is owned by the first admin user, so the rail renders the
+  Administration group; nothing else about that account is touched.

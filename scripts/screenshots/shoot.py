@@ -8,13 +8,20 @@ website/docs/assets/ (per CLAUDE.md, the site's copies).
 import os
 import shutil
 import sys
+from pathlib import Path
 
 from playwright.sync_api import sync_playwright
 
-BASE = "http://localhost:8000"
-REPO = "/home/richard/Projects/marvin"
-CANON = f"{REPO}/docs/screenshots"
-SITE = f"{REPO}/website/docs/assets"
+BASE = os.environ.get("BASE_URL", "http://localhost:8000").rstrip("/")
+# Derived from this file's location, never hard-coded: the script writes PNGs, so a
+# stale absolute path would silently write outside the checkout it was run from.
+REPO = Path(__file__).resolve().parents[2]
+CANON = REPO / "docs" / "screenshots"
+SITE = REPO / "website" / "docs" / "assets"
+
+for _d in (CANON, SITE):
+    if not _d.is_dir():
+        raise SystemExit(f"expected {_d} to exist — is {REPO} the repository root?")
 
 errors = []
 
@@ -24,9 +31,9 @@ def shoot(page, path, name):
     page.wait_for_load_state("networkidle")
     page.wait_for_function("() => typeof window.Alpine !== 'undefined'")
     page.wait_for_timeout(900)  # let Alpine paint + the trend chart draw
-    out = f"{CANON}/{name}.png"
-    page.screenshot(path=out)
-    shutil.copyfile(out, f"{SITE}/{name}.png")
+    out = CANON / f"{name}.png"
+    page.screenshot(path=str(out))
+    shutil.copyfile(out, SITE / f"{name}.png")
     print(f"  {name}.png")
 
 
