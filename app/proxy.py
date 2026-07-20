@@ -241,7 +241,16 @@ def scrub(text: str) -> str:
         raw = os.environ.get(env_name, "").strip()
         if not raw:
             continue
-        parsed = urlsplit(raw)
+        try:
+            parsed = urlsplit(raw)
+        except ValueError:
+            # A malformed proxy env value (e.g. the unterminated IPv6 literal
+            # ``http://[``) makes urlsplit raise ValueError. scrub() runs inside
+            # every egress error handler (fetch/retry/scheduler/webhook), so it
+            # must never raise — skip this var's userinfo pass and fall through
+            # to the generic ``scheme://user:pass@`` backstop below, which still
+            # redacts any credentials the text carries.
+            continue
         for env_secret in (parsed.password, parsed.username):
             if env_secret:
                 # urlsplit keeps userinfo percent-encoded, but an exception message

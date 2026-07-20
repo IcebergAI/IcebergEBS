@@ -305,6 +305,20 @@ def test_scrub_strips_any_url_userinfo_as_backstop(monkeypatch):
     assert "203.0.113.9" in scrubbed  # only the userinfo is redacted, not the host
 
 
+def test_scrub_survives_malformed_proxy_env(monkeypatch):
+    # scrub() runs inside every egress error handler, so a malformed proxy env value
+    # (urlsplit('http://[') raises ValueError: Invalid IPv6 URL) must not turn a handled
+    # failure into a 500 / aborted error-record — it stays total and the generic
+    # scheme://user:pass@ backstop still redacts the text (#228).
+    monkeypatch.setattr(settings, "proxy_username", "")
+    monkeypatch.setattr(settings, "proxy_password", SecretStr(""))
+    monkeypatch.setenv("HTTPS_PROXY", "http://[")
+    scrubbed = proxy.scrub("ProxyError via http://dave:sekret@proxy.corp:3128")
+    assert "dave" not in scrubbed
+    assert "sekret" not in scrubbed
+    assert "proxy.corp" in scrubbed  # host preserved; only userinfo redacted
+
+
 # ---------------------------------------------------------------------------
 # ProxyRoutingTransport
 # ---------------------------------------------------------------------------
