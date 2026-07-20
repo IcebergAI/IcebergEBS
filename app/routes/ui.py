@@ -44,6 +44,7 @@ from app.permissions import host_permission_tier, permission_tier
 from app.ratelimit import login_limiter
 from app.retention import freshness_cutoff
 from app.scoring import RiskDetail, risk_level
+from app.senders import kind_descriptors
 from app.threat_intel import build_threat_intel_indicators
 from app.utils import host_permissions_of
 from app.version import get_version
@@ -824,7 +825,15 @@ async def account_page(
     ext_map = {e.id: (e.name or e.extension_id) for e in extensions}
 
     destinations_data = [
-        {"id": d.id, "label": d.label, "target": d.target, "enabled": d.enabled, "created_at": d.created_at.isoformat()}
+        {
+            "id": d.id,
+            "label": d.label,
+            "kind": d.kind,
+            "target": d.target,
+            "config": d.config_dict(),
+            "enabled": d.enabled,
+            "created_at": d.created_at.isoformat(),
+        }
         for d in destinations
     ]
     rules_data = [
@@ -852,6 +861,7 @@ async def account_page(
             "rules": rules_data,
             "extensions": extensions_data,
             "alert_log": alert_log_data,
+            "destination_kinds": kind_descriptors(),
         },
         user=current_user,
     )

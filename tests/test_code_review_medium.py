@@ -184,7 +184,9 @@ async def test_webhook_test_hides_internal_error(client, test_db, admin_user):
         dest_id = dest.id
 
     secret = "connect to 10.1.2.3:443 failed"
-    with patch("app.routes.alerts.send_webhook", new=AsyncMock(side_effect=Exception(secret))):
+    # The test endpoint dispatches through the kind's sender (#37); the webhook sender
+    # delivers via the shared pinned-request core, so patch that seam.
+    with patch("app.senders.http.send_pinned_request", new=AsyncMock(side_effect=Exception(secret))):
         r = await client.post(f"/api/alerts/destinations/{dest_id}/test")
     assert r.status_code == 502
     body = r.json()

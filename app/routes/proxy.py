@@ -174,7 +174,7 @@ async def test_proxy(body: ProxyTestIn, _: AdminUser, session: SessionDep) -> di
     user-controlled webhook origin could otherwise 3xx-bounce the admin's request
     to a private address. Webhook targets additionally get the full delivery-path
     SSRF treatment — validate + resolve + connect to the pinned public IP with the
-    original hostname kept for Host/SNI — mirroring ``send_webhook``.
+    original hostname kept for Host/SNI — mirroring ``send_pinned_request``.
     """
     await proxy_settings.refresh_cache(session)
     row = await proxy_settings.get_settings(session)
