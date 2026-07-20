@@ -90,6 +90,16 @@ icebergEbs:
   proxyNoProxy: "localhost,127.0.0.0/8,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,169.254.0.0/16,::1"
   proxyUsername: ""        # optional — set via --set; never commit a value here
   proxyPassword: ""        # optional — set via --set; never commit a value here
+  # Outbound alert integrations (#37): SMTP for the email destination kind. Empty
+  # smtpHost ⇒ the email kind is unavailable. smtpPassword is an env-only secret wired
+  # via the chart Secret — never ConfigMap data. Per-destination Jira/ServiceNow API
+  # tokens (ICEBERG_EBS_DEST_SECRET_<REF>) are operator-supplied via extraEnv below.
+  smtpHost: ""
+  smtpPort: 587
+  smtpStartTls: true
+  smtpUsername: ""
+  smtpPassword: ""         # optional — set via --set; never commit a value here
+  smtpFrom: ""
   # SSO / OIDC (#32): authMode local|oidc|both; the per-provider non-secret config
   # seeds the admin-editable settings (live at /admin/oidc). Client secrets are
   # env-only secrets wired via the chart Secret — never ConfigMap data. Set
@@ -201,3 +211,13 @@ resources:
   limits:
     cpu: 500m
     memory: 512Mi
+
+# Extra environment for the app container (#37): the place to inject per-destination
+# ticketing secrets, e.g. ICEBERG_EBS_DEST_SECRET_JIRA_TOKEN. Prefer a Secret via
+# extraEnvFrom; extraEnv (plain name/value or valueFrom) is for non-secret extras.
+extraEnv: []
+#  - name: ICEBERG_EBS_DEST_SECRET_JIRA_TOKEN
+#    valueFrom:
+#      secretKeyRef: { name: my-integration-secrets, key: jira-token }
+extraEnvFrom: []
+#  - secretRef: { name: my-integration-secrets }

@@ -9,6 +9,12 @@ document.addEventListener('alpine:init', () => {
     new_version:       'New version',
   };
 
+  const PLACEHOLDERS = {
+    email: 'ops@example.com, security@example.com',
+    jira: 'https://your-domain.atlassian.net',
+    servicenow: 'https://your-instance.service-now.com',
+  };
+
   Alpine.data('accountPrefs', () => {
     const data = readJSON('account-data') || {};
     return {
@@ -16,8 +22,9 @@ document.addEventListener('alpine:init', () => {
       rules: data.rules || [],
       extensions: data.extensions || [],
       alertLog: data.alert_log || [],
+      destinationKinds: data.destination_kinds || [],
       showAddDest: false, destSaving: false, destError: '',
-      destForm: { label: '', target: '' },
+      destForm: { label: '', kind: 'webhook', target: '', config: {} },
       showAddRule: false, ruleSaving: false, ruleError: '',
       ruleForm: { event_type: 'risk_level_change', destination_id: '', extension_id: '' },
       logFilter: 'all',
@@ -25,6 +32,33 @@ document.addEventListener('alpine:init', () => {
       init() {
         if (this.destinations.length > 0) this.ruleForm.destination_id = this.destinations[0].id;
       },
+      // ── Destination-kind helpers (getters/methods; CSP build forbids arrow
+      //    functions and computed member access in directive expressions) ──
+      get selectedKind() {
+        return this.destinationKinds.find(k => k.kind === this.destForm.kind) || null;
+      },
+      get targetLabel() {
+        return this.selectedKind ? this.selectedKind.target_label : 'Target';
+      },
+      get targetPlaceholder() {
+        return PLACEHOLDERS[this.destForm.kind] || 'https://hooks.example.com/...';
+      },
+      get kindConfigFields() {
+        return this.selectedKind ? this.selectedKind.config_fields : [];
+      },
+      get selectedKindAvailable() {
+        return this.selectedKind ? this.selectedKind.available : true;
+      },
+      get selectedKindReason() {
+        return this.selectedKind ? (this.selectedKind.unavailable_reason || '') : '';
+      },
+      kindLabel(kind) {
+        const k = this.destinationKinds.find(x => x.kind === kind);
+        return k ? k.label : kind;
+      },
+      getConfig(name) { return this.destForm.config[name] || ''; },
+      setConfig(name, value) { this.destForm.config[name] = value; },
+      onKindChange() { this.destForm.config = {}; this.destError = ''; },
       // KPI tiles — getters, because arrow functions inside directive
       // expressions are rejected by the CSP build's parser ('=>' tokenises as
       // an unexpected '>' operator).
@@ -51,7 +85,7 @@ document.addEventListener('alpine:init', () => {
       },
       eventLabel(t) { return EVENT_LABELS[t] || t; },
       formatTime(iso) { return new Date(iso).toLocaleString(undefined, { dateStyle: 'short', timeStyle: 'short' }); },
-      resetDestForm() { this.destForm = { label: '', target: '' }; this.destError = ''; },
+      resetDestForm() { this.destForm = { label: '', kind: 'webhook', target: '', config: {} }; this.destError = ''; },
       resetRuleForm() {
         this.ruleForm = { event_type: 'risk_level_change', destination_id: this.destinations[0]?.id ?? '', extension_id: '' };
         this.ruleError = '';
@@ -59,13 +93,25 @@ document.addEventListener('alpine:init', () => {
       async addDest() {
         this.destError = '';
         if (!this.destForm.label.trim()) { this.destError = 'Label is required'; return; }
-        if (!this.destForm.target.trim()) { this.destError = 'Webhook URL is required'; return; }
+        if (!this.destForm.target.trim()) { this.destError = (this.targetLabel || 'Target') + ' is required'; return; }
+        if (!this.selectedKindAvailable) { this.destError = this.selectedKindReason; return; }
         this.destSaving = true;
+        // Drop blank config values so optional fields aren't sent as "".
+        const config = {};
+        Object.keys(this.destForm.config).forEach(k => {
+          const v = (this.destForm.config[k] || '').trim();
+          if (v) config[k] = v;
+        });
         try {
           const r = await fetch('/api/alerts/destinations', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ label: this.destForm.label.trim(), target: this.destForm.target.trim() }),
+            body: JSON.stringify({
+              label: this.destForm.label.trim(),
+              kind: this.destForm.kind,
+              target: this.destForm.target.trim(),
+              config,
+            }),
           });
           const data = await r.json();
           if (r.ok) {

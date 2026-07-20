@@ -28,6 +28,13 @@ data:
   ICEBERG_EBS_PROXY_MODE:                  {{ .Values.icebergEbs.proxyMode | quote }}
   ICEBERG_EBS_PROXY_URL:                   {{ .Values.icebergEbs.proxyUrl | quote }}
   ICEBERG_EBS_PROXY_NO_PROXY:              {{ .Values.icebergEbs.proxyNoProxy | quote }}
+  # Outbound alert integrations (#37). The SMTP password is NOT here — it's a secret,
+  # wired as secretKeyRef env in the Deployment from the chart Secret.
+  ICEBERG_EBS_SMTP_HOST:                   {{ .Values.icebergEbs.smtpHost | quote }}
+  ICEBERG_EBS_SMTP_PORT:                   {{ .Values.icebergEbs.smtpPort | quote }}
+  ICEBERG_EBS_SMTP_STARTTLS:               {{ .Values.icebergEbs.smtpStartTls | quote }}
+  ICEBERG_EBS_SMTP_USERNAME:               {{ .Values.icebergEbs.smtpUsername | quote }}
+  ICEBERG_EBS_SMTP_FROM:                   {{ .Values.icebergEbs.smtpFrom | quote }}
   # SSO / OIDC (#32). Client secrets are NOT here — they are secrets, wired as
   # secretKeyRef env in the Deployment from the chart Secret.
   ICEBERG_EBS_AUTH_MODE:                   {{ .Values.icebergEbs.authMode | quote }}

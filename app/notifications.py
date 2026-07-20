@@ -11,10 +11,21 @@ from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app import proxy
-from app.config import settings
 from app.models import AlertDestination, AlertLog, AlertRule, Extension
 from app.scoring import risk_level as _risk_level
-from app.webhooks import send_webhook
+from app.senders import AlertMessage, get_sender
+
+# build_alert_payload is the canonical webhook payload shape (#168); it lives in
+# app/senders/webhook.py (so senders never imports back into notifications) and is
+# re-exported here for the existing call sites (routes/alerts, tests).
+from app.senders.webhook import build_alert_payload, extension_deep_link
+
+__all__ = [
+    "ChangeEvent",
+    "build_alert_payload",
+    "detect_changes",
+    "fire_alerts",
+]
 
 logger = logging.getLogger(__name__)
 
@@ -100,43 +111,6 @@ def _alert_text(event_type: str, name: str, old: object, new: object) -> str:
     return f"IcebergEBS: {name} — {event_type}"
 
 
-def build_alert_payload(
-    *,
-    text: str,
-    event: str,
-    ext_id: int | None,
-    name: str,
-    store: str,
-    store_url: str,
-    old: Any,
-    new: Any,
-    risk_score: int | None,
-) -> dict[str, Any]:
-    """Assemble the webhook payload for an alert.
-
-    The single source of the on-the-wire alert shape, so the destination-test
-    payload (``alerts.test_destination``) can't silently drift from what real
-    alerts send — the "test" webhook is the real webhook by construction (#168).
-    ``iceberg_ebs_url`` is included only when ``app_base_url`` is configured,
-    exactly as real alerts do.
-    """
-    ext_payload: dict[str, Any] = {
-        "id": ext_id,
-        "name": name,
-        "store": store,
-        "store_url": store_url,
-    }
-    if settings.app_base_url:
-        ext_payload["iceberg_ebs_url"] = f"{settings.app_base_url.rstrip('/')}/extensions/{ext_id}"
-    return {
-        "text": text,
-        "event": event,
-        "extension": ext_payload,
-        "change": {"old": old, "new": new},
-        "risk_score": risk_score,
-    }
-
-
 async def fire_alerts(
     events: list[ChangeEvent],
     extension: Extension,
@@ -197,7 +171,7 @@ async def fire_alerts(
                     continue
 
                 alert_text = _alert_text(event.event_type, extension.name, event.old_value, event.new_value)
-                payload = build_alert_payload(
+                message = AlertMessage(
                     text=alert_text,
                     event=event.event_type,
                     ext_id=extension.id,
@@ -207,19 +181,26 @@ async def fire_alerts(
                     old=event.old_value,
                     new=event.new_value,
                     risk_score=extension.risk_score,
+                    app_url=extension_deep_link(extension.id),
                 )
 
                 success = True
                 error: str | None = None
                 try:
-                    resp = await send_webhook(client, dest.target, payload)
-                    resp.raise_for_status()
+                    # Dispatch by destination kind (#37). The webhook kind delivers the
+                    # same payload as before; Slack/Teams/email/Jira/ServiceNow render
+                    # their own shape. get_sender(None) guards a kind whose adapter is
+                    # gone (a downgrade/rename) — logged as a delivery failure.
+                    sender = get_sender(dest.kind)
+                    if sender is None:
+                        raise ValueError(f"No sender registered for destination kind '{dest.kind}'")
+                    await sender.send(client, dest.target, dest.config_dict(), message)
                     logger.info(
-                        "Alert webhook fired: event=%s ext=%d dest=%d status=%d",
+                        "Alert fired: event=%s ext=%d dest=%d kind=%s",
                         event.event_type,
                         extension.id,
                         dest.id,
-                        resp.status_code,
+                        dest.kind,
                     )
                 except Exception as exc:
                     success = False
@@ -229,10 +210,11 @@ async def fire_alerts(
                     # rendered in the UI (#228).
                     error = proxy.scrub(str(exc))[:2000]
                     logger.warning(
-                        "Alert webhook failed: event=%s ext=%d dest=%d error=%s",
+                        "Alert delivery failed: event=%s ext=%d dest=%d kind=%s error=%s",
                         event.event_type,
                         extension.id,
                         dest.id,
+                        dest.kind,
                         error,
                     )
 

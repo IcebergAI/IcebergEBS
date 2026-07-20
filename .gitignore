@@ -85,3 +85,7 @@ website/.cache/
 # The root `.claude/*` rule is anchored to the repo root, so a nested agent
 # config created while working inside website/ would otherwise show as untracked
 website/.claude/
+
+# Outbound-integration secrets (#37): per-destination Jira/ServiceNow API tokens
+# loaded by the compose app service if present (ICEBERG_EBS_DEST_SECRET_*).
+integrations.env

@@ -179,6 +179,22 @@ spec:
                 secretKeyRef:
                   name: {{ include "iceberg-ebs.fullname" . }}
                   key: oidc-okta-client-secret
+            # SMTP password (#37): env-only secret (never ConfigMap data). Empty by
+            # default = the email destination kind stays unavailable.
+            - name: ICEBERG_EBS_SMTP_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "iceberg-ebs.fullname" . }}
+                  key: smtp-password
+            {{- with .Values.extraEnv }}
+            # Operator-supplied extra env (#37): the place for per-destination
+            # ticketing secrets, e.g. ICEBERG_EBS_DEST_SECRET_JIRA_TOKEN.
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          {{- with .Values.extraEnvFrom }}
+          envFrom:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true

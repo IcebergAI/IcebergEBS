@@ -19,7 +19,7 @@
   <span style="color:var(--ink-soft)">Alerts &amp; webhooks</span>
 </div>
 <h1 class="page-title">Alerts &amp; webhooks</h1>
-<p class="page-sub mb-5">Notify Slack, PagerDuty, or any webhook when a watched extension changes risk, publisher, permissions, or version.</p>
+<p class="page-sub mb-5">Notify Slack, Teams, email, or a Jira/ServiceNow ticket — or any webhook — when a watched extension changes risk, publisher, permissions, or version.</p>
 
 {# ── KPI strip ───────────────────────────────────────────── #}
 <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-7">
@@ -139,16 +139,33 @@
   <div class="surface p-5 mb-3" x-show="showAddDest" x-cloak style="max-width:520px">
     <div class="flex flex-col gap-3">
       <div>
+        <label class="label-cap block mb-1.5">Type</label>
+        <select x-model="destForm.kind" @change="onKindChange()">
+          <template x-for="k in destinationKinds" :key="k.kind">
+            <option :value="k.kind" x-text="k.label"></option>
+          </template>
+        </select>
+        <div x-show="!selectedKindAvailable" class="text-[12px] mt-1.5" style="color:var(--risk-high)" x-text="selectedKindReason"></div>
+      </div>
+      <div>
         <label class="label-cap block mb-1.5">Label</label>
         <input type="text" x-model="destForm.label" placeholder="e.g. Slack #security" @keydown.enter="addDest()">
       </div>
       <div>
-        <label class="label-cap block mb-1.5">Webhook URL</label>
-        <input type="text" x-model="destForm.target" placeholder="https://hooks.example.com/..." @keydown.enter="addDest()">
+        <label class="label-cap block mb-1.5" x-text="targetLabel"></label>
+        <input type="text" x-model="destForm.target" :placeholder="targetPlaceholder" @keydown.enter="addDest()">
       </div>
+      {# Kind-specific config fields, rendered from the selected kind's descriptor #}
+      <template x-for="f in kindConfigFields" :key="f.name">
+        <div>
+          <label class="label-cap block mb-1.5" x-text="f.label"></label>
+          <input type="text" :value="getConfig(f.name)" @input="setConfig(f.name, $event.target.value)" :placeholder="f.placeholder">
+          <div x-show="f.help" class="text-[11.5px] mt-1" style="color:var(--muted)" x-text="f.help"></div>
+        </div>
+      </template>
       <div x-show="destError" class="text-[12.5px]" style="color:var(--risk-critical)" x-text="destError"></div>
       <div class="flex gap-2">
-        <button class="btn btn-primary btn-sm" @click="addDest()" :disabled="destSaving">
+        <button class="btn btn-primary btn-sm" @click="addDest()" :disabled="destSaving || !selectedKindAvailable">
           <span x-show="!destSaving">Save</span><span x-show="destSaving">Saving…</span>
         </button>
         <button class="btn btn-ghost btn-sm" @click="showAddDest=false;resetDestForm()">Cancel</button>
@@ -158,19 +175,20 @@
 
   <template x-if="destinations.length === 0 && !showAddDest">
     <div class="surface p-6 text-center text-[13px]" style="color:var(--muted)">
-      No destinations configured — add a webhook URL to receive alerts.
+      No destinations configured — add a webhook, Slack/Teams, email, or ticketing destination to receive alerts.
     </div>
   </template>
 
   <template x-if="destinations.length > 0">
     <div class="surface overflow-hidden">
     <table>
-      <thead><tr><th>Label</th><th>URL</th><th>Status</th><th></th></tr></thead>
+      <thead><tr><th>Label</th><th>Type</th><th>Target</th><th>Status</th><th></th></tr></thead>
       <tbody>
         <template x-for="d in destinations" :key="d.id">
           <tr>
             <td class="font-medium" style="color:var(--ink)" x-text="d.label"></td>
-            <td class="mono text-[12px]" style="color:var(--muted);max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" x-text="d.target"></td>
+            <td><span class="chip" x-text="kindLabel(d.kind)"></span></td>
+            <td class="mono text-[12px]" style="color:var(--muted);max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" x-text="d.target"></td>
             <td>
               <button class="badge" @click="toggleDest(d)"
                       :style="d.enabled ? 'background:var(--risk-low-bg);color:var(--badge-low-color);border-color:color-mix(in oklch, var(--risk-low) 25%, transparent)' : 'background:var(--surface-2);color:var(--muted);border-color:var(--line)'"

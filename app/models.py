@@ -216,12 +216,35 @@ class InstallObservation(SQLModel, table=True):
 
 
 class AlertDestination(SQLModel, table=True):
+    # A destination is one delivery channel of a given ``kind`` (#37): webhook (the
+    # backwards-compatible default), slack, teams, email, jira, servicenow. The set
+    # of kinds is owned by the sender registry (app/senders); this CHECK is the
+    # schema backstop for it (the #217/#218 pattern — enforce the invariant in the DB,
+    # not only in app validation). Keep it in lockstep with the registry — a drift
+    # test (tests/test_senders.py) fails if the two disagree.
+    __table_args__ = (
+        CheckConstraint(
+            "kind IN ('webhook', 'slack', 'teams', 'email', 'jira', 'servicenow')",
+            name="ck_alertdestination_kind",
+        ),
+    )
+
     id: Optional[int] = Field(default=None, primary_key=True)
     user_id: int = Field(foreign_key="user.id", ondelete="CASCADE", index=True)
     label: str
-    target: str  # webhook URL
+    kind: str = "webhook"
+    target: str  # kind-specific address: webhook/Slack/Teams URL, ticket base URL, or email recipients
+    config: str = "{}"  # JSON-in-str: kind-specific NON-SECRET extras (per app/senders)
     enabled: bool = True
     created_at: datetime = Field(default_factory=_utcnow, sa_column=_tz_column(nullable=False))
+
+    def config_dict(self) -> dict[str, str]:
+        """Stored kind-specific config as a string-keyed/valued dict; {} when
+        missing/malformed/not an object (the #167 single-defensive-parse rule)."""
+        obj = json_object(self.config, "alert_destination_config", self.id)
+        if obj is None:
+            return {}
+        return {str(k): str(v) for k, v in obj.items()}
 
 
 class AlertRule(SQLModel, table=True):

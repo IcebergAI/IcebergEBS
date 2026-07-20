@@ -197,11 +197,41 @@
   </div>
 
   <div class="surface p-6 mb-4">
-    <h2 class="section-title">Alerts &amp; webhooks</h2>
+    <h2 class="section-title">Alerts &amp; integrations</h2>
     <p class="text-[13.5px] mb-3" style="color:var(--ink-soft)">
-      Configure webhook destinations and alert rules under <a href="/account">account / alerts</a>.
-      IcebergEBS POSTs a JSON payload to your webhook URL whenever a monitored extension changes.
+      Configure destinations and alert rules under <a href="/account">account / alerts</a>.
+      A rule fires when a monitored extension changes; every destination on a matching rule is
+      delivered, and each delivery (success or failure) is recorded in the alert log.
     </p>
+    <p class="text-[13.5px] mb-3" style="color:var(--ink-soft)">
+      Destinations come in several <strong>kinds</strong>:
+    </p>
+    <div style="overflow-x:auto;border:1px solid var(--line);border-radius:8px">
+    <table>
+      <thead><tr><th>Kind</th><th>Target</th><th>Notes</th></tr></thead>
+      <tbody>
+        <tr><td><strong>Webhook</strong></td><td style="color:var(--muted)">HTTPS URL</td><td style="color:var(--muted)">The generic JSON payload below.</td></tr>
+        <tr><td><strong>Slack</strong></td><td style="color:var(--muted)">Incoming-webhook URL</td><td style="color:var(--muted)">Block Kit message (also works for Mattermost/Rocket.Chat).</td></tr>
+        <tr><td><strong>Microsoft Teams</strong></td><td style="color:var(--muted)">Workflow webhook URL</td><td style="color:var(--muted)">Adaptive Card.</td></tr>
+        <tr><td><strong>Email</strong></td><td style="color:var(--muted)">Recipient address(es)</td><td style="color:var(--muted)">Requires the SMTP env below; otherwise the kind is unavailable.</td></tr>
+        <tr><td><strong>Jira</strong></td><td style="color:var(--muted)">Site base URL</td><td style="color:var(--muted)">Creates an issue. Needs project key, account email, and an API-token secret ref.</td></tr>
+        <tr><td><strong>ServiceNow</strong></td><td style="color:var(--muted)">Instance base URL</td><td style="color:var(--muted)">Creates a record (default <code class="mono">incident</code>). Needs username + a password secret ref.</td></tr>
+      </tbody>
+    </table>
+    </div>
+    <p class="text-[12px] mt-3" style="color:var(--muted)">
+      <strong>Secrets are environment-only.</strong> SMTP is configured with
+      <code class="mono">ICEBERG_EBS_SMTP_HOST</code>/<code class="mono">_PORT</code>/<code class="mono">_STARTTLS</code>/<code class="mono">_USERNAME</code>/<code class="mono">_PASSWORD</code>/<code class="mono">_FROM</code>.
+      Jira/ServiceNow API tokens are never stored: a destination holds a <em>secret reference</em>
+      (an UPPER_SNAKE_CASE name), and the credential is read at send time from
+      <code class="mono">ICEBERG_EBS_DEST_SECRET_&lt;REF&gt;</code>.
+    </p>
+    <p class="text-[12px] mt-2" style="color:var(--muted)">
+      <strong>Testing a destination sends a real notification.</strong> For a Jira or ServiceNow
+      destination that means one real test ticket is created — proving the project/table, auth,
+      and field mapping end-to-end.
+    </p>
+    <div class="label-cap mt-5 mb-2">Alert events &amp; the webhook payload</div>
     <div style="overflow-x:auto;border:1px solid var(--line);border-radius:8px">
     <table>
       <thead><tr><th>Event type</th><th>Triggers when</th></tr></thead>
