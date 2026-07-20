@@ -247,6 +247,19 @@ release to diff against.
   proxy-layer exception: the transport retry log, the scheduler's log + persisted
   `FetchLog.error_message` (rendered to non-admin owners), and `fire_alerts`' persisted
   `AlertLog.error` (returned by the API and rendered in the UI).
+- **One extension's failure can no longer abort the whole watchlist refresh cycle** (#282).
+  The per-extension isolation held transactionally but not for control flow: the
+  failure-`FetchLog` write lived inside the store-failure handler (where the sibling
+  `except Exception` cannot catch it), and the post-commit refresh/alert tails were unguarded —
+  so a `DELETE` racing the scheduler mid-fetch (an FK `IntegrityError`), or any transient DB
+  error at those points, aborted the cycle: every remaining extension skipped, no further logs,
+  and the `/readyz` scheduler heartbeat left stale. All tails are now guarded, and the driving
+  loop carries a breaker-neutral backstop so an escaped internal error records `ERROR` and the
+  cycle continues. A failed alert delivery after a committed state change now also retries via
+  the durable pending-alert marker instead of escaping. Pending-alert **recovery** (which runs
+  at the head of each cycle, before the refresh loop) is likewise isolated per extension and
+  wrapped in a cycle-level guard, so a concurrent delete or delivery error during recovery can't
+  abort the refresh or leave the `/readyz` heartbeat stale either.
 - **Detail-page permission badges no longer contradict the score** (#281). The template
   hand-copied the permission-tier sets and had drifted: `declarativeNetRequestWithHostAccess`
   (CRITICAL — maxes the permissions score), `pageCapture` (HIGH), and the `*://*/*` broad-host

@@ -377,29 +377,39 @@ async def recover_pending_alerts(engine: AsyncEngine, client: httpx.AsyncClient)
         ext_ids = (await session.exec(select(Extension.id).where(Extension.pending_alert_events.is_not(None)))).all()
 
     for ext_id in ext_ids:
-        async with AsyncSession(engine) as session:
-            ext = await session.get(Extension, ext_id)
-            if ext is None or ext.pending_alert_events is None:
-                continue
-            raw = ext.pending_alert_events
-            # _parse_pending_events owns the full defensive decode (#167, #197): it drops
-            # both non-dict entries and malformed event dicts rather than raising, so one
-            # bad entry no longer discards the whole marker or crashes recovery.
-            events = _parse_pending_events(raw, ext.id)
-            if not events:
-                # Nothing deliverable (empty "[]", or a wholly-corrupt marker) — compare-and-
-                # clear the raw marker so it doesn't linger (and so a concurrent append isn't
-                # erased).
-                await _clear_pending_alerts(ext_id, engine, raw)
-                continue
-            logger.info("Recovering %d pending alert(s) for %s after restart", len(events), ext.extension_id)
-            # Mirror _refresh_one exactly: commit + refresh so ext is attached and fresh
-            # when fire_pending_alerts (which opens its own session) reads its attributes —
-            # firing off a detached/uncommitted object trips MissingGreenlet.
-            await session.commit()
-            await session.refresh(ext)
-            # Clear against the RAW marker, not the (possibly filtered) fired subset: if the
-            # marker held junk alongside valid events, we deliver the valid ones and still
-            # clear the whole marker — otherwise the compare-and-clear never matches and the
-            # valid events re-fire every cycle forever (#197).
-            await fire_pending_alerts(events, ext, engine, client, expected_marker=raw)
+        # Per-extension isolation (#282 review): recovery runs at the head of the cycle,
+        # before the guarded refresh loop, so an unhandled error here — a concurrent DELETE
+        # between get and refresh, or a transient error in delivery/clear — would escape
+        # recover_pending_alerts and abort the whole cycle, starving every refresh and the
+        # /readyz heartbeat. Isolate each extension: the durable marker survives, so the
+        # next cycle retries this one.
+        try:
+            async with AsyncSession(engine) as session:
+                ext = await session.get(Extension, ext_id)
+                if ext is None or ext.pending_alert_events is None:
+                    continue
+                raw = ext.pending_alert_events
+                # _parse_pending_events owns the full defensive decode (#167, #197): it drops
+                # both non-dict entries and malformed event dicts rather than raising, so one
+                # bad entry no longer discards the whole marker or crashes recovery.
+                events = _parse_pending_events(raw, ext.id)
+                if not events:
+                    # Nothing deliverable (empty "[]", or a wholly-corrupt marker) — compare-and-
+                    # clear the raw marker so it doesn't linger (and so a concurrent append isn't
+                    # erased).
+                    await _clear_pending_alerts(ext_id, engine, raw)
+                    continue
+                logger.info("Recovering %d pending alert(s) for %s after restart", len(events), ext.extension_id)
+                # Mirror _refresh_one exactly: commit + refresh so ext is attached and fresh
+                # when fire_pending_alerts (which opens its own session) reads its attributes —
+                # firing off a detached/uncommitted object trips MissingGreenlet.
+                await session.commit()
+                await session.refresh(ext)
+                # Clear against the RAW marker, not the (possibly filtered) fired subset: if the
+                # marker held junk alongside valid events, we deliver the valid ones and still
+                # clear the whole marker — otherwise the compare-and-clear never matches and the
+                # valid events re-fire every cycle forever (#197).
+                await fire_pending_alerts(events, ext, engine, client, expected_marker=raw)
+        except Exception:
+            logger.exception("Pending-alert recovery failed for ext_id=%d; continuing", ext_id)
+            continue
