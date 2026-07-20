@@ -16,7 +16,6 @@ the deliberate no-retry-on-POST rule (``app/webhooks.py`` / ``fetchers/transport
 from __future__ import annotations
 
 from typing import Any, Mapping
-
 from urllib.parse import urlparse
 
 import httpx
