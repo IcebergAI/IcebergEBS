@@ -78,25 +78,35 @@ def _parse_page(html: str, extension_id: str, url: str) -> ExtensionMetadata:
         tag.decompose()
 
     if not version:
-        # Inline "Version: x.y.z" form: real Chrome uses this for Version even though it
-        # uses the split label/value form for Updated / Offered by. Anchor the search to
-        # the Details region (#279 review): the description / What's-new section renders
-        # BEFORE it, so a standalone "Version: 9.9.9" prose node there would win a plain
-        # document-order scan. Search only text nodes AFTER a Details label ("Updated" /
-        # "Offered by"), each required (via fullmatch) to be essentially just
-        # "Version: x.y.z" — so neither an embedding sentence nor an earlier prose node
-        # can hijack it. No anchor (a partial page) → leave version empty (keep-stale).
-        anchor = None
-        for anchor_label in ("Updated", "Offered by"):
-            anchor = soup.find(string=re.compile(rf"^\s*{re.escape(anchor_label)}\s*$", re.IGNORECASE))
-            if anchor is not None:
-                break
-        if anchor is not None:
-            for fragment in anchor.find_all_next(string=True):
-                version_m = re.fullmatch(r"Version\s*:\s*([0-9][0-9.]*)", fragment.strip())
-                if version_m:
-                    version = version_m.group(1)
+        # Inline "Version: x.y.z" form: real Chrome uses it for Version even though
+        # Updated / Offered by use the split label/value form. Collect the *visible* text
+        # nodes that are essentially JUST "Version: x.y.z" (fullmatch, so an embedding
+        # sentence like "New in Version 9.9.9 …" never matches), then choose structurally
+        # (#279 review):
+        #   - if the Details region is identifiable (an "Updated"/"Offered by" label),
+        #     take the first candidate AT OR AFTER it — the description / What's-new
+        #     section renders before those labels, so a standalone "Version: 9.9.9" prose
+        #     node there is out of scope;
+        #   - else (a degraded page with no Details labels) take the LAST candidate, since
+        #     the real version follows any earlier description mention.
+        # A plain first-match document-order scan let an earlier description node win.
+        candidates = [
+            (node, m.group(1))
+            for node in soup.find_all(string=True)
+            if (m := re.fullmatch(r"Version\s*:\s*([0-9][0-9.]*)", node.strip()))
+        ]
+        if candidates:
+            anchor = None
+            for anchor_label in ("Updated", "Offered by"):
+                anchor = soup.find(string=re.compile(rf"^\s*{re.escape(anchor_label)}\s*$", re.IGNORECASE))
+                if anchor is not None:
                     break
+            version = ""
+            if anchor is not None:
+                after = {id(n) for n in anchor.find_all_next(string=True)}
+                version = next((ver for node, ver in candidates if id(node) in after), "")
+            if not version:
+                version = candidates[-1][1]
 
     visible = soup.get_text(" ")
     install_count = None
