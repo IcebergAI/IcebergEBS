@@ -83,6 +83,13 @@ jobs:
               exit 1 ;;
           esac
 
+      # The SBOM + provenance attestations below require the docker-container
+      # buildx driver; the runner's default `docker` driver rejects them with
+      # "Attestation is not supported for the docker driver" and fails the build.
+      # (build.yml needs no equivalent — it publishes dev images with no attestations.)
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+
       - name: Log in to GHCR
         if: github.event_name == 'push'
         uses: docker/login-action@af1e73f918a031802d376d3c8bbc3fe56130a9b0 # v4.4.0
