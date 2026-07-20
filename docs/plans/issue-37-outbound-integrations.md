@@ -22,9 +22,20 @@ Mirrors `app/oidc/` module-for-module:
 | OIDC (#32) | Senders (#37) | Role |
 |---|---|---|
 | `oidc/base.py` | `senders/base.py` | pure Protocol + registry + shared dataclasses (mypy-clean) |
+| `StandardOIDCAdapter` (shared by authentik/auth0/okta) | `HttpJsonSender` (shared by webhook/slack/teams; extended by jira/servicenow) | one shared core, thin per-kind specializations |
 | `oidc/entra.py`, `okta.py`, … | `senders/webhook.py`, `slack.py`, `teams.py`, `email.py`, `jira.py`, `servicenow.py` | one adapter per kind, self-registering at import |
 | `oidc/config.py` `validate_config()` | per-adapter `validate(...)` | create/update-time validation → 422 |
 | `oidc/__init__.py` | `senders/__init__.py` | imports adapter modules so registration runs |
+
+**Webhook is not privileged.** Generic webhook is just one registered kind among six,
+with the same standing as the others — nothing in the registry, `fire_alerts` dispatch,
+API, or UI special-cases it. Structurally it's the inverse: Slack and Teams are
+*specialised webhooks* (same POST-a-JSON-payload-to-a-user-supplied-URL delivery, a
+different payload shape), so the three share one HTTP core and differ only in
+rendering — exactly as authentik/auth0/okta are three registrations of
+`StandardOIDCAdapter`. The only residual asymmetries are backwards-compatibility, not
+design: the migration's `server_default='webhook'` (existing rows) and `DestinationIn.kind`
+defaulting to `"webhook"` (existing API callers).
 
 ### `senders/base.py` (pure, typed — add to the mypy-enforced set)
 
@@ -72,29 +83,40 @@ Everything generic (SSRF validation, IP pinning, proxy routing, AlertLog bookkee
 retry semantics) stays outside the adapters — an adapter only knows its wire format,
 exactly as an OIDC adapter only knows its claim mapping.
 
-### The six adapters
+### The shared HTTP core + six peer adapters
 
-- **`webhook.py`** — today's behaviour, verbatim: `build_alert_payload(...)` JSON via
-  `send_webhook`. Existing rows become `kind="webhook"` and nothing changes on the wire.
-- **`slack.py`** — Slack incoming-webhook payload (`{"text": ...}` + a Block Kit section
-  with name/store/risk/old→new and the deep link). Target = webhook URL, delivered
-  through the same pinned-POST machinery. Works for Slack-compatible endpoints
-  (Mattermost/Rocket.Chat) for free.
-- **`teams.py`** — Teams Workflows incoming-webhook URL posting an Adaptive Card
+**`HttpJsonSender`** (in `base.py`, or a sibling `http.py` if it grows) is the shared
+delivery core for every HTTP-based kind — the `StandardOIDCAdapter` of this package.
+It owns "POST a JSON body to the destination URL through the pinned-request machinery
+(§ Delivery plumbing)" and exposes two hooks: `render_payload(message) -> dict` and
+`request_headers(config) -> dict` (default: none). A specialization is therefore just
+a payload renderer plus its `ConfigField` declarations.
+
+Five of the six kinds are that shape; email is the one genuinely different transport:
+
+- **`webhook.py`** — `HttpJsonSender` whose renderer is today's
+  `build_alert_payload(...)` shape, verbatim. Existing rows become `kind="webhook"`
+  and nothing changes on the wire.
+- **`slack.py`** — `HttpJsonSender` rendering the Slack incoming-webhook shape
+  (`{"text": ...}` + a Block Kit section with name/store/risk/old→new and the deep
+  link). Works for Slack-compatible endpoints (Mattermost/Rocket.Chat) for free.
+- **`teams.py`** — `HttpJsonSender` rendering an Adaptive Card for a Teams Workflows
+  incoming-webhook URL
   (`{"type": "message", "attachments": [{"contentType": "application/vnd.microsoft.card.adaptive", ...}]}`).
-- **`email.py`** — SMTP. Target = comma-separated recipient list (validated with stdlib
-  `email.utils.parseaddr` — no new dependency); optional `subject_prefix` in config.
-  Server settings are deployment-level env config (§4). Uses stdlib `smtplib` +
-  `email.message.EmailMessage` offloaded via `anyio.to_thread.run_sync` — the same
-  offload pattern as bcrypt in `auth.py`; no new runtime dependency (aiosmtplib not
-  needed for one short-lived send per alert).
-- **`jira.py`** — Jira Cloud `POST /rest/api/3/issue`. Target = site base URL; config =
-  `project_key`, `issue_type` (default "Task"), `account_email`, `secret_ref` (§4).
-  Basic auth `email:api_token`. Summary = `message.text`; description carries the
-  store/risk/old→new detail + deep link (ADF paragraphs).
-- **`servicenow.py`** — `POST /api/now/table/{table}` (default `incident`). Target =
-  instance base URL; config = `table`, `username`, `secret_ref`. `short_description` =
-  `message.text`, `description` = detail block.
+- **`jira.py`** — `HttpJsonSender` + auth headers: Jira Cloud `POST /rest/api/3/issue`.
+  Target = site base URL (the adapter derives the API path); config = `project_key`,
+  `issue_type` (default "Task"), `account_email`, `secret_ref` (§4). Basic auth
+  `email:api_token` via `request_headers`. Summary = `message.text`; description
+  carries the store/risk/old→new detail + deep link (ADF paragraphs).
+- **`servicenow.py`** — `HttpJsonSender` + auth headers: `POST /api/now/table/{table}`
+  (default `incident`). Target = instance base URL; config = `table`, `username`,
+  `secret_ref`. `short_description` = `message.text`, `description` = detail block.
+- **`email.py`** — the non-HTTP transport. Target = comma-separated recipient list
+  (validated with stdlib `email.utils.parseaddr` — no new dependency); optional
+  `subject_prefix` in config. Server settings are deployment-level env config (§4).
+  Uses stdlib `smtplib` + `email.message.EmailMessage` offloaded via
+  `anyio.to_thread.run_sync` — the same offload pattern as bcrypt in `auth.py`; no
+  new runtime dependency (aiosmtplib not needed for one short-lived send per alert).
 
 ### Delivery plumbing changes
 
@@ -241,13 +263,16 @@ ORM-free so they stay type-clean.
 
 ## 8. Delivery plan — three sequential PRs (never stacked; each branched from `main` after the previous merges)
 
-1. **PR 1 — the seam (pure refactor, no behaviour change):** `app/senders/` package +
-  `webhook.py` adapter; `kind`/`config` columns + migration + CHECK; API schemas +
-  descriptor endpoint; `fire_alerts`/test-endpoint dispatch via the registry; UI shows
-  the kind (only `webhook` selectable). Green = every existing alert/webhook test
-  passes untouched.
-2. **PR 2 — message kinds:** Slack, Teams, email (+ SMTP settings, UI forms, help,
-  e2e smoke, docs).
+1. **PR 1 — the seam (pure refactor, no behaviour change):** `app/senders/` package
+  with the `HttpJsonSender` core and its first registration, `webhook.py` (first only
+  because it's the kind that proves behaviour preservation — not privileged in the
+  abstraction); `kind`/`config` columns + migration + CHECK; API schemas + descriptor
+  endpoint; `fire_alerts`/test-endpoint dispatch via the registry; UI kind selector
+  driven by the registry (which at this point contains one kind). Green = every
+  existing alert/webhook test passes untouched.
+2. **PR 2 — message kinds:** Slack + Teams (each a thin `HttpJsonSender` renderer —
+  this PR is the proof the core is genuinely shared) and email (+ SMTP settings, UI
+  forms, help, e2e smoke, docs).
 3. **PR 3 — ticketing kinds:** Jira, ServiceNow (+ `secret_ref` mechanism,
   `send_pinned_request` header support, docs). The acceptance test lands here;
   `Closes #37` goes in **this PR's body** (the bot only auto-closes from the body).
