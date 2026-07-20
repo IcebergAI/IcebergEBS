@@ -1,3 +1,4 @@
+import asyncio
 import json
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -10,6 +11,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.alert_queries import get_alert_log
 from app.config import settings
+from app.deps import get_owned_or_404
 from app.fetchers.base import ExtensionMetadata
 from app.main import app as fastapi_app
 from app.models import AlertDestination, AlertLog, AlertRule, Extension
@@ -1298,6 +1300,55 @@ async def test_patch_kind_change_revalidates_resulting_state(client):
     dest_id = r.json()["id"]
     r2 = await client.patch(f"/api/alerts/destinations/{dest_id}", json={"kind": "jira"})
     assert r2.status_code == 422
+
+
+async def test_update_destination_serializes_concurrent_writers_with_row_lock(test_db, admin_user):
+    """#217 row-lock regression for the PATCH read-validate-write.
+
+    The destination PATCH validates the *resulting* (kind, target, config) against the persisted
+    row, so a second writer must not read the row until the first commits — otherwise a stale
+    partial PATCH (e.g. changing only the target) can leave a combination the switching request
+    never validated (kind=email with a webhook-URL target, the bot's example). The route now loads
+    via ``get_owned_or_404(..., for_update=True)`` (SELECT … FOR UPDATE + populate_existing); this
+    proves that lock genuinely serializes two concurrent writers on the same row."""
+    async with AsyncSession(test_db) as setup:
+        dest = AlertDestination(user_id=admin_user.id, label="orig", target="https://h.example.com/x")
+        setup.add(dest)
+        await setup.commit()
+        await setup.refresh(dest)
+        dest_id = dest.id
+
+    order: list[str] = []
+    s1 = AsyncSession(test_db)
+    s2 = AsyncSession(test_db)
+    try:
+        # Writer 1 takes the FOR UPDATE lock and holds it (no commit yet).
+        d1 = await get_owned_or_404(s1, AlertDestination, dest_id, admin_user.id, for_update=True)
+        d1.label = "first"
+
+        async def writer2() -> None:
+            # Must block on the row lock writer 1 holds until it commits.
+            d2 = await get_owned_or_404(s2, AlertDestination, dest_id, admin_user.id, for_update=True)
+            order.append("w2-acquired-lock")
+            d2.label = "second"
+            await s2.commit()
+
+        task = asyncio.create_task(writer2())
+        await asyncio.sleep(0.25)  # give writer 2 time to (fail to) acquire the lock
+        assert order == [], "writer 2 acquired the lock while writer 1 still held it — not serialized"
+
+        order.append("w1-commit")
+        await s1.commit()  # release the lock
+        await asyncio.wait_for(task, timeout=5)
+        # Writer 2 only proceeded after writer 1 committed.
+        assert order == ["w1-commit", "w2-acquired-lock"]
+    finally:
+        await s1.close()
+        await s2.close()
+
+    async with AsyncSession(test_db) as check:
+        final = await check.get(AlertDestination, dest_id)
+        assert final.label == "second"  # the serialized second writer's value won
 
 
 @respx.mock

@@ -17,9 +17,11 @@ from __future__ import annotations
 
 from typing import Any, Mapping
 
+from urllib.parse import urlparse
+
 import httpx
 
-from app.senders.base import AlertMessage, ConfigField, DestinationConfigError
+from app.senders.base import AlertMessage, ConfigField, DestinationConfigError, SenderError
 from app.webhooks import WebhookValidationError, send_pinned_request, validate_webhook_url
 
 
@@ -31,6 +33,11 @@ class HttpJsonSender:
     label: str = ""
     target_label: str = "Webhook URL"
     config_fields: tuple[ConfigField, ...] = ()
+    # Credential-bearing kinds (ticketing) set this so an http:// target — which would
+    # send the Authorization header in plaintext to the wire / outbound proxy — is
+    # refused at both create/update and send time (bot review). Webhook/Slack/Teams
+    # carry no request credentials, so http is permitted for them as before.
+    require_https: bool = False
 
     # --- hooks a subclass overrides -------------------------------------------
 
@@ -59,9 +66,18 @@ class HttpJsonSender:
 
     # --- shared implementation ------------------------------------------------
 
+    def _needs_https(self, url: str) -> bool:
+        return self.require_https and urlparse(url).scheme != "https"
+
     async def validate(self, target: str, config: Mapping[str, str]) -> None:
+        url = self.endpoint_url(target, config)
+        if self._needs_https(url):
+            raise DestinationConfigError(
+                f"{self.label} destinations must use an https:// URL — the API "
+                "credential would otherwise be sent in plaintext"
+            )
         try:
-            await validate_webhook_url(self.endpoint_url(target, config))
+            await validate_webhook_url(url)
         except WebhookValidationError as exc:
             # WebhookValidationError messages are static + user-facing by design.
             raise DestinationConfigError(str(exc)) from exc
@@ -75,6 +91,10 @@ class HttpJsonSender:
         message: AlertMessage,
     ) -> None:
         url = self.endpoint_url(target, config)
+        # Defence in depth: refuse a plaintext credential send even for a row that
+        # predates the create-time guard (or was written straight to the DB).
+        if self._needs_https(url):
+            raise SenderError(f"{self.label} delivery requires https:// (credentials must not be sent in plaintext)")
         payload = self.render_payload(message, config)
         headers = self.request_headers(config)
         resp = await send_pinned_request(client, url, json=payload, headers=headers or None)

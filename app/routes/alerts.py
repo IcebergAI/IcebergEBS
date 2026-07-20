@@ -164,7 +164,12 @@ async def update_destination(
     current_user: CurrentUser,
     session: SessionDep,
 ) -> DestinationOut:
-    dest = await get_owned_or_404(session, AlertDestination, dest_id, current_user.id)
+    # Row-lock + refresh (#217): the resulting-state validation below reads the
+    # persisted kind/target/config, so a concurrent partial PATCH must be serialized —
+    # otherwise one request could commit kind=email while a stale request updates only
+    # `target`, leaving an email destination with a webhook-URL target that no request
+    # ever validated together (bot review). FOR UPDATE holds until this txn commits.
+    dest = await get_owned_or_404(session, AlertDestination, dest_id, current_user.id, for_update=True)
     if body.label is not None:
         dest.label = body.label
     # Validate the RESULTING kind/target/config, not just the changed fields (the

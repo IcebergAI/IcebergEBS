@@ -194,6 +194,43 @@ async def test_secret_ref_must_be_upper_snake(monkeypatch):
             await sender.validate("https://dev.service-now.com", {"username": "svc", "secret_ref": "lower-case"})
 
 
+@pytest.mark.parametrize(
+    ("kind", "target", "config"),
+    [
+        ("jira", "http://x.atlassian.net", {"project_key": "SEC", "account_email": "a@b.com", "secret_ref": "T"}),
+        ("servicenow", "http://dev.service-now.com", {"username": "svc", "secret_ref": "T"}),
+    ],
+)
+async def test_ticket_senders_reject_http_target(kind, target, config, monkeypatch):
+    """Ticket senders attach a Basic Authorization header; an http:// target would send
+    the credential in plaintext, so validation must reject it (bot review)."""
+    monkeypatch.setenv(_SECRET_ENV_PREFIX + "T", "tok")
+    with _patch_resolver():
+        with pytest.raises(DestinationConfigError, match="https"):
+            await get_sender(kind).validate(target, config)
+
+
+@pytest.mark.parametrize("kind", ["jira", "servicenow"])
+async def test_ticket_senders_refuse_http_at_send_time(kind):
+    """Defence in depth: even a pre-existing http row is refused before any request,
+    so the credential is never put on the wire."""
+    from app.senders.base import SenderError
+
+    with _patch_resolver():
+        async with httpx.AsyncClient() as http:
+            with pytest.raises(SenderError, match="https"):
+                await get_sender(kind).send(http, "http://insecure.example.com", {"secret_ref": "T"}, _msg())
+    assert respx.calls.call_count == 0
+
+
+def test_webhook_slack_teams_allow_http():
+    """The credential-free kinds keep http permitted — only ticketing requires https."""
+    for kind in ("webhook", "slack", "teams"):
+        assert get_sender(kind).require_https is False
+    assert get_sender("jira").require_https is True
+    assert get_sender("servicenow").require_https is True
+
+
 # ---------------------------------------------------------------------------
 # Ticketing auth header + delivery (respx)
 # ---------------------------------------------------------------------------

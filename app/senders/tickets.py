@@ -70,6 +70,7 @@ class JiraSender(HttpJsonSender):
     kind = "jira"
     label = "Jira"
     target_label = "Jira site base URL"
+    require_https = True  # a Basic Authorization header is attached — never plaintext
     config_fields: tuple[ConfigField, ...] = (
         ConfigField("project_key", "Project key", placeholder="SEC"),
         ConfigField("issue_type", "Issue type", required=False, placeholder="Task"),
@@ -112,6 +113,7 @@ class ServiceNowSender(HttpJsonSender):
     kind = "servicenow"
     label = "ServiceNow"
     target_label = "ServiceNow instance base URL"
+    require_https = True  # a Basic Authorization header is attached — never plaintext
     config_fields: tuple[ConfigField, ...] = (
         ConfigField("table", "Table", required=False, placeholder="incident"),
         ConfigField("username", "Username", placeholder="svc_iceberg"),
