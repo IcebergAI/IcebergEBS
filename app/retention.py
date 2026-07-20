@@ -117,6 +117,14 @@ async def prune_expired(
     for model, ts_col in _RETENTION_TARGETS:
         result = await session.execute(sa_delete(model).where(ts_col < cutoff))
         counts[model.__name__] = result.rowcount or 0
+    # Deleting InstallObservation rows changes the distinct-asset count behind the cached
+    # Extension.install_footprint, so recompute it in the SAME transaction — otherwise the
+    # footprint (and exposure) stays inflated after its rows are gone until a later inventory
+    # push happens to touch the extension. The daily footprint-refresh job would catch this,
+    # but it's only registered when decay is enabled (inventory_freshness_days > 0); with
+    # decay disabled the retention path is the only thing that fixes the drift (#287 review).
+    if counts.get(InstallObservation.__name__):
+        await refresh_install_footprints(session, now=now)
     return counts
 
 

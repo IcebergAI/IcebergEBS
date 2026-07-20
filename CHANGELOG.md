@@ -278,7 +278,9 @@ release to diff against.
   deploy stacks; 0 disables) stop counting: the per-batch recompute and the detail-page
   department breakdown filter to fresh observations, a new daily scheduler job re-computes
   every cached footprint (covering extensions that stopped appearing in pushes entirely), and
-  the retention prune now also expires `InstallObservation` rows on `last_seen`.
+  the retention prune now also expires `InstallObservation` rows on `last_seen` — recomputing
+  the affected footprints in the same transaction so a cached value can't outlive its rows even
+  when decay is disabled (the daily refresh job is only registered when decay is on).
 - **Detail-page permission badges no longer contradict the score** (#281). The template
   hand-copied the permission-tier sets and had drifted: `declarativeNetRequestWithHostAccess`
   (CRITICAL — maxes the permissions score), `pageCapture` (HIGH), and the `*://*/*` broad-host

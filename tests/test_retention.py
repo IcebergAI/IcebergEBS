@@ -193,3 +193,31 @@ async def test_decay_disabled_counts_all_observations(session, monkeypatch):
     ext = await session.get(Extension, ext_id)
     await session.refresh(ext)
     assert ext.install_footprint == 1  # pre-#287 behaviour preserved when disabled
+
+
+async def test_retention_recomputes_footprint_when_decay_disabled(session, monkeypatch):
+    # Retention enabled + decay disabled (#287 review): the daily footprint-refresh job is
+    # NOT registered when inventory_freshness_days <= 0, so if retention deletes the old
+    # observations without recomputing, the cached footprint (and exposure) stays inflated
+    # while the live department breakdown is empty. The prune must recompute in-band.
+    monkeypatch.setattr(settings, "inventory_freshness_days", 0)  # decay disabled
+    ext_id = await _make_extension(session)
+    now = datetime(2026, 6, 26, tzinfo=timezone.utc)
+    # One asset within the retention window, one beyond it.
+    session.add(
+        InstallObservation(extension_id=ext_id, asset_id="kept", first_seen=now, last_seen=now - timedelta(days=10))
+    )
+    session.add(
+        InstallObservation(extension_id=ext_id, asset_id="gone", first_seen=now, last_seen=now - timedelta(days=100))
+    )
+    ext = await session.get(Extension, ext_id)
+    ext.install_footprint = 2  # cached "count all observations" value
+    session.add(ext)
+    await session.commit()
+
+    counts = await prune_expired(session, retention_days=30, now=now)
+    await session.commit()
+    assert counts["InstallObservation"] == 1  # the beyond-window row was pruned
+    ext = await session.get(Extension, ext_id)
+    await session.refresh(ext)
+    assert ext.install_footprint == 1  # recomputed over the surviving observation
