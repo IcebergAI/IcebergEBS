@@ -99,14 +99,15 @@ def _authority(host: str, port: int | None) -> str:
     return f"{bracketed}:{port}" if port else bracketed
 
 
-async def send_webhook(
+async def send_pinned_request(
     client: httpx.AsyncClient,
     url: str,
-    payload: dict,
     *,
+    json: dict,
+    headers: dict[str, str] | None = None,
     timeout: float = _WEBHOOK_TIMEOUT,
 ) -> httpx.Response:
-    """POST a JSON payload to a webhook URL with SSRF protection.
+    """POST a JSON body to ``url`` with SSRF protection (the shared delivery core).
 
     Re-validates the URL and resolves it to a public IP at send time, then connects
     to that exact IP (pinning) — so the destination cannot be rebound to an internal
@@ -114,6 +115,12 @@ async def send_webhook(
     is preserved for the HTTP ``Host`` header and (for https) the TLS SNI / certificate
     verification. Redirects are disabled so a 3xx response cannot bounce the request
     to a private address either.
+
+    ``headers`` lets a caller add request headers (e.g. an ``Authorization`` for a
+    Jira/ServiceNow create-issue call). The pinned ``Host`` always wins — a
+    caller-supplied ``Host`` (case-insensitive) is dropped, never allowed to override
+    the SSRF-critical value. All egress inherits the shared client's proxy routing;
+    POST is never retried by ``RetryTransport``, so a delivery is sent at most once.
     """
     validated_ips = await validate_webhook_url(url)
     parsed = urlparse(url)
@@ -126,14 +133,34 @@ async def send_webhook(
     pinned_ip = validated_ips[0]
     pinned_url = parsed._replace(netloc=_authority(pinned_ip, parsed.port)).geturl()
 
-    headers = {"Host": _authority(host, parsed.port)}
+    merged_headers = {"Host": _authority(host, parsed.port)}
+    for key, value in (headers or {}).items():
+        if key.lower() == "host":
+            continue  # never let a caller override the pinned Host
+        merged_headers[key] = value
     extensions = {"sni_hostname": host} if parsed.scheme == "https" else {}
 
     return await client.post(
         pinned_url,
-        json=payload,
-        headers=headers,
+        json=json,
+        headers=merged_headers,
         timeout=timeout,
         follow_redirects=False,
         extensions=extensions,
     )
+
+
+async def send_webhook(
+    client: httpx.AsyncClient,
+    url: str,
+    payload: dict,
+    *,
+    timeout: float = _WEBHOOK_TIMEOUT,
+) -> httpx.Response:
+    """POST a JSON payload to a webhook URL with SSRF protection.
+
+    A thin wrapper over ``send_pinned_request`` kept for the existing call sites
+    (``notifications``/``alerts`` webhook delivery); see that function for the
+    pinning + redirect semantics.
+    """
+    return await send_pinned_request(client, url, json=payload, timeout=timeout)

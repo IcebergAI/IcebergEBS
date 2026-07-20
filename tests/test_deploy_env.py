@@ -43,6 +43,14 @@ _FORWARDED_ENV = [
     "ICEBERG_EBS_PROXY_MODE",
     "ICEBERG_EBS_PROXY_URL",
     "ICEBERG_EBS_PROXY_NO_PROXY",
+    # Outbound alert integrations (#37): SMTP config for the email destination kind.
+    # The password is deliberately NOT here — it's a secret (see the SMTP credential
+    # tests below), like the proxy/OIDC credentials.
+    "ICEBERG_EBS_SMTP_HOST",
+    "ICEBERG_EBS_SMTP_PORT",
+    "ICEBERG_EBS_SMTP_STARTTLS",
+    "ICEBERG_EBS_SMTP_USERNAME",
+    "ICEBERG_EBS_SMTP_FROM",
     # SSO / OIDC non-secret config (#32). Client secrets are deliberately NOT here:
     # like the proxy credentials they must never land in the Helm ConfigMap (see
     # the dedicated credential tests below).
@@ -77,6 +85,8 @@ _FORWARDED_ENV = [
 ]
 
 _PROXY_CREDENTIAL_ENV = ["ICEBERG_EBS_PROXY_USERNAME", "ICEBERG_EBS_PROXY_PASSWORD"]
+
+_SMTP_SECRET_ENV = ["ICEBERG_EBS_SMTP_PASSWORD"]
 
 _OIDC_SECRET_ENV = [
     "ICEBERG_EBS_OIDC_ENTRA_CLIENT_SECRET",
@@ -123,6 +133,12 @@ def test_helm_values_declare_forwarded_settings():
         "proxyNoProxy",
         "proxyUsername",
         "proxyPassword",
+        "smtpHost",
+        "smtpPort",
+        "smtpStartTls",
+        "smtpUsername",
+        "smtpPassword",
+        "smtpFrom",
     ):
         assert key in ie, f"helm values icebergEbs missing: {key}"
 
@@ -135,6 +151,29 @@ def test_compose_forwards_proxy_credentials():
     keys = set(env) if isinstance(env, dict) else {e.split("=", 1)[0] for e in env}
     missing = [v for v in _PROXY_CREDENTIAL_ENV if v not in keys]
     assert not missing, f"docker-compose app.environment missing: {missing}"
+
+
+def test_compose_forwards_smtp_password():
+    compose = yaml.safe_load((_ROOT / "docker-compose.yml").read_text())
+    env = compose["services"]["app"]["environment"]
+    keys = set(env) if isinstance(env, dict) else {e.split("=", 1)[0] for e in env}
+    missing = [v for v in _SMTP_SECRET_ENV if v not in keys]
+    assert not missing, f"docker-compose app.environment missing: {missing}"
+
+
+def test_helm_smtp_password_stays_out_of_configmap():
+    """The SMTP password is a secret (#37): wired as secretKeyRef in the Deployment
+    from the chart Secret, never as ConfigMap data."""
+    cm = (_ROOT / "helm/iceberg-ebs/templates/configmap.yaml").read_text()
+    leaked = [v for v in _SMTP_SECRET_ENV if v in cm]
+    assert not leaked, f"SMTP password must not be in the ConfigMap: {leaked}"
+
+    deployment = (_ROOT / "helm/iceberg-ebs/templates/deployment.yaml").read_text()
+    missing = [v for v in _SMTP_SECRET_ENV if v not in deployment]
+    assert not missing, f"helm Deployment missing secretKeyRef wiring for: {missing}"
+
+    secret = (_ROOT / "helm/iceberg-ebs/templates/secret.yaml").read_text()
+    assert "smtp-password" in secret, "helm Secret missing key: smtp-password"
 
 
 def test_compose_forwards_oidc_client_secrets():

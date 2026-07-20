@@ -414,6 +414,13 @@ silently ignored — #87). All settings use the `ICEBERG_EBS_` prefix.
 | `ICEBERG_EBS_PROXY_NO_PROXY` | localhost + private ranges | Hosts/suffixes/IPs/CIDRs that bypass the explicit proxy |
 | `ICEBERG_EBS_PROXY_USERNAME` | `""` | Proxy credentials — env-only secret (Helm: chart Secret, not ConfigMap) |
 | `ICEBERG_EBS_PROXY_PASSWORD` | `""` | See above |
+| `ICEBERG_EBS_SMTP_HOST` | `""` | SMTP server for the email alert kind — empty ⇒ email kind unavailable (#37) |
+| `ICEBERG_EBS_SMTP_PORT` | `587` | SMTP port |
+| `ICEBERG_EBS_SMTP_STARTTLS` | `true` | Issue STARTTLS before auth |
+| `ICEBERG_EBS_SMTP_USERNAME` | `""` | SMTP auth username (empty ⇒ no login) |
+| `ICEBERG_EBS_SMTP_PASSWORD` | `""` | SMTP password — env-only secret (Helm: chart Secret, not ConfigMap) |
+| `ICEBERG_EBS_SMTP_FROM` | `""` | `From:` address (falls back to the username) |
+| `ICEBERG_EBS_DEST_SECRET_<REF>` | — | Per-destination Jira/ServiceNow API token, referenced by a destination's `secret_ref` (#37) |
 | `ICEBERG_EBS_AUTH_MODE` | `both` | Login paths: `local` \| `oidc` \| `both` (#32) |
 | `ICEBERG_EBS_OIDC_REDIRECT_BASE_URL` | `""` | Public base URL for the IdP callback behind a rewriting proxy |
 | `ICEBERG_EBS_OIDC_<PROVIDER>_*` | see `.env.example` | Per-provider OIDC config for `ENTRA`/`AUTHENTIK`/`AUTH0`/`OKTA` (#32) |
@@ -458,6 +465,36 @@ Operational notes:
 - The connectivity test at `/admin/proxy` dials only server-known egress targets (the five store
   origins + enabled webhook **origins**, never their capability paths) — by design it does not
   accept arbitrary URLs.
+
+### Outbound integrations (#37)
+
+Alert destinations come in kinds — **webhook, Slack, Teams, email, Jira, ServiceNow** — dispatched
+by the sender registry (`app/senders/`); a rule can point at any of them and every matching
+destination is delivered + logged. The HTTP kinds (all but email) inherit the webhook SSRF
+defence (validate-at-create-and-send, IP pinning, disabled redirects, proxy routing) for free.
+
+Secrets stay **env-only**, the same rule as the proxy/OIDC credentials:
+
+- **Email (SMTP):** the mail server is deployment config (`ICEBERG_EBS_SMTP_*`). An empty
+  `SMTP_HOST` (or no sender address) makes the email kind *unavailable* — the API refuses to
+  create an email destination and the UI greys it out. `SMTP_PASSWORD` is a secret: in Helm it is
+  the chart-Secret key `smtp-password` wired as `secretKeyRef` env, never ConfigMap data
+  (`tests/test_deploy_env.py` enforces the split). Email is delivered over SMTP and therefore does
+  **not** traverse the outbound proxy.
+- **Jira / ServiceNow API tokens** are per-destination, so they are **not** stored on the row and
+  **not** a fixed env var. The destination stores a `secret_ref` — an `UPPER_SNAKE_CASE` name —
+  and the token is read at send time from `ICEBERG_EBS_DEST_SECRET_<REF>`. `validate` checks the
+  ref resolves when the destination is created/updated; a rotated env value applies on restart
+  with no row edit. Provide these:
+  - **Compose:** drop `ICEBERG_EBS_DEST_SECRET_<REF>=…` lines into a gitignored `integrations.env`
+    beside `.env` — the app service loads it if present (it's kept out of the enumerated
+    `environment:` block because the ref names are per-destination).
+  - **Helm:** put them in your own Secret and reference it via `extraEnvFrom` (or individual
+    `extraEnv` `secretKeyRef` entries) in `values.yaml`.
+
+**Testing a destination sends a real notification** through the same `sender.send()` real alerts
+use — for Jira/ServiceNow that creates one real test ticket, which is the point (it proves the
+project/table, auth, and field mapping end-to-end).
 
 ### Single sign-on (OIDC, #32)
 

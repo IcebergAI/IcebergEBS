@@ -45,6 +45,13 @@ services:
     read_only: true
     tmpfs:
       - /tmp
+    # Optional operator-supplied env for outbound-integration secrets (#37) — e.g.
+    # ICEBERG_EBS_DEST_SECRET_JIRA_TOKEN=... — kept out of the enumerated block because
+    # the ref names are per-destination and can't be templated. Gitignored, loaded only
+    # if present; the explicit `environment:` block below still wins for any key it sets.
+    env_file:
+      - path: integrations.env
+        required: false
     environment:
       # Every secret below uses `:?` so a missing value aborts `up` naming the variable,
       # rather than silently starting with an empty credential. Only SECRET_KEY has an
@@ -94,6 +101,18 @@ services:
       # only. Forwarded so an operator's .env value isn't silently ignored (.env is excluded
       # from the image); a bad/absent value here would 403 every browser POST including login.
       ICEBERG_EBS_TRUSTED_ORIGINS: ${ICEBERG_EBS_TRUSTED_ORIGINS:-}
+      # Outbound alert integrations (#37): SMTP for the email destination kind. Empty
+      # smtp host ⇒ the email kind is unavailable (destinations can't be created), so
+      # these are all optional. smtp_password is a SECRET (env-only, never stored/shown).
+      # Per-destination Jira/ServiceNow API tokens are NOT here — they are referenced by
+      # name and read from ICEBERG_EBS_DEST_SECRET_<REF>, which an operator adds to this
+      # environment block per destination (see DEPLOYMENT.md → Outbound integrations).
+      ICEBERG_EBS_SMTP_HOST: ${ICEBERG_EBS_SMTP_HOST:-}
+      ICEBERG_EBS_SMTP_PORT: ${ICEBERG_EBS_SMTP_PORT:-587}
+      ICEBERG_EBS_SMTP_STARTTLS: ${ICEBERG_EBS_SMTP_STARTTLS:-true}
+      ICEBERG_EBS_SMTP_USERNAME: ${ICEBERG_EBS_SMTP_USERNAME:-}
+      ICEBERG_EBS_SMTP_PASSWORD: ${ICEBERG_EBS_SMTP_PASSWORD:-}
+      ICEBERG_EBS_SMTP_FROM: ${ICEBERG_EBS_SMTP_FROM:-}
       # Outbound proxy (#216): mode/url/no-proxy seed the admin-editable routing config;
       # the credentials are env-ONLY (never stored in the DB or shown in the UI). Defaults
       # must match app/config.py or an unset var would silently override the app default.

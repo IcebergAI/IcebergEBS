@@ -20,6 +20,25 @@ release to diff against.
 
 ### Added
 
+- **Outbound integrations: Slack, Teams, email, and Jira/ServiceNow ticketing** (#37). Alert
+  destinations gained a `kind` (webhook, slack, teams, email, jira, servicenow) and a `config`
+  column, dispatched through a new `app/senders/` adapter registry that mirrors the OIDC adapter
+  design: a pure `base.py` (Protocol + registry), a shared `HttpJsonSender` core (the delivery
+  analogue of `StandardOIDCAdapter`), and one small self-registering module per kind. Webhook is
+  **not** privileged — Slack/Teams are specialised webhooks (same SSRF-pinned delivery, a
+  different payload), Jira/ServiceNow add an auth header + a create-issue path, and email is the
+  one non-HTTP transport (SMTP via stdlib `smtplib`, offloaded off the event loop; it does not
+  traverse the outbound proxy). A rule can fire to any mix of destinations and each delivery is
+  recorded in the alert log. **Secrets are env-only** like the OIDC/proxy credentials: SMTP is
+  `ICEBERG_EBS_SMTP_*`; per-destination Jira/ServiceNow API tokens are referenced by an
+  `UPPER_SNAKE_CASE` `secret_ref` and read at send time from `ICEBERG_EBS_DEST_SECRET_<REF>`,
+  never stored on the row or returned by the API. The account page grows a kind selector with a
+  descriptor-driven config form, and testing a destination sends a real notification through the
+  same path real alerts use (for ticketing, one real test ticket — proving auth + field mapping).
+  A `ck_alertdestination_kind` CHECK backstops the kind enum, held in lockstep with the registry
+  by a drift test. Both deploy stacks forward the SMTP config (password as a Helm chart Secret,
+  never ConfigMap); Compose loads per-destination secrets from an optional `integrations.env`, and
+  Helm takes them via `extraEnv`/`extraEnvFrom`.
 - **API keys now fall under the SSO revocation controls** (#278). Bearer keys sat outside
   every session-revocation mechanism: an employee offboarded by disabling their IdP account
   lost their session within the hour (#221) but their API key worked **forever**, with no

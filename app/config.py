@@ -147,6 +147,19 @@ class Settings(BaseSettings):
     oidc_okta_scopes: str = "openid email profile"
     oidc_okta_role_claim: str = "groups"
     oidc_okta_role_map: str = ""
+    # Outbound alert integrations (#37). SMTP is the deployment-level mail server the
+    # email destination kind delivers through; empty smtp_host disables the email kind
+    # (its destinations can't be created). smtp_password is a SECRET (env-only), like
+    # the proxy/OIDC credentials. Per-destination Jira/ServiceNow API tokens are NOT
+    # here — they are referenced by name and read from ICEBERG_EBS_DEST_SECRET_<REF>
+    # at send time (see app/senders/tickets.py).
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_starttls: bool = True
+    smtp_username: str = ""
+    smtp_password: SecretStr = SecretStr("")  # SECRET: env-only
+    smtp_from: str = ""  # From: address (falls back to smtp_username)
+    smtp_timeout: float = 15.0
     app_base_url: str = ""  # e.g. "https://icebergebs.example.com" — used in webhook payloads
     # Emit logs as single-line JSON (for a log collector) instead of timestamped text (#89).
     log_json: bool = False

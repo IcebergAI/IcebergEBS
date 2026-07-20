@@ -914,7 +914,10 @@ async def test_fire_alerts_persisted_error_is_scrubbed(test_db, admin_user):
 
         events = [ChangeEvent("new_version", "1.0.0", "2.0.0")]
         leaky = httpx.ProxyError("CONNECT via http://bob:hunter2@proxy.corp:3128 refused")
-        with patch("app.notifications.send_webhook", new=AsyncMock(side_effect=leaky)):
+        # Patch the shared pinned-request core the webhook sender delivers through, so
+        # the failure surfaces exactly as a real proxied delivery would (#37 moved the
+        # send seam from notifications.send_webhook into the sender dispatch).
+        with patch("app.senders.http.send_pinned_request", new=AsyncMock(side_effect=leaky)):
             async with httpx.AsyncClient() as http:
                 await fire_alerts(events, ext, test_db, http)
 
@@ -1211,6 +1214,186 @@ def test_build_alert_payload_url_only_when_base_url_set(monkeypatch):
     )
     # Trailing slash on the base is stripped; the id is interpolated.
     assert with_url["extension"]["iceberg_ebs_url"] == "https://ebs.example.com/extensions/3"
+
+
+# ---------------------------------------------------------------------------
+# Multi-kind destinations (#37)
+# ---------------------------------------------------------------------------
+
+_DEST_SECRET_ENV = "ICEBERG_EBS_DEST_SECRET_JIRA_TOKEN"
+
+
+async def test_destination_kinds_endpoint(client):
+    r = await client.get("/api/alerts/destination-kinds")
+    assert r.status_code == 200
+    kinds = {d["kind"]: d for d in r.json()}
+    assert {"webhook", "slack", "teams", "email", "jira", "servicenow"} <= set(kinds)
+    # Email is unavailable in tests (no SMTP configured) and advertises why.
+    assert kinds["email"]["available"] is False
+    assert kinds["email"]["unavailable_reason"]
+
+
+async def test_create_slack_destination(client):
+    r = await client.post(
+        "/api/alerts/destinations",
+        json={"label": "Slack", "kind": "slack", "target": "https://hooks.slack.com/services/T/B/x"},
+    )
+    assert r.status_code == 201
+    data = r.json()
+    assert data["kind"] == "slack"
+    assert data["config"] == {}
+
+
+async def test_create_destination_defaults_to_webhook(client):
+    """An existing caller that omits kind still creates a webhook destination."""
+    r = await client.post(
+        "/api/alerts/destinations", json={"label": "Legacy", "target": "https://hooks.example.com/legacy"}
+    )
+    assert r.status_code == 201
+    assert r.json()["kind"] == "webhook"
+
+
+async def test_create_destination_unknown_kind_rejected(client):
+    r = await client.post(
+        "/api/alerts/destinations",
+        json={"label": "Nope", "kind": "carrier_pigeon", "target": "https://hooks.example.com/x"},
+    )
+    assert r.status_code == 422
+    assert "kind" in r.json()["detail"].lower()
+
+
+async def test_create_email_destination_refused_when_smtp_unconfigured(client):
+    r = await client.post(
+        "/api/alerts/destinations",
+        json={"label": "Mail", "kind": "email", "target": "ops@example.com"},
+    )
+    assert r.status_code == 422
+    assert "smtp" in r.json()["detail"].lower()
+
+
+async def test_create_jira_destination_requires_secret(client, monkeypatch):
+    body = {
+        "label": "Jira",
+        "kind": "jira",
+        "target": "https://x.atlassian.net",
+        "config": {"project_key": "SEC", "account_email": "bot@example.com", "secret_ref": "JIRA_TOKEN"},
+    }
+    # No env secret yet → 422.
+    r = await client.post("/api/alerts/destinations", json=body)
+    assert r.status_code == 422
+
+    monkeypatch.setenv(_DEST_SECRET_ENV, "tok")
+    r2 = await client.post("/api/alerts/destinations", json=body)
+    assert r2.status_code == 201
+    # Config (non-secret) round-trips; the secret itself is never stored.
+    assert r2.json()["config"]["project_key"] == "SEC"
+    assert "tok" not in str(r2.json())
+
+
+async def test_patch_kind_change_revalidates_resulting_state(client):
+    """Changing kind alone must revalidate the existing target/config under the new
+    adapter (the #217 resulting-state rule) — a webhook target is not a valid Jira
+    destination without project/secret config."""
+    r = await client.post("/api/alerts/destinations", json={"label": "W", "target": "https://hooks.example.com/w"})
+    dest_id = r.json()["id"]
+    r2 = await client.patch(f"/api/alerts/destinations/{dest_id}", json={"kind": "jira"})
+    assert r2.status_code == 422
+
+
+@respx.mock
+async def test_fire_alerts_delivers_slack_and_jira(test_db, admin_user, monkeypatch):
+    """Acceptance (#37): one fired rule-set with a Slack AND a Jira destination
+    delivers to both, and AlertLog records both."""
+    monkeypatch.setenv(_DEST_SECRET_ENV, "tok")
+    slack_route = respx.post(f"https://{_PINNED_IP}/slack").mock(return_value=httpx.Response(200))
+    jira_route = respx.post(f"https://{_PINNED_IP}/rest/api/3/issue").mock(return_value=httpx.Response(201))
+
+    async with AsyncSession(test_db) as session:
+        slack = AlertDestination(
+            user_id=admin_user.id, label="Slack", kind="slack", target="https://hooks.slack.com/slack", enabled=True
+        )
+        jira = AlertDestination(
+            user_id=admin_user.id,
+            label="Jira",
+            kind="jira",
+            target="https://x.atlassian.net",
+            config=json.dumps({"project_key": "SEC", "account_email": "bot@example.com", "secret_ref": "JIRA_TOKEN"}),
+            enabled=True,
+        )
+        session.add(slack)
+        session.add(jira)
+        await session.commit()
+        await session.refresh(slack)
+        await session.refresh(jira)
+        slack_id, jira_id = slack.id, jira.id
+
+        ext = Extension(
+            user_id=admin_user.id,
+            store="chrome",
+            extension_id="multi.kind",
+            name="Multi Kind",
+            publisher="Pub",
+            version="1.0",
+            store_url="https://example.com",
+            risk_score=80,
+            permissions="[]",
+            last_fetched_at=datetime(2024, 1, 1, tzinfo=timezone.utc),
+        )
+        session.add(ext)
+        await session.commit()
+        await session.refresh(ext)
+
+        session.add(
+            AlertRule(user_id=admin_user.id, destination_id=slack_id, event_type="risk_level_change", enabled=True)
+        )
+        session.add(
+            AlertRule(user_id=admin_user.id, destination_id=jira_id, event_type="risk_level_change", enabled=True)
+        )
+        await session.commit()
+        await session.refresh(ext)
+
+        events = [ChangeEvent("risk_level_change", "medium", "critical")]
+        with _patch_resolver():
+            async with httpx.AsyncClient() as http:
+                await fire_alerts(events, ext, test_db, http)
+
+    assert slack_route.called and jira_route.called
+    async with AsyncSession(test_db) as session:
+        logs = (await session.exec(select(AlertLog).where(AlertLog.extension_id == ext.id))).all()
+    assert len(logs) == 2
+    assert {log.destination_id for log in logs} == {slack_id, jira_id}
+    assert all(log.success for log in logs)
+
+
+async def test_test_slack_destination(client, test_db, admin_user):
+    """The destination-test endpoint dispatches through the kind's sender (#168)."""
+    r_dest = await client.post(
+        "/api/alerts/destinations",
+        json={"label": "Slack Test", "kind": "slack", "target": "https://hooks.slack.com/services/x"},
+    )
+    dest_id = r_dest.json()["id"]
+
+    captured = {}
+
+    async def fake_post(url, **kwargs):
+        captured["json"] = kwargs["json"]
+        resp = MagicMock()
+        resp.status_code = 200
+        resp.raise_for_status = MagicMock()
+        return resp
+
+    original = fastapi_app.state.http_client
+    fastapi_app.state.http_client = AsyncMock()
+    fastapi_app.state.http_client.post = AsyncMock(side_effect=fake_post)
+    try:
+        with _patch_resolver():
+            r = await client.post(f"/api/alerts/destinations/{dest_id}/test")
+        assert r.status_code == 200
+        assert r.json()["ok"] is True
+        # Slack shape, not the generic webhook payload.
+        assert "blocks" in captured["json"]
+    finally:
+        fastapi_app.state.http_client = original
 
 
 def test_test_and_real_alert_payloads_share_shape():
