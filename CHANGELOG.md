@@ -676,6 +676,15 @@ release to diff against.
 
 ### Security
 
+- **Webhook/destination URLs with embedded credentials are now rejected** (#79). A target like
+  `https://user:pass@host/hook` validated at create time but the IP-pinning rebuild
+  (`send_pinned_request`) replaced the whole netloc, silently dropping the `user:pass@` at send
+  time (confusing 401s from the destination). Worse, `AlertDestination.target` is persisted and
+  returned by `GET /api/alerts/destinations` / rendered in the UI, so a credential in the URL was
+  stored in plaintext and exposed. `validate_webhook_url` now refuses any userinfo with a clear
+  422 — at create/update and again at send time, for every sender kind — matching how the
+  outbound-proxy URL already rejects userinfo. Credentials belong in an env-only mechanism (a
+  sender `secret_ref`), never in the target URL.
 - **Two OIDC email-trust fail-open gaps closed** (#288). `StandardOIDCAdapter` coerced
   `email_verified` with `bool()`, so the JSON string `"false"` (seen from custom Auth0 rules /
   claim-mapping proxies) read as truthy and JIT provisioning proceeded on an unverified email —

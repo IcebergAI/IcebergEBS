@@ -52,6 +52,17 @@ async def validate_webhook_url(url: str) -> list[str]:
     if parsed.scheme not in ("http", "https"):
         raise WebhookValidationError("Webhook URL must use http or https")
 
+    # Reject embedded credentials (userinfo, i.e. user:pass@host). The IP-pinning
+    # rebuild in send_pinned_request replaces the whole netloc, so a `user:pass@`
+    # would be silently dropped at send time (confusing 401s from the destination,
+    # #79). More importantly, AlertDestination.target is persisted and returned by
+    # the API / rendered in the UI, so a credential in the URL would be stored in
+    # plaintext and exposed — the same reason the outbound-proxy URL rejects userinfo.
+    # Credentials belong in an env-only mechanism (a sender secret_ref), never in the
+    # target URL. Static message: surfaced verbatim to the caller as a 422.
+    if parsed.username or parsed.password:
+        raise WebhookValidationError("Webhook URL must not contain embedded credentials (user:pass@host)")
+
     hostname = (parsed.hostname or "").lower()
     if not hostname:
         raise WebhookValidationError("Webhook URL has no hostname")
