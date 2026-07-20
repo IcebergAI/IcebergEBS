@@ -194,6 +194,37 @@ async def test_validate_webhook_url_invalid_port_raises_validation_error():
             await validate_webhook_url(url)
 
 
+@pytest.mark.parametrize(
+    "target",
+    [
+        "https://user:pass@hooks.example.com/webhook",  # user:pass@
+        "https://user@hooks.example.com/webhook",  # user@ (no password)
+        "https://:pass@hooks.example.com/webhook",  # :pass@ (no user)
+    ],
+)
+async def test_create_destination_rejects_embedded_credentials(client, target):
+    """A webhook URL with userinfo is rejected (#79): the IP-pinning rebuild would drop
+    it at send time, and target is persisted + returned by the API — so a credential in
+    the URL would be stored in plaintext and exposed."""
+    r = await client.post("/api/alerts/destinations", json={"label": "Creds", "target": target})
+    assert r.status_code == 422
+    assert "credential" in r.json()["detail"].lower()
+    # Nothing was stored.
+    listing = await client.get("/api/alerts/destinations")
+    assert all(d["target"] != target for d in listing.json())
+
+
+async def test_validate_webhook_url_rejects_userinfo():
+    """Direct unit contract for #79 — credentials in the URL never validate, for any kind."""
+    for url in (
+        "https://user:pass@hooks.example.com/x",
+        "http://admin@8.8.8.8/x",
+        "https://:secret@feed.example.com/x",
+    ):
+        with pytest.raises(WebhookValidationError):
+            await validate_webhook_url(url)
+
+
 async def test_list_destinations(client):
     await client.post("/api/alerts/destinations", json={"label": "My Hook", "target": "https://hooks.example.com/1"})
     r = await client.get("/api/alerts/destinations")
