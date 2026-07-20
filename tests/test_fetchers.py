@@ -517,6 +517,32 @@ async def test_chrome_version_regex_fallback_still_works():
     assert meta.version == "1.54.0"
 
 
+CHROME_HTML_DESCRIPTION_PROSE_AND_INLINE_VERSION = """
+<html><head><meta name="description" content="Best ad blocker"></head>
+<body>
+<h1>uBlock Origin</h1>
+<p>What's new: New in Version 9.9.9 we improved everything!</p>
+<div>10,000,000 users</div>
+<p>Version: 1.54.0</p>
+</body></html>
+"""
+
+
+@respx.mock
+async def test_chrome_inline_version_fallback_not_hijacked_by_description_prose():
+    # The combined case (#279 review): no Details label/value split, so exact-label
+    # extraction returns empty and the inline fallback runs — but description prose
+    # "New in Version 9.9.9" precedes the real "Version: 1.54.0". Requiring the colon
+    # separator keeps the prose (no colon) from winning the first-match search.
+    respx.get("https://chromewebstore.google.com/detail/cjpalhdlnbpafiamejdnhcphjbkeiagm").mock(
+        return_value=httpx.Response(200, text=CHROME_HTML_DESCRIPTION_PROSE_AND_INLINE_VERSION)
+    )
+    async with httpx.AsyncClient() as client:
+        fetcher = ChromeFetcher(client)
+        meta = await fetcher.fetch_metadata("cjpalhdlnbpafiamejdnhcphjbkeiagm")
+    assert meta.version == "1.54.0"
+
+
 @respx.mock
 async def test_chrome_fetch_pins_english_locale():
     # No locale pin meant Google localized by egress IP: "Aktualisiert" labels and

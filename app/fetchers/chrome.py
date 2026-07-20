@@ -80,7 +80,12 @@ def _parse_page(html: str, extension_id: str, url: str) -> ExtensionMetadata:
     visible = soup.get_text(" ")
 
     if not version:
-        version_m = re.search(r"Version[:\s]+([0-9][0-9.]*)", visible)
+        # Fallback for pages carrying only the inline "Version: x.y.z" form (no
+        # label/value split for exact-label lookup). Require the COLON separator
+        # (#279 review): a whitespace-tolerant `Version[:\s]+` still let earlier
+        # description prose like "New in Version 9.9.9" win over the real
+        # "Version: 1.54.0", reproducing the very hijack this fix targets.
+        version_m = re.search(r"Version\s*:\s*([0-9][0-9.]*)", visible)
         if version_m:
             version = version_m.group(1)
 
