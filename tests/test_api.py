@@ -713,7 +713,10 @@ async def test_history_is_bounded_and_supports_since(client, test_db):
     r_since = await client.get(
         f"/api/extensions/{ext_id}/history", params={"since": (base + timedelta(days=4)).isoformat()}
     )
-    since_counts = [p["install_count"] for p in r_since.json() if p["install_count"] >= 1000]
+    # Filter to the manually-inserted band (1000–1005); the extension-creation
+    # POST auto-records one real-"now" history point (install_count 50000) that is
+    # also >= `since`, and it's not what this assertion is about.
+    since_counts = [p["install_count"] for p in r_since.json() if 1000 <= p["install_count"] < 2000]
     assert set(since_counts) == {1004, 1005}
 
     r_cap = await client.get(f"/api/extensions/{ext_id}/history?limit=501")
