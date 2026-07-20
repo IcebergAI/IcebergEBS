@@ -54,6 +54,21 @@ def json_object(raw: str | None, field: str, ext_id: int | None) -> dict | None:
     return None
 
 
+def host_permissions_of(analysis: dict | None) -> list[str]:
+    """Host permissions from an already-parsed ``package_analysis`` dict; [] when the
+    analysis is missing, ``host_permissions`` is not a list, or its members aren't strings.
+
+    The single shape guard for this field (#291), taking the parsed dict so a caller that
+    already has it (the JSON DTO, the detail page) doesn't re-parse the multi-KB blob;
+    ``Extension.host_permissions_list()`` wraps it for callers that only have the row."""
+    if analysis is None:
+        return []
+    hosts = analysis.get("host_permissions", [])
+    if not isinstance(hosts, list):
+        return []
+    return [h for h in hosts if isinstance(h, str)]
+
+
 def domain_from_url(url: str) -> str:
     """Return the hostname from a URL, or empty string if none or no dot."""
     try:

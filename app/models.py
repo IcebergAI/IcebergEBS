@@ -4,7 +4,7 @@ from typing import Any, Optional
 from sqlalchemy import CheckConstraint, Column, DateTime, Index, desc, text
 from sqlmodel import Field, SQLModel, UniqueConstraint
 
-from app.utils import json_list, json_object
+from app.utils import host_permissions_of, json_list, json_object
 
 
 def _utcnow() -> datetime:
@@ -138,17 +138,11 @@ class Extension(SQLModel, table=True):
     def host_permissions_list(self) -> list[str]:
         """Stored host permissions (from package_analysis) as a list of strings; [] when the
         analysis is missing/malformed, the ``host_permissions`` value is not a list, or its
-        members aren't strings. The single guard for this field — the scorer
-        (``set(host_permissions)``), the notifications diff, the JSON DTO and the detail page
-        all read it, and a stored string would otherwise iterate char-by-char into a silently
-        wrong score / per-character perm tags, or a non-iterable would 500 the page (#291)."""
-        data = self.analysis_dict()
-        if data is None:
-            return []
-        hosts = data.get("host_permissions", [])
-        if not isinstance(hosts, list):
-            return []
-        return [h for h in hosts if isinstance(h, str)]
+        members aren't strings. The single guard for this field (``utils.host_permissions_of``)
+        — the scorer (``set(host_permissions)``), the notifications diff, the JSON DTO and the
+        detail page all read it, and a stored string would otherwise iterate char-by-char into
+        a silently wrong score / per-character perm tags, or a non-iterable would 500 (#291)."""
+        return host_permissions_of(self.analysis_dict())
 
     def risk_detail_dict(self) -> dict | None:
         """Stored risk_detail breakdown as a dict, or None when absent/malformed/not an object."""

@@ -45,6 +45,7 @@ from app.ratelimit import login_limiter
 from app.retention import freshness_cutoff
 from app.scoring import RiskDetail, risk_level
 from app.threat_intel import build_threat_intel_indicators
+from app.utils import host_permissions_of
 from app.version import get_version
 
 router = APIRouter()
@@ -582,10 +583,10 @@ async def extension_detail(
     risk_detail = ext.risk_detail_dict()
     package_analysis = ext.analysis_dict()
 
-    # Shape-guarded accessor (#150/#291): a stored host_permissions that is a non-list
-    # container or carries non-string members must not reach the tier classifier (whose
-    # set membership raises on unhashable members) or iterate char-by-char.
-    host_permissions = ext.host_permissions_list()
+    # Shape guard (#150/#291): a stored host_permissions that is a non-list container or
+    # carries non-string members must not reach the tier classifier (whose set membership
+    # raises on unhashable members) or iterate char-by-char. Reuse the parsed dict above.
+    host_permissions = host_permissions_of(package_analysis)
     if risk_detail:
         # json_object guards dict-ness but not keys — backfill the RiskDetail fields a
         # partial write / older schema left missing so the breakdown renders (a blank

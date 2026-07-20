@@ -26,7 +26,7 @@ from app.retention import freshness_cutoff
 from app.scoring import risk_level
 from app.services import fetch_and_store, fire_pending_alerts
 from app.threat_intel import build_threat_intel_indicators
-from app.utils import json_list
+from app.utils import host_permissions_of, json_list
 
 logger = logging.getLogger(__name__)
 
@@ -150,9 +150,10 @@ class ExtensionOut(BaseModel):
         # edit can't 500 the endpoint (#17/#61), they log + fall back instead (#167).
         perms = ext.permissions_list()
         analysis_raw = ext.analysis_dict()
-        # Shape-guarded accessor (#150/#291): a non-list container or non-string members
-        # (partial write / manual edit) must not 500 the list[str] DTO.
-        host_perms = ext.host_permissions_list()
+        # Shape guard (#150/#291) — a non-list container or non-string members (partial write
+        # / manual edit) must not 500 the list[str] DTO. Reuse the already-parsed dict rather
+        # than the accessor so the list path doesn't re-parse the multi-KB blob per row.
+        host_perms = host_permissions_of(analysis_raw)
         findings_raw = analysis_raw.get("findings", []) if analysis_raw else []
         # Tolerate malformed findings (non-dict entries, dicts missing required fields, or a
         # non-list `findings`) the way the detail page already does, instead of letting
