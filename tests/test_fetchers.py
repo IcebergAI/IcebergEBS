@@ -465,3 +465,140 @@ async def test_package_download_failure_log_is_scrubbed(caplog):
     assert "hunter2" not in caplog.text
     assert "bob:" not in caplog.text
     assert "proxy.corp" in caplog.text  # only the userinfo is redacted
+
+
+CHROME_HTML_VERSION_IN_DESCRIPTION = """
+<html><head><meta name="description" content="Best ad blocker"></head>
+<body>
+<h1>uBlock Origin</h1>
+<p>What's new: see our changelog. New in Version 9.9.9 we improved everything!</p>
+<div>
+  <div>Offered by</div>
+  <div>gorhill</div>
+</div>
+<div>
+  <div>Updated</div>
+  <div>January 10, 2024</div>
+</div>
+<div>
+  <div>Version</div>
+  <div>1.54.0</div>
+</div>
+<div>10,000,000 users</div>
+</body></html>
+"""
+
+
+@respx.mock
+async def test_chrome_version_not_hijacked_by_description_text():
+    # The description renders as visible body text BEFORE the details section; the
+    # old whole-page regex took its "New in Version 9.9.9" as the version on every
+    # fetch — one spurious new_version alert, then a permanently wrong stored
+    # version (#279). Label adjacency in the details section must win.
+    respx.get("https://chromewebstore.google.com/detail/cjpalhdlnbpafiamejdnhcphjbkeiagm").mock(
+        return_value=httpx.Response(200, text=CHROME_HTML_VERSION_IN_DESCRIPTION)
+    )
+    async with httpx.AsyncClient() as client:
+        fetcher = ChromeFetcher(client)
+        meta = await fetcher.fetch_metadata("cjpalhdlnbpafiamejdnhcphjbkeiagm")
+    assert meta.version == "1.54.0"
+
+
+@respx.mock
+async def test_chrome_version_regex_fallback_still_works():
+    # Pages carrying only the inline "Version: x.y.z" form (no label/value split)
+    # keep working through the fallback regex (#279).
+    respx.get("https://chromewebstore.google.com/detail/cjpalhdlnbpafiamejdnhcphjbkeiagm").mock(
+        return_value=httpx.Response(200, text=CHROME_HTML_NO_PUBLISHER_LINK)
+    )
+    async with httpx.AsyncClient() as client:
+        fetcher = ChromeFetcher(client)
+        meta = await fetcher.fetch_metadata("cjpalhdlnbpafiamejdnhcphjbkeiagm")
+    assert meta.version == "1.54.0"
+
+
+CHROME_HTML_DESCRIPTION_PROSE_AND_INLINE_VERSION = """
+<html><head><meta name="description" content="Best ad blocker"></head>
+<body>
+<h1>uBlock Origin</h1>
+<p>What's new</p>
+<p>Version: 9.9.9</p>
+<div>
+  <div>Offered by</div>
+  <div>gorhill</div>
+</div>
+<div>
+  <div>Updated</div>
+  <div>January 10, 2024</div>
+</div>
+<div>Version: 1.54.0</div>
+<div>10,000,000 users</div>
+</body></html>
+"""
+
+
+@respx.mock
+async def test_chrome_inline_version_not_hijacked_by_earlier_version_node():
+    # The hardest case (#279 review): a standalone "Version: 9.9.9" prose node in the
+    # What's-new section renders BEFORE the Details region, which also carries the real
+    # inline "Version: 1.54.0". A plain document-order scan would take 9.9.9 first.
+    # Anchoring the inline search to the Details labels (Updated / Offered by) — which
+    # render after the description — means only the real version is in scope.
+    respx.get("https://chromewebstore.google.com/detail/cjpalhdlnbpafiamejdnhcphjbkeiagm").mock(
+        return_value=httpx.Response(200, text=CHROME_HTML_DESCRIPTION_PROSE_AND_INLINE_VERSION)
+    )
+    async with httpx.AsyncClient() as client:
+        fetcher = ChromeFetcher(client)
+        meta = await fetcher.fetch_metadata("cjpalhdlnbpafiamejdnhcphjbkeiagm")
+    assert meta.version == "1.54.0"
+
+
+CHROME_HTML_DETAILS_PRESENT_BUT_NO_REAL_VERSION = """
+<html><head><meta name="description" content="Best ad blocker"></head>
+<body>
+<h1>uBlock Origin</h1>
+<p>Version: 9.9.9</p>
+<div>
+  <div>Offered by</div>
+  <div>gorhill</div>
+</div>
+<div>
+  <div>Updated</div>
+  <div>January 10, 2024</div>
+</div>
+<div>10,000,000 users</div>
+</body></html>
+"""
+
+
+@respx.mock
+async def test_chrome_no_version_when_only_description_precedes_details():
+    # A description node "Version: 9.9.9" renders BEFORE the Details labels, and no real
+    # version node follows them. The last-candidate fallback applies only when there is no
+    # Details region at all; with a Details anchor present, only a post-anchor candidate
+    # counts — else keep-stale leaves the version empty rather than storing the
+    # description's 9.9.9 and firing a spurious new_version alert (#279 review).
+    respx.get("https://chromewebstore.google.com/detail/cjpalhdlnbpafiamejdnhcphjbkeiagm").mock(
+        return_value=httpx.Response(200, text=CHROME_HTML_DETAILS_PRESENT_BUT_NO_REAL_VERSION)
+    )
+    async with httpx.AsyncClient() as client:
+        fetcher = ChromeFetcher(client)
+        meta = await fetcher.fetch_metadata("cjpalhdlnbpafiamejdnhcphjbkeiagm")
+    assert meta.version == ""
+
+
+@respx.mock
+async def test_chrome_fetch_pins_english_locale():
+    # No locale pin meant Google localized by egress IP: "Aktualisiert" labels and
+    # German dates → last_updated=None forever → staleness silently scored 10 for a
+    # fresh extension on any non-US deployment (#279). The request must carry hl=en
+    # and an Accept-Language header, like the Edge fetcher's hl pin.
+    route = respx.get("https://chromewebstore.google.com/detail/cjpalhdlnbpafiamejdnhcphjbkeiagm").mock(
+        return_value=httpx.Response(200, text=CHROME_HTML)
+    )
+    async with httpx.AsyncClient() as client:
+        fetcher = ChromeFetcher(client)
+        await fetcher.fetch_metadata("cjpalhdlnbpafiamejdnhcphjbkeiagm")
+    request = route.calls.last.request
+    assert request.url.params["hl"] == "en"
+    assert request.headers["Accept-Language"] == "en-US,en"

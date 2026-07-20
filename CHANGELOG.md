@@ -260,6 +260,16 @@ release to diff against.
   at the head of each cycle, before the refresh loop) is likewise isolated per extension and
   wrapped in a cycle-level guard, so a concurrent delete or delivery error during recovery can't
   abort the refresh or leave the `/readyz` heartbeat stale either.
+- **Chrome fetcher: version can no longer be hijacked by description text, and scraping is
+  locale-pinned** (#279). The version regex ran over the whole visible page, where the
+  description renders before the Details section — a description saying "New in Version 9.9.9"
+  produced a spurious `new_version` alert and then a permanently wrong stored version. The
+  version now comes from the Details section only: exact label adjacency for the split form,
+  and for Chrome's inline `Version: x.y.z` node an extraction anchored to the Details labels
+  (searched after "Updated"/"Offered by") so an earlier description node can't hijack it.
+  The detail request also pins `hl=en` + `Accept-Language: en-US,en`: without it Google
+  localizes by egress IP, the English label/month parsing finds nothing, `last_updated` stays
+  `None`, and staleness silently scores 10 ("unknown") for any non-US deployment.
 - **Detail-page permission badges no longer contradict the score** (#281). The template
   hand-copied the permission-tier sets and had drifted: `declarativeNetRequestWithHostAccess`
   (CRITICAL — maxes the permissions score), `pageCapture` (HIGH), and the `*://*/*` broad-host
