@@ -238,6 +238,22 @@ release to diff against.
 
 ### Fixed
 
+- **Wrong-shape stored `host_permissions`/`risk_detail` can no longer mis-score or blank the UI**
+  (#291). Three consumers skipped the #150/#164/#167 defensive-parse guard: the keep-stale scoring
+  path fed a stored `host_permissions` **string** into `score_permissions`' `set()` (iterating it
+  char-by-char into a silently wrong score that persisted across refreshes), and the detail page
+  read `host_permissions`/`risk_detail` unguarded (a non-list 500s the page; a `risk_detail` dict
+  missing a key rendered blank). A single `utils.host_permissions_of` guard now backs all consumers,
+  and `RiskDetail.stored_defaults()` backfills a sparse breakdown (mirroring `PackageAnalysis`, #164).
+- **Workflow hygiene** (#289). `build.yml` gained a `concurrency` group so a superseded main build
+  can't leave the moving `:edge` tag pointing at an older image (#88's stale-pointer class);
+  `timeout-minutes` now caps the build/release/CodeQL jobs (ci.yml already capped its own); and
+  CodeQL no longer scans the vendored, minified Alpine bundle (`static/js/vendor/`, #85/#106),
+  whose findings were being attributed to this repo.
+- **The embedded Compose snapshot in `DEPLOYMENT.md` no longer contradicts the real stack** (#290).
+  It showed bare `${VAR}` credentials (the empty-string-credential trap #273 fixed) and the
+  `./static` Caddy mount retired by #85; re-synced to `${VAR:?}` guards with no static mount, and a
+  doc-grep test now fails if the snapshot drifts.
 - **Proxy credentials can no longer leak through persisted or logged error text** (#228).
   `proxy.scrub` was applied at exactly one sink (the admin connectivity test) and only knew the
   explicit `ICEBERG_EBS_PROXY_USERNAME`/`_PASSWORD` values — in the default SYSTEM mode the
@@ -641,6 +657,14 @@ release to diff against.
 
 ### Security
 
+- **Two OIDC email-trust fail-open gaps closed** (#288). `StandardOIDCAdapter` coerced
+  `email_verified` with `bool()`, so the JSON string `"false"` (seen from custom Auth0 rules /
+  claim-mapping proxies) read as truthy and JIT provisioning proceeded on an unverified email —
+  the address-squatting vector the verified-email gate exists to block; it now requires a real
+  boolean `true` (`is True`), matching `EntraAdapter`. Separately, `_sync_email`'s returning-login
+  collision check relied only on the `uq_user_sso_email` partial index (SSO rows only), so an SSO
+  account could adopt a **local** account's address — including the break-glass admin's — which
+  committed cleanly; it now runs the same `_email_owner` check JIT provisioning uses.
 - **Database backups are no longer baked into the app image** (#277). `.dockerignore` excluded
   `.env`, `tests/`, and `caddy/certs/` but not `backups/` — the directory the Compose `backup`
   service fills with `pg_dump -Fc` archives of the live database. Since the Dockerfile does
