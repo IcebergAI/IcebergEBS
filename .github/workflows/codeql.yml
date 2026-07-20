@@ -21,6 +21,9 @@ jobs:
   analyze:
     name: Analyze
     runs-on: ubuntu-latest
+    # Cap the job so a wedged extraction/analysis step can't burn the 6h default,
+    # matching ci.yml's per-job caps (#289).
+    timeout-minutes: 45
     permissions:
       contents: read
       security-events: write # upload SARIF results
@@ -30,9 +33,9 @@ jobs:
       matrix:
         # Python is the substantial surface (untrusted-package inspection,
         # webhooks, store scraping). javascript-typescript is small but real:
-        # static/js/*.js plus the inline <script> blocks CodeQL extracts from
-        # app/templates/*.html (all third-party JS is CDN-loaded, never
-        # committed, so there is nothing vendored to exclude).
+        # our own static/js/*.js. Alpine is vendored at static/js/vendor/ since
+        # #85/#106 (no CDN) — a minified third-party bundle we don't own, excluded
+        # via paths-ignore below so its findings aren't attributed to this repo.
         language: [python, javascript-typescript]
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -42,9 +45,14 @@ jobs:
         uses: github/codeql-action/init@99df26d4f13ea111d4ec1a7dddef6063f76b97e9 # v4.37.0
         with:
           languages: ${{ matrix.language }}
-          # No build step exists (uv-only Python, hand-written CDN-loaded JS, no
+          # No build step exists (uv-only Python, hand-written self-hosted JS, no
           # node toolchain), so source extraction is correct for both legs.
           build-mode: none
+          # Don't scan the vendored, minified Alpine CSP build (static/js/vendor/) —
+          # third-party code we don't maintain; its alert noise isn't ours to fix (#289).
+          config: |
+            paths-ignore:
+              - static/js/vendor
       - name: Perform CodeQL analysis
         uses: github/codeql-action/analyze@99df26d4f13ea111d4ec1a7dddef6063f76b97e9 # v4.37.0
         with:

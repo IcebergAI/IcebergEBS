@@ -51,13 +51,7 @@ def _host_permissions(ext: Extension) -> frozenset[str]:
     successful inspection (see services.fetch_and_store), so a transient download
     failure leaves both stale and cannot produce a spurious permission_change.
     """
-    data = ext.analysis_dict()  # decode + object-shape parse owned by the accessor (#167)
-    if data is None:
-        return frozenset()
-    hosts = data.get("host_permissions", [])
-    if not isinstance(hosts, list):
-        return frozenset()
-    return frozenset(str(h) for h in hosts)
+    return frozenset(ext.host_permissions_list())  # shape guard owned by the accessor (#167/#291)
 
 
 def detect_changes(old: Extension, new: Extension) -> list[ChangeEvent]:

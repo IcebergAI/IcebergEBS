@@ -274,14 +274,30 @@ async def _sync_email(session: AsyncSession, *, identity: OIDCIdentity, user: Us
     ("account linking required") by the stale row, with no admin remediation path.
 
     Only a **verified** email is adopted — an unverified claim is untrustworthy (same
-    rule as JIT provisioning). A collision with another SSO row (the partial unique
-    index ``uq_user_sso_email``) leaves the stale address in place rather than failing
-    the login or silently stealing the address; a genuine duplicate needs an admin.
+    rule as JIT provisioning). A collision with **any** other account leaves the stale
+    address in place rather than failing the login or silently stealing the address; a
+    genuine duplicate needs an admin.
+
+    The collision check mirrors JIT provisioning's ``_email_owner`` (#288): the
+    ``uq_user_sso_email`` partial index only rejects a collision with another **SSO** row
+    (``WHERE oidc_subject IS NOT NULL``), so a collision with a **local** account —
+    including the break-glass admin — would otherwise commit cleanly and let the SSO row
+    adopt that address (shown on the ``/api/users`` row and flipping ``_email_owner``'s
+    ``.first()``). The app-level check refuses it up front; the ``IntegrityError`` handler
+    stays as the backstop for the concurrent-first-login race the index still guards.
     """
     if not identity.email_verified:
         return
     new_email = (identity.email or "").strip().lower()
     if not new_email or new_email == user.email:
+        return
+    owner = await _email_owner(session, new_email)
+    if owner is not None and owner.id != user.id:
+        logger.warning(
+            "OIDC email sync skipped for %s via %s: address already owned by another account",
+            user.username,
+            user.auth_provider,
+        )
         return
     user.email = new_email
     session.add(user)
