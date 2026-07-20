@@ -228,8 +228,8 @@ async def test_detail_page_tolerates_non_string_host_permission_member(client, t
 
 
 async def test_latest_fetch_logs_picks_newest_with_deterministic_tiebreak(test_db, admin_user):
-    # The DISTINCT ON rewrite (#284) must keep the latest-log-per-extension contract,
-    # with id DESC breaking exact-timestamp ties (newest row wins).
+    # The LATERAL latest-log rewrite (#284) must keep the latest-log-per-extension
+    # contract, with id DESC breaking exact-timestamp ties (newest row wins).
     from datetime import datetime, timezone
 
     from app.models import FetchLog

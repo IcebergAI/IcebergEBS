@@ -84,8 +84,11 @@ All settings use the `ICEBERG_EBS_` prefix and can be set via `.env` or environm
 | `ICEBERG_EBS_SECRET_KEY` | — | **required** — signs session cookies |
 | `ICEBERG_EBS_DATABASE_URL` | `postgresql+asyncpg://iceberg_ebs:iceberg_ebs@localhost:5432/iceberg_ebs` | SQLAlchemy async Postgres URL |
 | `ICEBERG_EBS_SESSION_MAX_AGE` | `86400` | Session lifetime in seconds |
+| `ICEBERG_EBS_OIDC_SESSION_MAX_AGE` | `3600` | Session lifetime (seconds) for SSO-authenticated users — deliberately shorter than `SESSION_MAX_AGE` so an IdP-side disable is bounded |
 | `ICEBERG_EBS_FETCH_INTERVAL_MINUTES` | `60` | Background watchlist refresh cadence |
 | `ICEBERG_EBS_RETENTION_DAYS` | `0` | Prune `FetchLog`/`InstallCountHistory`/`AlertLog` rows older than N days (`0` = disabled) |
+| `ICEBERG_EBS_INVENTORY_FRESHNESS_DAYS` | `30` | Observations not re-seen within N days stop counting toward `install_footprint`/exposure (`0` = disabled) |
+| `ICEBERG_EBS_API_KEY_SSO_MAX_AGE_DAYS` | `30` | Max age of an API key owned by an SSO account before it expires |
 | `ICEBERG_EBS_APP_BASE_URL` | — | Public URL of your instance; included as `iceberg_ebs_url` in webhook payloads |
 | `ICEBERG_EBS_HTTPX_TIMEOUT` | `15.0` | Outbound HTTP timeout in seconds |
 | `ICEBERG_EBS_SECURE_COOKIES` | `true` | Set `Secure` flag on session cookies — set to `false` for plain HTTP dev |

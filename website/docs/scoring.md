@@ -49,10 +49,15 @@ sets the score:
 
 | Score | Tier | Examples |
 |---:|---|---|
-| **25** | Critical | `<all_urls>`, `debugger`, `nativeMessaging`, `proxy`, `webRequest`, `webRequestBlocking`, `declarativeNetRequestWithHostAccess` — or a broad host pattern (`*://*/*`, `http://*/*`, `https://*/*`) |
-| **15** | High | `cookies`, `history`, `tabs`, `browsingData`, `downloads`, `management`, `clipboardRead`, `contentSettings`, `pageCapture` |
-| **7** | Medium | `storage`, `notifications`, `contextMenus`, `bookmarks`, `identity`, `geolocation`, `scripting` |
+| **25** | Critical | `<all_urls>`, `debugger`, `nativeMessaging`, `proxy`, `webRequest`, `webRequestBlocking`, `declarativeNetRequestWithHostAccess`, `desktopCapture` — or a broad host pattern (`*://*/*`, `http://*/*`, `https://*/*`) |
+| **15** | High | `cookies`, `history`, `tabs`, `browsingData`, `downloads`, `management`, `clipboardRead`, `contentSettings`, `pageCapture`, `tabCapture`, `audioCapture`, `videoCapture`, `webNavigation` |
+| **7** | Medium | `storage`, `notifications`, `contextMenus`, `bookmarks`, `identity`, `geolocation`, `scripting`, `privacy`, `sessions`, `topSites`, `declarativeNetRequest`, `clipboardWrite` |
 | **0** | — | Nothing above |
+
+The **capture/surveillance family** is scored deliberately: arbitrary desktop
+screen capture (`desktopCapture`) is critical — it reaches every window and app,
+not just the browser — while live tab audio/video capture and the full
+browsing-graph telemetry of `webNavigation` are high.
 
 The tier lists live in `app/permissions.py` and are shared with the package
 inspector, so a permission is classified identically wherever it is read.
