@@ -222,6 +222,12 @@ async def test_readonly_key_blocks_creating_new_key(readonly_api_key_client):
 async def _sso_user_with_key(test_db, *, key_age_days: float = 0.0, username: str = "ssokey"):
     """Seed an SSO-provisioned user (no local password) owning one API key."""
     raw_key = generate_api_key()
+    # Model reality: an SSO account's password_changed_at is set at provisioning,
+    # before any key it later mints — so the revocation cutoff (created_at >=
+    # password_changed_at) passes and the SSO-age fence is what a stale key trips.
+    # Align the marker to the key's creation time; leaving it at the default "now"
+    # while backdating only the key would trip the revocation fence first.
+    created = datetime.now(timezone.utc) - timedelta(days=key_age_days)
     async with AsyncSession(test_db) as s:
         user = User(
             username=username,
@@ -230,6 +236,7 @@ async def _sso_user_with_key(test_db, *, key_age_days: float = 0.0, username: st
             auth_provider="authentik",
             oidc_issuer="https://idp.test/",
             role_managed_by_idp=True,
+            password_changed_at=created,
         )
         s.add(user)
         await s.commit()
@@ -242,7 +249,7 @@ async def _sso_user_with_key(test_db, *, key_age_days: float = 0.0, username: st
                 user_id=user_id,
                 label="soar",
                 key_hash=hash_api_key(raw_key),
-                created_at=datetime.now(timezone.utc) - timedelta(days=key_age_days),
+                created_at=created,
             )
         )
         await s.commit()
@@ -269,8 +276,16 @@ async def test_local_key_unaffected_by_sso_cap(anon_client, test_db):
     # Local accounts keep unbounded keys — their revocation path is change_password,
     # which deletes keys outright.
     raw_key = generate_api_key()
+    old = datetime.now(timezone.utc) - timedelta(days=400)
     async with AsyncSession(test_db) as s:
-        user = User(username="localkey", password_hash=cached_password_hash("pw12345678"))
+        # password_changed_at at/ before the key so the revocation cutoff passes —
+        # the point of this test is that the SSO-age fence does not apply to a local
+        # account, not that the generic revocation cutoff rejects an old key.
+        user = User(
+            username="localkey",
+            password_hash=cached_password_hash("pw12345678"),
+            password_changed_at=old,
+        )
         s.add(user)
         await s.commit()
         await s.refresh(user)
@@ -279,7 +294,7 @@ async def test_local_key_unaffected_by_sso_cap(anon_client, test_db):
                 user_id=user.id,
                 label="old-local",
                 key_hash=hash_api_key(raw_key),
-                created_at=datetime.now(timezone.utc) - timedelta(days=400),
+                created_at=old,
             )
         )
         await s.commit()
