@@ -392,7 +392,7 @@ async def test_inventory_recompute_ignores_stale_observations(client, test_db, m
 
     r = await client.post(
         "/api/inventory",
-        json={"items": [{"store": "chrome", "extension_id": "a" * 32, "asset_id": "host-1"}]},
+        json={"observations": [{"store": "chrome", "extension_id": "a" * 32, "asset_id": "host-1"}]},
     )
     assert r.status_code == 200
 
@@ -413,7 +413,7 @@ async def test_inventory_recompute_ignores_stale_observations(client, test_db, m
     # A new push touching the extension recomputes over fresh observations only.
     r = await client.post(
         "/api/inventory",
-        json={"items": [{"store": "chrome", "extension_id": "a" * 32, "asset_id": "host-1"}]},
+        json={"observations": [{"store": "chrome", "extension_id": "a" * 32, "asset_id": "host-1"}]},
     )
     assert r.status_code == 200
     async with AsyncSession(test_db) as s:
