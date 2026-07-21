@@ -152,8 +152,21 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ github.ref_name }}
+          # docker/metadata-action normalises a SemVer git tag such as
+          # v0.1.0-beta.1 to the published OCI tag 0.1.0-beta.1 (no `v`).
+          IMAGE_TAG: ${{ steps.meta.outputs.version }}
         run: |
-          flags=(--generate-notes --title "$TAG")
+          # Prepend a terse container-image header above the auto-generated notes
+          # (mirrors IcebergTTX so the family's releases read as one system).
+          notes_file="$(mktemp)"
+          {
+            echo "Container image published to GHCR — SBOM + SLSA provenance attested, cosign-signed:"
+            echo ""
+            echo "    ${IMAGE}:${IMAGE_TAG}"
+            echo ""
+            echo "Pull, verify (cosign / attestation), and deploy instructions: docs/RELEASING.md."
+          } > "$notes_file"
+          flags=(--title "$TAG" --generate-notes --notes-file "$notes_file")
           case "$TAG" in
             *-*) flags+=(--prerelease) ;;
           esac
