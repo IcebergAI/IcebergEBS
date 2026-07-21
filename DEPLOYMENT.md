@@ -913,7 +913,7 @@ spec:
           emptyDir: {}
       containers:
         - name: iceberg-ebs
-          image: "{{ .Values.image.repository }}:{{ required "image.tag is required — pin an immutable release tag, e.g. --set image.tag=v0.1.0-beta.1 (never :latest); see DEPLOYMENT.md and docs/RELEASING.md (#88)" .Values.image.tag }}"
+          image: "{{ .Values.image.repository }}:{{ required "image.tag is required — pin an immutable release tag, e.g. --set image.tag=0.1.0-beta.1 (no `v` prefix; never :latest); see DEPLOYMENT.md and docs/RELEASING.md (#88)" .Values.image.tag }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           ports:
             - containerPort: 8000
@@ -1053,7 +1053,7 @@ spec:
 # Install (generate strong values; never commit these)
 helm upgrade --install icebergebs helm/iceberg-ebs \
   --namespace icebergebs --create-namespace \
-  --set image.tag="v0.1.0-beta.1" \
+  --set image.tag="0.1.0-beta.1" \
   --set icebergEbs.adminPassword="$(openssl rand -hex 16)" \
   --set icebergEbs.secretKey="$(openssl rand -hex 32)" \
   --set postgresql.auth.password="$(openssl rand -hex 32)" \
@@ -1066,7 +1066,8 @@ kubectl rollout status deployment/icebergebs-iceberg-ebs -n icebergebs
 ```
 
 **`image.tag` is required — the chart has no default** (#88). Pin an immutable release tag
-(`--set image.tag=v0.1.0-beta.1`) from a verified release; an empty tag fails the render rather than
+(`--set image.tag=0.1.0-beta.1`, no `v` prefix — the image tag drops it; see
+[docs/RELEASING.md](docs/RELEASING.md)) from a verified release; an empty tag fails the render rather than
 silently deploying a mutable `:latest`, which with `pullPolicy: IfNotPresent` re-renders an identical
 pod spec on `helm upgrade` (no rollout) and reuses the node's cached image — shipping stale code.
 Do **not** deploy `:latest` or the `:edge` tag (`:edge` is the moving "latest `main`" dev image from
