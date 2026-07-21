@@ -101,7 +101,7 @@ a test fails the build if the two drift.
 helm upgrade --install icebergebs helm/iceberg-ebs \
   --namespace icebergebs --create-namespace \
   --set image.repository="ghcr.io/icebergai/icebergebs" \
-  --set image.tag="v0.1.0-beta.1" \
+  --set image.tag="0.1.0-beta.1" \
   --set icebergEbs.adminPassword="$(openssl rand -hex 16)" \
   --set icebergEbs.secretKey="$(openssl rand -hex 32)" \
   --set postgresql.auth.password="$(openssl rand -hex 32)" \
@@ -216,8 +216,8 @@ cosign. Verify before rollout:
 
 ```bash
 IMAGE=ghcr.io/icebergai/icebergebs
-gh attestation verify "oci://${IMAGE}:v0.1.0-beta.1" --repo IcebergAI/IcebergEBS
-cosign verify "${IMAGE}:v0.1.0-beta.1" \
+gh attestation verify "oci://${IMAGE}:0.1.0-beta.1" --repo IcebergAI/IcebergEBS
+cosign verify "${IMAGE}:0.1.0-beta.1" \
   --certificate-identity-regexp "^https://github.com/IcebergAI/IcebergEBS/\.github/workflows/release\.yml@refs/tags/v" \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
 ```

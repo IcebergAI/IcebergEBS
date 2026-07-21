@@ -73,19 +73,29 @@ dev-only). Verify before deploying, and **deploy by immutable SemVer tag — nev
 `:edge`.** (Pinning by digest is stronger where your deployer supports it; the Helm chart renders
 `repository:tag` only today, so digest support there is tracked in #88.)
 
+**The image tag has no `v` prefix.** The git tag is `v0.1.0-beta.1`, but `docker/metadata-action`'s
+`{{version}}` strips the leading `v`, so the pushed image is `…:0.1.0-beta.1` (verifying
+`:v0.1.0-beta.1` fails with `MANIFEST_UNKNOWN`). The `@refs/tags/v` in the cosign identity regexp
+below is correct — that matches the *git tag* ref, which keeps its `v`.
+
+**GHCR release packages are private by default**, so both commands need a token with the
+`read:packages` scope (separate from repo access — a `repo`-scoped token authenticates but is
+denied the manifest pull). Add it with `gh auth refresh -h github.com -s read:packages`, then
+`gh auth token | cosign login ghcr.io -u <you> --password-stdin`.
+
 ```bash
 IMAGE=ghcr.io/icebergai/icebergebs
 
 # SLSA build provenance (that this repo's CI built the image):
-gh attestation verify "oci://${IMAGE}:v0.1.0-beta.1" --repo IcebergAI/IcebergEBS
+gh attestation verify "oci://${IMAGE}:0.1.0-beta.1" --repo IcebergAI/IcebergEBS
 
 # Keyless cosign signature (identity = the release workflow, issuer = GitHub Actions OIDC):
-cosign verify "${IMAGE}:v0.1.0-beta.1" \
+cosign verify "${IMAGE}:0.1.0-beta.1" \
   --certificate-identity-regexp "^https://github.com/IcebergAI/IcebergEBS/\.github/workflows/release\.yml@refs/tags/v" \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
 ```
 
-Deploy the verified image by its immutable **SemVer tag** (`:v0.1.0-beta.1`) — see
+Deploy the verified image by its immutable **SemVer tag** (`:0.1.0-beta.1` — no `v`) — see
 [DEPLOYMENT.md](../DEPLOYMENT.md) for the Helm `--set image.tag=` flow. Digest pinning
 (`…@sha256:…`) is stronger, but needs chart support the Helm chart does not have yet (#88).
 
