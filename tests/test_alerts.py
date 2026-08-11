@@ -140,6 +140,21 @@ def test_detect_changes_new_version():
     assert ev.new_value == "2.0.0"
 
 
+def test_detect_changes_capability_change_uses_structured_update_evidence():
+    events = detect_changes(
+        _ext(version="1.0.0"),
+        _ext(version="2.0.0"),
+        capability_old_version="1.0.0",
+        capability_diff={"added_permissions": ["tabs"]},
+    )
+    event = next(event for event in events if event.event_type == "capability_change")
+    assert event.old_value == {"version": "1.0.0"}
+    assert event.new_value == {
+        "version": "2.0.0",
+        "diff": {"added_permissions": ["tabs"]},
+    }
+
+
 def test_detect_changes_no_version_change():
     old = _ext(version="1.0.0")
     new = _ext(version="1.0.0")

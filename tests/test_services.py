@@ -17,7 +17,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.fetchers.base import ExtensionMetadata
 from app.inspector import PackageAnalysis
-from app.models import Extension, InstallCountHistory
+from app.models import Extension, InstallCountHistory, PackageSnapshot
 from app.scoring import compute_risk_score
 from app.services import _apply_fetch_results, _effective_values, fetch_and_store
 from tests.conftest import make_fake_crx, make_zip
@@ -131,6 +131,29 @@ async def test_zero_install_count_is_real_data(test_db, admin_user):
     ext, _ = await _fetch(test_db, ext_id, _meta(install_count=0))
     assert ext.install_count == 0
     assert await _history_count(test_db, ext_id) == 1
+
+
+async def test_versioned_snapshot_emits_capability_change_once(test_db, admin_user):
+    ext_id = await _make_ext(test_db, admin_user.id)
+    first = make_fake_crx({"manifest_version": 3, "name": "x", "version": "1.0", "permissions": ["storage"]})
+    await _fetch(test_db, ext_id, _meta(version="1.0"), pkg=first)
+    second = make_fake_crx({"manifest_version": 3, "name": "x", "version": "2.0", "permissions": ["storage", "tabs"]})
+    _, events = await _fetch(test_db, ext_id, _meta(version="2.0"), pkg=second)
+    capability = next(event for event in events if event.event_type == "capability_change")
+    assert capability.new_value["diff"]["added_permissions"] == ["tabs"]
+    async with AsyncSession(test_db) as session:
+        snapshots = (
+            await session.exec(
+                select(PackageSnapshot).where(PackageSnapshot.extension_id == ext_id).order_by(PackageSnapshot.version)
+            )
+        ).all()
+    assert [snapshot.version for snapshot in snapshots] == ["1.0", "2.0"]
+    _, duplicate_events = await _fetch(test_db, ext_id, _meta(version="2.0"), pkg=second)
+    # ``fetch_and_store`` returns its durable pending marker until the caller
+    # delivers and clears it. A repeated fetch must therefore preserve the
+    # original alert for crash-safe delivery, without appending another event
+    # for the same package version.
+    assert sum(event.event_type == "capability_change" for event in duplicate_events) == 1
 
 
 async def test_first_fetch_with_partial_metadata(test_db, admin_user):

@@ -15,6 +15,13 @@ release version; only the SemVer part appears here.
 
 ## [Unreleased]
 
+### Added
+
+- **Risky update intelligence** (#30): successful package analysis is retained per extension
+  version, and a new `capability_change` alert reports newly added permissions, remote code,
+  domains, or static findings. The extension detail page shows the latest explainable update
+  delta; baselines and failed inspections never create alerts.
+
 ## [0.1.0-beta.1] — 2026-07-21
 
 First beta. Everything below is the work merged to `main` to date; there is no earlier

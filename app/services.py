@@ -7,6 +7,7 @@ import anyio.to_thread
 import httpx
 from pydantic import ValidationError
 from sqlalchemy import update as sa_update
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncEngine
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
@@ -14,8 +15,9 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 from app.fetchers import get_fetcher
 from app.fetchers.base import ExtensionMetadata
 from app.inspector import InspectorError, PackageAnalysis, inspect_package
-from app.models import Extension, FetchLog, InstallCountHistory
+from app.models import Extension, FetchLog, InstallCountHistory, PackageSnapshot
 from app.notifications import ChangeEvent, detect_changes, fire_alerts
+from app.package_diff import diff_analysis
 from app.scoring import RiskDetail, compute_risk_score
 from app.utils import json_list
 
@@ -158,6 +160,54 @@ def _apply_fetch_results(
         ext.package_analysis = json.dumps(analysis.to_json_dict())
 
 
+async def _capture_package_snapshot(
+    session: AsyncSession, ext: Extension, analysis: PackageAnalysis | None
+) -> tuple[str | None, dict[str, object] | None]:
+    """Persist a fresh analysis once per version and return its meaningful prior diff.
+
+    The extension row lock serializes manual refresh and scheduler updates. The
+    PostgreSQL conflict guard is the schema-level backstop: only the writer that
+    inserts a new version can stage the alert, and snapshots/events commit together.
+    """
+    if analysis is None or not ext.version or ext.id is None:
+        return None, None
+    analysis_data = analysis.to_json_dict()
+    await session.flush()
+    await session.exec(select(Extension.id).where(Extension.id == ext.id).with_for_update())
+    previous = (
+        await session.exec(
+            select(PackageSnapshot)
+            .where(PackageSnapshot.extension_id == ext.id)
+            .order_by(PackageSnapshot.captured_at.desc(), PackageSnapshot.id.desc())
+            .limit(1)
+        )
+    ).first()
+    inserted = await session.execute(
+        pg_insert(PackageSnapshot)
+        .values(
+            extension_id=ext.id,
+            version=ext.version,
+            package_sha256=analysis.package_sha256,
+            analysis_json=json.dumps(analysis_data),
+            # SQLModel's Python-side default only runs when constructing a model
+            # instance. This atomic PostgreSQL INSERT bypasses it, so carry the
+            # same UTC default explicitly rather than relying on a nullable DB row.
+            captured_at=datetime.now(timezone.utc),
+        )
+        .on_conflict_do_nothing(constraint="uq_package_snapshot_extension_version")
+        .returning(PackageSnapshot.id)
+    )
+    if inserted.scalar_one_or_none() is None or previous is None:
+        return None, None
+    try:
+        old_analysis = json.loads(previous.analysis_json)
+    except json.JSONDecodeError:
+        old_analysis = {}
+    if not isinstance(old_analysis, dict):
+        old_analysis = {}
+    return previous.version, diff_analysis(old_analysis, analysis_data)
+
+
 def _parse_pending_events(raw: str | None, ext_id: int | None) -> list[ChangeEvent]:
     """Best-effort decode of a pending-alert marker string into ``ChangeEvent``s.
 
@@ -283,6 +333,7 @@ async def fetch_and_store(
 
     _apply_fetch_results(ext, metadata, analysis, effective, risk)
     session.add(ext)
+    capability_old_version, capability_diff = await _capture_package_snapshot(session, ext, analysis)
     session.add(
         FetchLog(
             extension_id=ext.id,
@@ -295,7 +346,12 @@ async def fetch_and_store(
     # Detect changes now (pre-fetch snapshot vs updated record), but let the caller
     # fire the alerts AFTER it commits — see the docstring and fire_pending_alerts.
     try:
-        events = detect_changes(old_snap, ext)
+        events = detect_changes(
+            old_snap,
+            ext,
+            capability_old_version=capability_old_version,
+            capability_diff=capability_diff,
+        )
     except Exception:
         logger.exception("Change detection failed for %s", ext.extension_id)
         events = []

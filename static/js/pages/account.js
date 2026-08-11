@@ -7,6 +7,7 @@ document.addEventListener('alpine:init', () => {
     publisher_change:  'Publisher change',
     permission_change: 'Permission change',
     new_version:       'New version',
+    capability_change: 'Risky capability change',
   };
 
   const PLACEHOLDERS = {

@@ -65,7 +65,13 @@ def _host_permissions(ext: Extension) -> frozenset[str]:
     return frozenset(ext.host_permissions_list())  # shape guard owned by the accessor (#167/#291)
 
 
-def detect_changes(old: Extension, new: Extension) -> list[ChangeEvent]:
+def detect_changes(
+    old: Extension,
+    new: Extension,
+    *,
+    capability_old_version: str | None = None,
+    capability_diff: dict[str, object] | None = None,
+) -> list[ChangeEvent]:
     """Compare two Extension snapshots and return triggered change events.
 
     Returns an empty list on the first fetch (old.last_fetched_at is None)
@@ -96,6 +102,15 @@ def detect_changes(old: Extension, new: Extension) -> list[ChangeEvent]:
     if old.version and new.version and old.version != new.version:
         events.append(ChangeEvent("new_version", old.version, new.version))
 
+    if capability_old_version and capability_diff:
+        events.append(
+            ChangeEvent(
+                "capability_change",
+                {"version": capability_old_version},
+                {"version": new.version, "diff": capability_diff},
+            )
+        )
+
     return events
 
 
@@ -108,6 +123,8 @@ def _alert_text(event_type: str, name: str, old: object, new: object) -> str:
         return f"IcebergEBS: {name} permissions changed"
     if event_type == "new_version":
         return f"IcebergEBS: {name} updated to version {new}"
+    if event_type == "capability_change":
+        return f"IcebergEBS: {name} update introduced new risky capabilities"
     return f"IcebergEBS: {name} — {event_type}"
 
 

@@ -5,7 +5,7 @@
 
 Extension-watch tool for Chrome, Edge, and VS Code. Tracks browser and editor extensions, downloads the actual packages, inspects the code, and produces a 0–100 risk score across six signals: permissions, popularity, publisher identity, staleness, code behaviour (eval/obfuscation/remote fetches), and external domains.
 
-Multi-user. Each user maintains an independent list of monitored extensions. A background scheduler re-fetches watchlisted extensions on a configurable interval and fires webhook alerts when something changes.
+Multi-user. Each user maintains an independent list of monitored extensions. A background scheduler re-fetches watchlisted extensions on a configurable interval, retains successful per-version package evidence, and fires alerts when a risky update introduces new capabilities.
 
 ![IcebergEBS dashboard — tracked extensions, risk scores, and org-wide exposure](docs/screenshots/dashboard.png)
 
