@@ -56,6 +56,45 @@ async def test_threatlist_ingest_forces_existing_extension_critical(client, test
         assert stored.pending_alert_events is None
 
 
+async def test_threatlist_matches_legacy_mixed_case_vscode_extension(client, test_db, admin_user):
+    """Upgrading must not strand identities stored before VS Code canonicalization."""
+    async with AsyncSession(test_db) as session:
+        ext = Extension(
+            user_id=admin_user.id,
+            store="vscode",
+            extension_id="Publisher.Extension",
+            name="Legacy Example",
+            publisher="Publisher",
+            version="1.0.0",
+            permissions="[]",
+            store_url="https://marketplace.visualstudio.com/items?itemName=Publisher.Extension",
+            risk_score=12,
+            risk_detail='{"total": 12, "risk_level": "low"}',
+            last_fetched_at=datetime.now(timezone.utc),
+        )
+        session.add(ext)
+        await session.commit()
+        await session.refresh(ext)
+        ext_id = ext.id
+
+    response = await client.post(
+        "/api/threatlist",
+        json={
+            "source": "soc-feed",
+            "entries": [{"store": "vscode", "extension_id": "publisher.extension", "reason": "legacy"}],
+        },
+    )
+    assert response.status_code == 202, response.text
+    assert response.json()["matched_extensions"] == 1
+
+    async with AsyncSession(test_db) as session:
+        stored = await session.get(Extension, ext_id)
+        assert stored is not None
+        assert stored.extension_id == "Publisher.Extension"
+        assert stored.threat_match is True
+        assert stored.risk_score == 100
+
+
 async def test_threatlist_ingest_is_idempotent(client, test_db, admin_user):
     payload = {
         "source": "soc-feed",

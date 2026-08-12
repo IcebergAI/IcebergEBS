@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 import anyio.to_thread
 import httpx
 from pydantic import ValidationError
+from sqlalchemy import func
 from sqlalchemy import update as sa_update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncEngine
@@ -25,12 +26,27 @@ from app.utils import json_list
 logger = logging.getLogger(__name__)
 
 
+def _identity_clause(column, store: str, extension_id: str):
+    """Match an extension identity without stranding legacy VS Code rows.
+
+    New enrollment canonicalizes VS Code identities, but deployments upgrading from
+    before that rule may still contain mixed-case rows.  Matching case-insensitively
+    keeps those rows visible without a destructive migration or history rewrite.
+    """
+    if store == "vscode":
+        return func.lower(column) == extension_id.lower()
+    return column == extension_id
+
+
 async def _threat_entries(session: AsyncSession, ext: Extension) -> list[ThreatListEntry]:
     """Load the global threat assertions matching one extension identity."""
     return (
         await session.exec(
             select(ThreatListEntry)
-            .where(ThreatListEntry.store == ext.store, ThreatListEntry.extension_id == ext.extension_id)
+            .where(
+                ThreatListEntry.store == ext.store,
+                _identity_clause(ThreatListEntry.extension_id, ext.store, ext.extension_id),
+            )
             .order_by(ThreatListEntry.source, ThreatListEntry.id)
         )
     ).all()
@@ -87,13 +103,19 @@ async def apply_threat_matches(
         matches = (
             await session.exec(
                 select(ThreatListEntry)
-                .where(ThreatListEntry.store == store, ThreatListEntry.extension_id == extension_id)
+                .where(
+                    ThreatListEntry.store == store,
+                    _identity_clause(ThreatListEntry.extension_id, store, extension_id),
+                )
                 .order_by(ThreatListEntry.source, ThreatListEntry.id)
             )
         ).all()
         extensions = (
             await session.exec(
-                select(Extension).where(Extension.store == store, Extension.extension_id == extension_id)
+                select(Extension).where(
+                    Extension.store == store,
+                    _identity_clause(Extension.extension_id, store, extension_id),
+                )
             )
         ).all()
         for ext in extensions:
