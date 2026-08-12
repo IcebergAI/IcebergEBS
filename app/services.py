@@ -100,25 +100,39 @@ async def apply_threat_matches(
         return []
     result: list[tuple[Extension, list[ChangeEvent]]] = []
     for store, extension_id in identities:
-        matches = (
+        extension_ids = (
             await session.exec(
-                select(ThreatListEntry)
-                .where(
-                    ThreatListEntry.store == store,
-                    _identity_clause(ThreatListEntry.extension_id, store, extension_id),
-                )
-                .order_by(ThreatListEntry.source, ThreatListEntry.id)
-            )
-        ).all()
-        extensions = (
-            await session.exec(
-                select(Extension).where(
+                select(Extension.id).where(
                     Extension.store == store,
                     _identity_clause(Extension.extension_id, store, extension_id),
                 )
             )
         ).all()
-        for ext in extensions:
+        for extension_row_id in extension_ids:
+            # Lock before reading the threat rows. Concurrent feed writes use the
+            # same extension lock, so the post-lock SELECT sees all entries from a
+            # transaction that won the race and cannot overwrite its source detail
+            # or enqueue a duplicate false-to-true transition.
+            ext = (
+                await session.exec(
+                    select(Extension)
+                    .where(Extension.id == extension_row_id)
+                    .with_for_update()
+                    .execution_options(populate_existing=True)
+                )
+            ).one_or_none()
+            if ext is None:
+                continue
+            matches = (
+                await session.exec(
+                    select(ThreatListEntry)
+                    .where(
+                        ThreatListEntry.store == store,
+                        _identity_clause(ThreatListEntry.extension_id, store, extension_id),
+                    )
+                    .order_by(ThreatListEntry.source, ThreatListEntry.id)
+                )
+            ).all()
             old = ext.model_copy()
             ext.threat_match = bool(matches)
             _apply_threat_finding(ext, matches)
