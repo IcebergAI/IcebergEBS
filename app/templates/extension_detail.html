@@ -15,6 +15,10 @@
   'findings_count': (package_analysis.grouped_findings | length) if (package_analysis and package_analysis.grouped_findings) else 0,
   'intel_count': threat_intel_primary_indicators | length,
   'history_count': fetch_logs | length,
+  'triage_status': ext.triage_status,
+  'triage_assignee': ext.triage_assignee,
+  'triage_notes': ext.triage_notes,
+  'risk_override': ext.risk_override,
 } | tojson }}</script>
 <div x-data="extDetail">
 
@@ -99,6 +103,32 @@
     </div>
   </div>
 </div>
+
+{# ── Triage workflow ────────────────────────────────────── #}
+<section class="surface p-5 mb-5" aria-labelledby="triage-heading">
+  <div class="flex items-start justify-between gap-4 flex-wrap">
+    <div>
+      <h2 id="triage-heading" class="section-title" style="margin:0">Analyst triage</h2>
+      <p class="text-[12.5px] mt-1" style="color:var(--muted)">Record ownership and disposition. Allow suppresses heuristic risk; deny forces critical. Known-bad threat intelligence always remains critical.</p>
+    </div>
+    {% if ext.risk_override != 'none' %}
+    <div class="text-right">
+      <span class="badge badge-{{ risk_band }}">{{ risk_band }}</span>
+      <div class="text-meta mt-1">Effective {{ ext.risk_score }} · heuristic {{ ext.heuristic_risk_score if ext.heuristic_risk_score is not none else 'unknown' }}</div>
+    </div>
+    {% endif %}
+  </div>
+  <div class="triage-grid mt-4">
+    <label><span class="label-cap">Status</span><select x-model="triageStatus"><option value="new">New</option><option value="triaging">Triaging</option><option value="accepted-risk">Accepted risk</option><option value="blocked">Blocked</option><option value="resolved">Resolved</option></select></label>
+    <label><span class="label-cap">Assignee</span><input type="text" maxlength="128" x-model="triageAssignee" placeholder="Queue or analyst"></label>
+    <label><span class="label-cap">Risk policy</span><select x-model="riskOverride"><option value="none">Default heuristic</option><option value="allow">Allow · suppress</option><option value="deny">Deny · critical</option></select></label>
+    <label class="triage-notes"><span class="label-cap">Notes</span><textarea rows="3" maxlength="4000" x-model="triageNotes" placeholder="Decision context"></textarea></label>
+  </div>
+  <div class="flex items-center justify-between gap-3 mt-3 flex-wrap">
+    <span class="text-[12.5px]" role="status" aria-live="polite" :class="triageError && 'risk-critical'" x-text="triageMessage"></span>
+    <button class="btn btn-primary triage-save" @click="saveTriage" :disabled="triageSaving" x-text="triageSaving ? 'Saving…' : 'Save triage'"></button>
+  </div>
+</section>
 
 {# ── Tab bar ─────────────────────────────────────────────── #}
 <div class="tabbar">

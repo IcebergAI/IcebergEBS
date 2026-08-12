@@ -1,9 +1,10 @@
 import csv
 import io
+import json
 import logging
 import re
 from datetime import datetime, timezone
-from typing import Annotated, Literal
+from typing import Annotated, Literal, cast
 from urllib.parse import parse_qs, urlparse
 
 import httpx
@@ -23,7 +24,11 @@ from app.extension_queries import ExtensionFilters, build_extension_query, count
 from app.fetchers.base import FetchError
 from app.models import Extension, FetchLog, InstallCountHistory, InstallObservation, ThreatListEntry
 from app.retention import freshness_cutoff
-from app.scoring import risk_level
+from app.scoring import (
+    effective_risk_level,
+    effective_risk_score,
+    recover_heuristic_risk_score,
+)
 from app.services import (
     apply_existing_threat_posture,
     apply_threat_matches,
@@ -48,7 +53,8 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api", tags=["extensions"])
 
 StoreType = Literal["chrome", "vscode", "edge"]
-RiskLevel = Literal["low", "medium", "high", "critical"]
+RiskLevel = Literal["suppressed", "low", "medium", "high", "critical"]
+TriageStatus = Literal["new", "triaging", "accepted-risk", "blocked", "resolved"]
 SortField = Literal["name", "risk_score", "publisher", "install_count", "last_updated", "added_at", "exposure"]
 SortOrder = Literal["asc", "desc"]
 
@@ -59,6 +65,7 @@ MAX_PAGE_LIMIT = 200
 def extension_filters(
     store: StoreType | None = None,
     risk: RiskLevel | None = None,
+    triage: TriageStatus | None = None,
     publisher: str | None = None,
     q: Annotated[str | None, Query(description="Free-text search over name, publisher and id")] = None,
     sort: SortField = "risk_score",
@@ -66,7 +73,15 @@ def extension_filters(
 ) -> ExtensionFilters:
     """FastAPI dependency: validate + collect the filter/sort query params shared by
     the list and export endpoints (declared once here instead of on each route)."""
-    return ExtensionFilters(store=store, risk=risk, publisher=publisher, q=q, sort=sort, order=order)
+    return ExtensionFilters(
+        store=store,
+        risk=risk,
+        triage=triage,
+        publisher=publisher,
+        q=q,
+        sort=sort,
+        order=order,
+    )
 
 
 FilterParams = Annotated[ExtensionFilters, Depends(extension_filters)]
@@ -146,9 +161,15 @@ class ExtensionOut(BaseModel):
     last_fetched_at: datetime | None
     watchlist: bool
     risk_score: int | None
+    heuristic_risk_score: int | None
     risk_detail: dict | None
     risk_level: str | None
     threat_match: bool
+    triage_status: str
+    triage_assignee: str | None
+    triage_notes: str | None
+    risk_override: str
+    triage_updated_at: datetime | None
     install_footprint: int | None
     exposure: int | None  # risk_score × install_footprint, or None if either is unset
     findings: list[PackageFindingOut]
@@ -208,9 +229,19 @@ class ExtensionOut(BaseModel):
             last_fetched_at=ext.last_fetched_at,
             watchlist=ext.watchlist,
             risk_score=ext.risk_score,
+            heuristic_risk_score=ext.heuristic_risk_score,
             risk_detail=detail,
-            risk_level=risk_level(ext.risk_score),
+            risk_level=effective_risk_level(
+                ext.risk_score,
+                threat_match=ext.threat_match,
+                risk_override=ext.risk_override,
+            ),
             threat_match=ext.threat_match,
+            triage_status=ext.triage_status,
+            triage_assignee=ext.triage_assignee,
+            triage_notes=ext.triage_notes,
+            risk_override=ext.risk_override,
+            triage_updated_at=ext.triage_updated_at,
             install_footprint=ext.install_footprint,
             exposure=exposure(ext.risk_score, ext.install_footprint),
             findings=findings,
@@ -223,6 +254,13 @@ class PaginatedExtensions(BaseModel):
     total: int
     limit: int
     offset: int
+
+
+class TriagePatch(BaseModel):
+    triage_status: Literal["new", "triaging", "accepted-risk", "blocked", "resolved"] | None = None
+    triage_assignee: str | None = Field(default=None, max_length=128)
+    triage_notes: str | None = Field(default=None, max_length=4000)
+    risk_override: Literal["none", "allow", "deny"] | None = None
 
 
 class BulkItem(BaseModel):
@@ -742,7 +780,11 @@ EXPORT_FIELDS = [
     "install_count",
     "last_updated",
     "risk_score",
+    "heuristic_risk_score",
     "risk_level",
+    "triage_status",
+    "triage_assignee",
+    "risk_override",
     "install_footprint",
     "exposure",
     "permissions",
@@ -783,6 +825,11 @@ _EXPORT_COLUMNS = (
     Extension.install_count,
     Extension.last_updated,
     Extension.risk_score,
+    Extension.heuristic_risk_score,
+    Extension.threat_match,
+    Extension.triage_status,
+    Extension.triage_assignee,
+    Extension.risk_override,
     Extension.install_footprint,
     Extension.permissions,
     Extension.watchlist,
@@ -805,7 +852,15 @@ def _export_row(ext) -> dict:
         "install_count": ext.install_count,
         "last_updated": ext.last_updated.isoformat() if ext.last_updated else None,
         "risk_score": ext.risk_score,
-        "risk_level": risk_level(ext.risk_score),
+        "heuristic_risk_score": ext.heuristic_risk_score,
+        "risk_level": effective_risk_level(
+            ext.risk_score,
+            threat_match=ext.threat_match,
+            risk_override=ext.risk_override,
+        ),
+        "triage_status": ext.triage_status,
+        "triage_assignee": ext.triage_assignee,
+        "risk_override": ext.risk_override,
         "install_footprint": ext.install_footprint,
         "exposure": exposure(ext.risk_score, ext.install_footprint),
         "permissions": ";".join(perms) if isinstance(perms, list) else "",
@@ -1082,6 +1137,62 @@ async def toggle_watchlist(
 ) -> ExtensionOut:
     ext = await get_owned_or_404(session, Extension, ext_id, current_user.id)
     ext.watchlist = body.watchlist
+    session.add(ext)
+    await session.commit()
+    await session.refresh(ext)
+    return ExtensionOut.from_db(ext)
+
+
+@router.patch("/extensions/{ext_id}/triage")
+async def update_extension_triage(
+    ext_id: int,
+    body: TriagePatch,
+    current_user: CurrentUser,
+    session: SessionDep,
+) -> ExtensionOut:
+    """Persist owner-scoped analyst disposition and its effective risk policy."""
+
+    supplied = body.model_fields_set
+    if not supplied:
+        raise HTTPException(status_code=422, detail="At least one triage field is required")
+    if "triage_status" in supplied and body.triage_status is None:
+        raise HTTPException(status_code=422, detail="triage_status cannot be null")
+    if "risk_override" in supplied and body.risk_override is None:
+        raise HTTPException(status_code=422, detail="risk_override cannot be null")
+    ext = await get_owned_or_404(
+        session,
+        Extension,
+        ext_id,
+        current_user.id,
+        for_update=True,
+    )
+    if "triage_status" in supplied:
+        ext.triage_status = cast(str, body.triage_status)
+    if "triage_assignee" in supplied:
+        ext.triage_assignee = (body.triage_assignee or "").strip() or None
+    if "triage_notes" in supplied:
+        ext.triage_notes = (body.triage_notes or "").strip() or None
+    if "risk_override" in supplied:
+        ext.risk_override = cast(str, body.risk_override)
+    detail = ext.risk_detail_dict() or {}
+    heuristic = recover_heuristic_risk_score(ext.heuristic_risk_score, ext.risk_score, detail)
+    ext.heuristic_risk_score = heuristic
+    ext.risk_score = effective_risk_score(
+        heuristic,
+        threat_match=ext.threat_match,
+        risk_override=ext.risk_override,
+    )
+    detail["total"] = ext.risk_score
+    detail["risk_level"] = (
+        effective_risk_level(
+            ext.risk_score,
+            threat_match=ext.threat_match,
+            risk_override=ext.risk_override,
+        )
+        or "unknown"
+    )
+    ext.risk_detail = json.dumps(detail)
+    ext.triage_updated_at = datetime.now(timezone.utc)
     session.add(ext)
     await session.commit()
     await session.refresh(ext)

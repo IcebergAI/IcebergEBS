@@ -222,6 +222,57 @@ def risk_level(score: int | None) -> str | None:
     return "low"
 
 
+def effective_risk_score(
+    heuristic_score: int | None,
+    *,
+    threat_match: bool,
+    risk_override: str,
+) -> int | None:
+    """Apply the explainable analyst policy after heuristic detection.
+
+    Threat intelligence takes precedence over a local allow decision. A deny
+    decision is equally critical; allow suppresses only otherwise-unmatched risk.
+    """
+
+    if threat_match or risk_override == "deny":
+        return 100
+    if risk_override == "allow":
+        return 0
+    return heuristic_score
+
+
+def effective_risk_level(score: int | None, *, threat_match: bool, risk_override: str) -> str | None:
+    if risk_override == "allow" and not threat_match:
+        return "suppressed"
+    return risk_level(score)
+
+
+def recover_heuristic_risk_score(
+    stored_score: int | None,
+    effective_score: int | None,
+    detail: dict[str, object] | None,
+) -> int | None:
+    """Recover a pre-migration heuristic without treating a forced 100 as evidence."""
+
+    if stored_score is not None:
+        return stored_score
+    if detail:
+        values = (
+            detail.get(key)
+            for key in (
+                "permissions",
+                "popularity",
+                "publisher",
+                "staleness",
+                "code_behaviour",
+                "external_domains",
+            )
+        )
+        component_total = sum(value for value in values if isinstance(value, int) and not isinstance(value, bool))
+        return min(component_total, 100)
+    return effective_score
+
+
 _GENERIC_WORDS = frozenset(
     {
         "extension",

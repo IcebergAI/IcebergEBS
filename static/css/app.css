@@ -64,15 +64,18 @@ html[data-theme="dark"] {
 .risk-high     { color: var(--risk-high); }
 .risk-critical { color: var(--risk-critical); }
 .risk-unknown  { color: var(--risk-unknown); }
+.risk-suppressed { color: var(--muted); }
 .fill-low      { background: var(--risk-low); }
 .fill-medium   { background: var(--risk-medium); }
 .fill-high     { background: var(--risk-high); }
 .fill-critical { background: var(--risk-critical); }
 .fill-unknown  { background: var(--risk-unknown); }
+.fill-suppressed { background: var(--muted); }
 .stroke-low      { stroke: var(--risk-low); }
 .stroke-medium   { stroke: var(--risk-medium); }
 .stroke-high     { stroke: var(--risk-high); }
 .stroke-critical { stroke: var(--risk-critical); }
+.stroke-suppressed { stroke: var(--muted); }
 
 /* ── Typography helpers (compat names on house type) ──────── */
 .text-meta { font-size: 11.5px; color: var(--muted); }
@@ -111,6 +114,11 @@ html[data-theme="dark"] {
   border-radius: var(--radius-sm);
 }
 .field-mono { font-family: var(--fs-mono); font-size: 13px; }
+.triage-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
+.triage-grid label { display: grid; gap: 6px; }
+.triage-notes { grid-column: 1 / -1; }
+.triage-grid input, .triage-grid select, .triage-grid textarea, .triage-save { min-height: 44px; }
+@media (max-width: 760px) { .triage-grid { grid-template-columns: 1fr; } .triage-notes { grid-column: auto; } }
 
 /* ── Badges ───────────────────────────────────────────────── */
 .badge {
@@ -137,6 +145,7 @@ html[data-theme="dark"] {
 .badge-edge   .dot { background: var(--accent-deep); }
 
 .badge-low      { background: var(--risk-low-bg);      color: var(--badge-low-color);      border-color: color-mix(in oklch, var(--risk-low) 25%, transparent); }
+.badge-suppressed { background: var(--surface-2); color: var(--ink-soft); border-color: var(--line-strong); }
 .badge-medium   { background: var(--risk-medium-bg);   color: var(--badge-medium-color);   border-color: color-mix(in oklch, var(--risk-medium) 30%, transparent); }
 .badge-high     { background: var(--risk-high-bg);     color: var(--badge-high-color);     border-color: color-mix(in oklch, var(--risk-high) 30%, transparent); }
 .badge-critical { background: var(--risk-critical-bg); color: var(--badge-critical-color); border-color: color-mix(in oklch, var(--risk-critical) 35%, transparent); }

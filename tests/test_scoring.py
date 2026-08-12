@@ -408,3 +408,34 @@ def test_risk_bands_derive_from_risk_level_thresholds():
             assert risk_level(high) != band
         else:
             assert risk_level(100) == band
+
+
+def test_effective_risk_override_precedence():
+    from app.scoring import (
+        effective_risk_level,
+        effective_risk_score,
+        recover_heuristic_risk_score,
+    )
+
+    assert effective_risk_score(63, threat_match=False, risk_override="none") == 63
+    assert effective_risk_score(63, threat_match=False, risk_override="allow") == 0
+    assert effective_risk_level(0, threat_match=False, risk_override="allow") == "suppressed"
+    assert effective_risk_score(12, threat_match=False, risk_override="deny") == 100
+    assert effective_risk_score(12, threat_match=True, risk_override="allow") == 100
+    assert effective_risk_level(100, threat_match=True, risk_override="allow") == "critical"
+    assert (
+        recover_heuristic_risk_score(
+            None,
+            100,
+            {
+                "permissions": 25,
+                "popularity": 8,
+                "publisher": 0,
+                "staleness": 4,
+                "code_behaviour": 7,
+                "external_domains": 3,
+                "total": 100,
+            },
+        )
+        == 47
+    )

@@ -89,7 +89,22 @@ class User(SQLModel, table=True):
 
 
 class Extension(SQLModel, table=True):
-    __table_args__ = (UniqueConstraint("user_id", "store", "extension_id"),)
+    __table_args__ = (
+        UniqueConstraint("user_id", "store", "extension_id"),
+        CheckConstraint(
+            "triage_status IN ('new', 'triaging', 'accepted-risk', 'blocked', 'resolved')",
+            name="ck_extension_triage_status",
+        ),
+        CheckConstraint(
+            "risk_override IN ('none', 'allow', 'deny')",
+            name="ck_extension_risk_override",
+        ),
+        CheckConstraint(
+            "heuristic_risk_score IS NULL OR (heuristic_risk_score >= 0 AND heuristic_risk_score <= 100)",
+            name="ck_extension_heuristic_risk_score",
+        ),
+        Index("ix_extension_user_triage_status", "user_id", "triage_status"),
+    )
 
     id: Optional[int] = Field(default=None, primary_key=True)
     # Orphaned (not deleted) when the owner is removed — see delete_user, which also
@@ -109,7 +124,15 @@ class Extension(SQLModel, table=True):
     last_fetched_at: Optional[datetime] = Field(default=None, sa_column=_tz_column(nullable=True))
     watchlist: bool = True
     risk_score: Optional[int] = None
+    # Preserve the unmodified detection score separately from the effective
+    # analyst policy posture. Existing consumers keep reading risk_score.
+    heuristic_risk_score: Optional[int] = None
     risk_detail: Optional[str] = None  # JSON breakdown per signal
+    triage_status: str = "new"
+    triage_assignee: Optional[str] = None
+    triage_notes: Optional[str] = None
+    risk_override: str = "none"
+    triage_updated_at: Optional[datetime] = Field(default=None, sa_column=_tz_column(nullable=True))
     package_analysis: Optional[str] = None  # JSON output from inspector
     # Cached org install footprint = distinct asset count from SOAR inventory (#29),
     # maintained on each /api/inventory upsert. Exposure ("blast radius") is computed

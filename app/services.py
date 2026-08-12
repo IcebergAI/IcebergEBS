@@ -19,7 +19,13 @@ from app.inspector import InspectorError, PackageAnalysis, inspect_package
 from app.models import Extension, FetchLog, InstallCountHistory, PackageSnapshot, ThreatListEntry
 from app.notifications import ChangeEvent, detect_changes, fire_alerts
 from app.package_diff import diff_analysis
-from app.scoring import RiskDetail, compute_risk_score
+from app.scoring import (
+    RiskDetail,
+    compute_risk_score,
+    effective_risk_level,
+    effective_risk_score,
+    recover_heuristic_risk_score,
+)
 from app.threats import ThreatEntryInput, finding_for_entries
 from app.utils import json_list
 
@@ -136,13 +142,24 @@ async def apply_threat_matches(
             old = ext.model_copy()
             ext.threat_match = bool(matches)
             _apply_threat_finding(ext, matches)
-            if matches:
-                ext.risk_score = 100
-                detail = ext.risk_detail_dict() or {}
-                detail.setdefault("risk_level", "critical")
-                detail["total"] = 100
-                detail["risk_level"] = "critical"
-                ext.risk_detail = json.dumps(detail)
+            detail = ext.risk_detail_dict() or {}
+            heuristic = recover_heuristic_risk_score(ext.heuristic_risk_score, ext.risk_score, detail)
+            ext.heuristic_risk_score = heuristic
+            ext.risk_score = effective_risk_score(
+                heuristic,
+                threat_match=ext.threat_match,
+                risk_override=ext.risk_override,
+            )
+            detail["total"] = ext.risk_score
+            detail["risk_level"] = (
+                effective_risk_level(
+                    ext.risk_score,
+                    threat_match=ext.threat_match,
+                    risk_override=ext.risk_override,
+                )
+                or "unknown"
+            )
+            ext.risk_detail = json.dumps(detail)
             session.add(ext)
             events = detect_changes(old, ext, threat_match_detail=_threat_detail(matches))
             events = await _merge_pending_events(session, ext, events)
@@ -298,8 +315,23 @@ def _apply_fetch_results(
         # the package download temporarily fails.
         ext.permissions = json.dumps(effective.permissions)
     ext.last_fetched_at = datetime.now(timezone.utc)
-    ext.risk_score = risk.total
-    ext.risk_detail = json.dumps(risk._asdict())
+    ext.heuristic_risk_score = risk.total
+    ext.risk_score = effective_risk_score(
+        risk.total,
+        threat_match=ext.threat_match,
+        risk_override=ext.risk_override,
+    )
+    risk_detail = risk._asdict()
+    risk_detail["total"] = ext.risk_score
+    risk_detail["risk_level"] = (
+        effective_risk_level(
+            ext.risk_score,
+            threat_match=ext.threat_match,
+            risk_override=ext.risk_override,
+        )
+        or "unknown"
+    )
+    ext.risk_detail = json.dumps(risk_detail)
     if analysis:
         # Serialization lives on the dataclass so the stored field list can't
         # drift from the render defaults in routes/ui.py (#164).
@@ -510,7 +542,7 @@ async def fetch_and_store(
         publisher_verified=metadata.publisher_verified,
         last_updated=effective.last_updated,
         analysis=analysis,
-        threat_match=threat_match,
+        threat_match=False,
     )
 
     _apply_fetch_results(ext, metadata, analysis, effective, risk)
@@ -522,7 +554,7 @@ async def fetch_and_store(
             extension_id=ext.id,
             success=True,
             risk_score_before=score_before,
-            risk_score_after=risk.total,
+            risk_score_after=ext.risk_score,
         )
     )
 

@@ -109,9 +109,10 @@ Makes "both UI + API" real.
 - **SIEM export** — emit alerts/findings as **OCSF** (or CEF/ECS) events to an HTTP collector
   (Splunk HEC / Sentinel / Elastic). **STIX 2.1** bundle export reusing
   `build_threat_intel_indicators`.
-- **Triage workflow** — `triage_status` (new/triaging/accepted-risk/blocked/resolved) + assignee +
-  notes on `Extension`; **allow-list/deny-list** that overrides the heuristic score (approved extensions
-  suppressed; blocked ones forced critical). Ties allow/deny back into Phase 1's scoring override hook.
+- **Triage workflow** — shipped in #39: `triage_status`
+  (new/triaging/accepted-risk/blocked/resolved), assignee and notes on `Extension`, plus an
+  **allow-list/deny-list** policy that preserves the heuristic score while producing an effective
+  suppressed/critical posture. Known-bad threat intelligence takes precedence over allow decisions.
 
 ## Phase 4 — Reporting & secondary detection (later)
 
