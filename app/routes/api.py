@@ -403,12 +403,14 @@ def _validate_extension_id(store: StoreType, extension_id: str) -> None:
 def normalise_extension_id(store: StoreType, raw: str) -> str:
     """Extract the store-native ID from a full URL or return raw as-is."""
     raw = raw.strip()
-    # VS Code publisher/extension identities are case-insensitive. Canonicalize
-    # enrollment so it uses the same key as threat-feed matching.
-    if store == "vscode":
-        raw = raw.lower()
+
+    def canonical(value: str) -> str:
+        # VS Code publisher/extension identities are case-insensitive. Keep the
+        # URL itself untouched so query parameter names remain parseable.
+        return value.lower() if store == "vscode" else value
+
     if not raw.startswith("http"):
-        return raw
+        return canonical(raw)
 
     parsed = urlparse(raw)
     if store == "chrome":
@@ -422,13 +424,13 @@ def normalise_extension_id(store: StoreType, raw: str) -> str:
         # https://marketplace.visualstudio.com/items?itemName=publisher.name
         qs = parse_qs(parsed.query)
         if "itemName" in qs:
-            return qs["itemName"][0]
+            return canonical(qs["itemName"][0])
     elif store == "edge":
         # https://microsoftedge.microsoft.com/addons/detail/{name}/{id}
         parts = [p for p in parsed.path.split("/") if p]
         if parts:
             return parts[-1]
-    return raw
+    return canonical(raw)
 
 
 def _detect_store(value: str) -> StoreType | None:
