@@ -34,6 +34,15 @@ from app.threat_intel import build_threat_intel_indicators
 from app.threats import MAX_FEED_ENTRIES, normalize_entry
 from app.utils import host_permissions_of, json_list
 
+
+class _InitialFetchHTTPError(HTTPException):
+    """A store failure with explicit post-commit threat-posture state."""
+
+    def __init__(self, *, preserve_extension: bool) -> None:
+        super().__init__(status_code=502, detail="Failed to fetch extension from store")
+        self.preserve_extension = preserve_extension
+
+
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api", tags=["extensions"])
@@ -521,7 +530,7 @@ async def _fetch_and_score(
             )
         )
         await session.commit()
-        raise HTTPException(status_code=502, detail="Failed to fetch extension from store") from exc
+        raise _InitialFetchHTTPError(preserve_extension=bool(posture_events)) from exc
     await session.commit()
     await session.refresh(ext)
     # Fire alerts only after committing above, so fire_alerts' own session can write
@@ -612,7 +621,7 @@ async def _enroll_extension(
         # A delisted or unreachable known-bad package is still a monitored critical
         # extension; deleting it here would also cascade its audit alerts.  Only
         # discard a genuinely unanalysed placeholder with no threat assertion.
-        if not ext.threat_match:
+        if not getattr(exc, "preserve_extension", False):
             await _discard_placeholder(session, ext_id)
         return {"store": store, "extension_id": extension_id, "status": "error", "detail": exc.detail}
     except Exception:
