@@ -30,6 +30,12 @@ class FetchError(Exception):
 class BaseFetcher(ABC):
     def __init__(self, client: httpx.AsyncClient) -> None:
         self.client = client
+        # Fetchers normally return a complete package when a package is present.
+        # Store-specific implementations may deliberately return a degraded
+        # manifest-only package (Edge does this when the CRX endpoint is
+        # unavailable).  The service pipeline uses this flag to keep degraded
+        # bytes out of immutable per-version snapshots.
+        self.package_complete = True
 
     @abstractmethod
     async def fetch_metadata(self, extension_id: str) -> ExtensionMetadata: ...

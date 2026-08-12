@@ -137,11 +137,13 @@ def _apply_fetch_results(
     ext.publisher = effective.publisher
     ext.description = metadata.description
     ext.store_url = metadata.store_url
-    # Only update version when the store returns a non-empty value; keeping
-    # the stored version avoids spurious new_version alerts when Chrome HTML
-    # scraping temporarily fails and returns an empty string.
-    if metadata.version:
-        ext.version = metadata.version
+    # Prefer the version declared by the inspected package when available: it is
+    # the identity of the bytes we are about to snapshot. Store metadata may be
+    # missing or stale while the package download succeeds. Fall back to the
+    # store value, and keep the prior value when both sources are empty.
+    observed_version = analysis.version if analysis and analysis.version else metadata.version
+    if observed_version:
+        ext.version = observed_version
     # Persist the same effective values that were scored, so risk_detail stays
     # consistent with the stored row (#142).
     ext.install_count = effective.install_count
@@ -169,7 +171,7 @@ async def _capture_package_snapshot(
     PostgreSQL conflict guard is the schema-level backstop: only the writer that
     inserts a new version can stage the alert, and snapshots/events commit together.
     """
-    if analysis is None or not ext.version or ext.id is None:
+    if analysis is None or not analysis.analysis_complete or not ext.version or ext.id is None:
         return None, None
     analysis_data = analysis.to_json_dict()
     await session.flush()
@@ -238,7 +240,7 @@ def _parse_pending_events(raw: str | None, ext_id: int | None) -> list[ChangeEve
 
 async def _merge_pending_events(session: AsyncSession, ext: Extension, events: list[ChangeEvent]) -> list[ChangeEvent]:
     """Merge freshly-detected events into the durable pending-alert marker under a
-    row lock, and return the full pending set the caller should fire.
+    row lock, and return only this transaction's newly appended events.
 
     Persist the pending events in the SAME transaction as the state change so they
     commit atomically (#109). If the process dies before fire_pending_alerts runs,
@@ -258,9 +260,10 @@ async def _merge_pending_events(session: AsyncSession, ext: Extension, events: l
     first-time insert), then SELECT ... FOR UPDATE the marker: the locking read
     returns the *current committed* value — not the stale one loaded before a
     concurrent writer committed — and the lock is held until the caller commits, so
-    the other writer's events are appended, never clobbered. We return the full
-    merged set so the caller fires everything pending, not just this refresh's new
-    events.
+    the other writer's events are appended, never clobbered. A concurrent refresh
+    may observe an already-owned marker after the first transaction commits; it
+    receives no events to fire, preventing duplicate delivery. The original owner
+    (or recovery) still retries the durable marker if delivery fails.
     """
     new_events = [asdict(e) for e in events]
     await session.flush()
@@ -274,9 +277,24 @@ async def _merge_pending_events(session: AsyncSession, ext: Extension, events: l
     # below, 500-ing the refresh (#197). Round-tripping through _parse_pending_events also
     # cleanses the junk out of the re-persisted marker so it can't accumulate.
     prior = [asdict(e) for e in _parse_pending_events(locked_marker, ext.id)]
-    pending = prior + new_events
+    # Exact event identity is sufficient for racing refreshes of the same version.
+    # Distinct transitions of the same type (for example 1.0→1.1 followed by
+    # 1.1→1.2) remain separate and are retained in chronological order.
+    pending = list(prior)
+    appended_events: list[dict[str, object]] = []
+    appended = False
+    for event in new_events:
+        if event not in pending:
+            pending.append(event)
+            appended_events.append(event)
+            appended = True
     ext.pending_alert_events = json.dumps(pending) if pending else None
-    return [ChangeEvent(**e) for e in pending]
+    if not appended:
+        return []
+    # Return only this transaction's additions. The marker may contain older
+    # undelivered events; replaying those from every concurrent refresh would
+    # duplicate delivery. Recovery owns the full-marker retry path.
+    return [ChangeEvent(**e) for e in appended_events]
 
 
 async def fetch_and_store(
@@ -316,6 +334,12 @@ async def fetch_and_store(
             analysis = await anyio.to_thread.run_sync(inspect_package, pkg_bytes)
         except InspectorError as exc:
             logger.debug("Inspector failed for %s: %s", ext.extension_id, exc)
+        else:
+            # Edge can return a manifest-only package when the full CRX cannot be
+            # fetched. Keep that analysis for baseline permissions/scoring, but
+            # mark it so snapshot capture cannot turn degraded bytes into trusted
+            # immutable evidence.
+            analysis.analysis_complete = bool(getattr(fetcher, "package_complete", True))
 
     effective = _effective_values(ext, metadata, analysis)
 
@@ -356,6 +380,14 @@ async def fetch_and_store(
         logger.exception("Change detection failed for %s", ext.extension_id)
         events = []
 
+    if analysis is not None and not analysis.analysis_complete:
+        # A degraded manifest can still support baseline scoring and a metadata
+        # version transition, but it is not evidence for package-derived alerts.
+        # In particular, do not claim a permission/risk/capability change from
+        # bytes that did not include the shipped code. A later complete download
+        # will establish the trusted baseline and diff from there.
+        events = [event for event in events if event.event_type in {"publisher_change", "new_version"}]
+
     events = await _merge_pending_events(session, ext, events)
     return ext, events
 
@@ -375,20 +407,16 @@ async def fire_pending_alerts(
     The extension's attributes must be loaded (refresh after commit) before calling,
     since fire_alerts reads them to build the webhook payload.
 
-    ``expected_marker`` is the exact stored marker string these events were derived from,
-    used for the compare-and-clear. The normal pipeline (events == the full re-persisted
-    marker) omits it and we re-serialize ``events`` — an identical string. The recovery
-    path passes the raw marker explicitly because it may have delivered a *filtered subset*
-    of a corrupt marker (junk entries dropped); clearing must then match the whole raw
-    marker, not the filtered subset, or the marker never clears and re-fires every cycle
-    forever (#197).
+    ``expected_marker`` is the exact stored marker string used by recovery for a
+    compare-and-clear. The normal pipeline acknowledges only the events returned
+    by its merge transaction, leaving older events for their original owner or
+    recovery. Recovery passes the raw marker explicitly because it may have
+    delivered a *filtered subset* of a corrupt marker (junk entries dropped);
+    clearing must then match the whole raw marker, not the filtered subset, or the
+    marker never clears and re-fires every cycle forever (#197).
     """
     if not events:
         return
-    # Snapshot exactly what we're about to clear against: the raw marker when given, else
-    # the serialization of what we fired (identical for the normal, unfiltered path). We
-    # clear the marker only if it still holds this same value (compare-and-clear below).
-    fired = expected_marker if expected_marker is not None else json.dumps([asdict(e) for e in events])
     try:
         await fire_alerts(events, ext, engine, client)
     except Exception:
@@ -398,8 +426,38 @@ async def fire_pending_alerts(
         )
         # Keep the durable marker so a shutdown-dropped alert is retried next cycle (#109).
         return
-    # Delivered + recorded: clear the durable marker so it isn't re-fired.
-    await _clear_pending_alerts(ext.id, engine, fired)
+    # Delivered + recorded: recovery clears its exact raw marker; a normal refresh
+    # removes only its owned events so a later refresh's events cannot be erased.
+    if expected_marker is not None:
+        await _clear_pending_alerts(ext.id, engine, expected_marker)
+    else:
+        await _ack_pending_events(ext.id, engine, events)
+
+
+async def _ack_pending_events(ext_id: int | None, engine: AsyncEngine, events: list[ChangeEvent]) -> None:
+    """Remove only successfully delivered events from a pending marker.
+
+    The row lock makes this an atomic acknowledgement with a concurrent merge:
+    events appended while a webhook is in flight remain pending for their own
+    delivery. This avoids the full-marker compare-and-clear race where a newer
+    refresh could be delivered twice or erased by an older caller.
+    """
+    if ext_id is None or not events:
+        return
+    async with AsyncSession(engine) as session:
+        ext = (await session.exec(select(Extension).where(Extension.id == ext_id).with_for_update())).one_or_none()
+        if ext is None:
+            return
+        pending = [asdict(event) for event in _parse_pending_events(ext.pending_alert_events, ext.id)]
+        for delivered in (asdict(event) for event in events):
+            try:
+                pending.remove(delivered)
+            except ValueError:
+                # A concurrent recovery/ack already removed this exact event. Do
+                # not touch the remaining marker.
+                continue
+        ext.pending_alert_events = json.dumps(pending) if pending else None
+        await session.commit()
 
 
 async def _clear_pending_alerts(ext_id: int | None, engine: AsyncEngine, expected: str) -> None:
