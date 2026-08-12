@@ -421,6 +421,32 @@ async def test_failed_fetch_preserves_existing_threat_match(client, test_db):
         assert stored.risk_score == 100
 
 
+async def test_unexpected_fetch_error_preserves_existing_threat_match(client, test_db):
+    """An unexpected initial failure cannot erase a committed threat posture."""
+    async with AsyncSession(test_db) as session:
+        session.add(
+            ThreatListEntry(
+                source="soc-feed",
+                store="vscode",
+                extension_id="testpub.crash-ext",
+                reason="confirmed malicious",
+            )
+        )
+        await session.commit()
+
+    with patch("app.routes.api.fetch_and_store", new=AsyncMock(side_effect=RuntimeError("inspector crashed"))):
+        with pytest.raises(RuntimeError, match="inspector crashed"):
+            await client.post(
+                "/api/extensions",
+                json={"store": "vscode", "extension_id": "testpub.crash-ext"},
+            )
+
+    async with AsyncSession(test_db) as session:
+        stored = (await session.exec(select(Extension).where(Extension.extension_id == "testpub.crash-ext"))).one()
+        assert stored.threat_match is True
+        assert stored.risk_score == 100
+
+
 async def test_add_extension_duplicate(client):
     with patch("app.fetchers.VSCodeFetcher") as MockFetcher:
         instance = MockFetcher.return_value
