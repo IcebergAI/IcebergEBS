@@ -331,6 +331,7 @@ async def ingest_threatlist(
             extension_id=item.extension_id,
             source=item.source,
             reason=item.reason,
+            added_at=datetime.now(timezone.utc),
         )
         if item.reason is None:
             statement = statement.on_conflict_do_nothing(constraint="uq_threatlistentry_identity")

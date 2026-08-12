@@ -28,7 +28,9 @@ def upgrade() -> None:
         sa.Column("extension_id", sqlmodel.sql.sqltypes.AutoString(), nullable=False),
         sa.Column("source", sqlmodel.sql.sqltypes.AutoString(), nullable=False),
         sa.Column("reason", sqlmodel.sql.sqltypes.AutoString(), nullable=True),
-        sa.Column("added_at", sa.DateTime(timezone=True), nullable=False),
+        # Core PostgreSQL upserts do not apply SQLModel's Python default.
+        # Keep a database default for direct/feed inserts as well.
+        sa.Column("added_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.text("CURRENT_TIMESTAMP")),
         sa.CheckConstraint("store IN ('chrome', 'vscode', 'edge')", name="ck_threatlistentry_store"),
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint("store", "extension_id", "source", name="uq_threatlistentry_identity"),
