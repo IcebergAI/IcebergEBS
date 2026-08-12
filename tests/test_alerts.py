@@ -99,6 +99,13 @@ def test_detect_changes_threat_match_once():
     assert not any(event.event_type == "threat_match" for event in detect_changes(new, new))
 
 
+def test_detect_changes_threat_match_for_unfetched_placeholder():
+    old = _ext(threat_match=False, last_fetched_at=None)
+    new = _ext(threat_match=True, risk_score=100, last_fetched_at=None)
+    events = detect_changes(old, new, threat_match_detail=[{"source": "feed"}])
+    assert [event.event_type for event in events] == ["threat_match"]
+
+
 def test_detect_changes_publisher():
     old = _ext(publisher="GoodPub")
     new = _ext(publisher="SuspiciousPub")

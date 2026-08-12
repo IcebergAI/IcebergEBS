@@ -13,7 +13,7 @@ from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.fetchers import get_fetcher
-from app.fetchers.base import ExtensionMetadata
+from app.fetchers.base import ExtensionMetadata, FetchError
 from app.inspector import InspectorError, PackageAnalysis, inspect_package
 from app.models import Extension, FetchLog, InstallCountHistory, PackageSnapshot, ThreatListEntry
 from app.notifications import ChangeEvent, detect_changes, fire_alerts
@@ -406,18 +406,8 @@ async def fetch_and_store(
     a failure FetchLog and handling the error appropriately.
     """
     fetcher = get_fetcher(ext.store, client)
-    score_before = ext.risk_score
-
-    # Snapshot state before any mutations for change detection
-    old_snap = ext.model_copy()
 
     metadata, pkg_bytes = await fetcher.fetch(ext.extension_id)
-
-    threat_entries = await _threat_entries(session, ext)
-    threat_match = bool(threat_entries)
-    ext.threat_match = threat_match
-
-    history = await _stage_install_reading(session, ext, metadata)
 
     analysis: PackageAnalysis | None = None
     if pkg_bytes:
@@ -434,6 +424,25 @@ async def fetch_and_store(
             # mark it so snapshot capture cannot turn degraded bytes into trusted
             # immutable evidence.
             analysis.analysis_complete = bool(getattr(fetcher, "package_complete", True))
+
+    # Serialize the final write with threat-list ingestion. Re-read both the
+    # extension and its entries after remote fetch/inspection so a concurrent
+    # ingestion cannot be overwritten by a stale normal score.
+    locked_ext = (
+        await session.exec(
+            select(Extension).where(Extension.id == ext.id).with_for_update().execution_options(populate_existing=True)
+        )
+    ).one_or_none()
+    if locked_ext is None:
+        raise FetchError("extension disappeared during refresh")
+    ext = locked_ext
+    score_before = ext.risk_score
+    old_snap = ext.model_copy()
+    threat_entries = await _threat_entries(session, ext)
+    threat_match = bool(threat_entries)
+    ext.threat_match = threat_match
+
+    history = await _stage_install_reading(session, ext, metadata)
 
     effective = _effective_values(ext, metadata, analysis)
 

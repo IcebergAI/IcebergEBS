@@ -36,6 +36,8 @@ def normalize_entry(
     """
     normalized_store = store.strip().lower()
     normalized_id = extension_id.strip()
+    if normalized_store == "vscode":
+        normalized_id = normalized_id.lower()
     normalized_source = source.strip()
     normalized_reason = reason.strip() if reason is not None else None
     if normalized_store not in SUPPORTED_STORES:

@@ -79,6 +79,11 @@ def detect_changes(
     since there is no prior state to compare against.
     """
     if old.last_fetched_at is None:
+        # Deferred inventory enrollment creates a placeholder with no prior
+        # fetch. A threat-list ingestion is still a meaningful false→true
+        # transition and must not be swallowed as an ordinary first fetch.
+        if not old.threat_match and new.threat_match:
+            return [ChangeEvent("threat_match", None, threat_match_detail or {"matched": True})]
         return []
 
     events: list[ChangeEvent] = []

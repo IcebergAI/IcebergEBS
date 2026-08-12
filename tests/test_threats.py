@@ -9,7 +9,7 @@ import pytest
 from app.models import Extension
 from app.scoring import compute_risk_score
 from app.threat_feed import fetch_threat_feed
-from app.threats import finding_for_entries, parse_feed_payload, validate_feed_url
+from app.threats import finding_for_entries, normalize_entry, parse_feed_payload, validate_feed_url
 
 
 def test_feed_parser_accepts_array_and_deduplicates():
@@ -70,6 +70,10 @@ def test_extension_defaults_to_unmatched():
         store_url="https://example.test",
     )
     assert ext.threat_match is False
+
+
+def test_vscode_threat_ids_are_case_insensitive():
+    assert normalize_entry("vscode", "Publisher.Extension", "feed").extension_id == "publisher.extension"
 
 
 async def test_threat_feed_fetch_is_pinned_and_bounded():
