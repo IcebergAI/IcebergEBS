@@ -89,6 +89,23 @@ def test_detect_changes_same_risk_level_no_event():
     assert not any(e.event_type == "risk_level_change" for e in events)
 
 
+def test_detect_changes_threat_match_once():
+    old = _ext(threat_match=False)
+    new = _ext(threat_match=True, risk_score=100)
+    events = detect_changes(old, new, threat_match_detail=[{"source": "feed", "reason": "confirmed"}])
+    match = next(event for event in events if event.event_type == "threat_match")
+    assert match.old_value is None
+    assert match.new_value == [{"source": "feed", "reason": "confirmed"}]
+    assert not any(event.event_type == "threat_match" for event in detect_changes(new, new))
+
+
+def test_detect_changes_threat_match_for_unfetched_placeholder():
+    old = _ext(threat_match=False, last_fetched_at=None)
+    new = _ext(threat_match=True, risk_score=100, last_fetched_at=None)
+    events = detect_changes(old, new, threat_match_detail=[{"source": "feed"}])
+    assert [event.event_type for event in events] == ["threat_match"]
+
+
 def test_detect_changes_publisher():
     old = _ext(publisher="GoodPub")
     new = _ext(publisher="SuspiciousPub")

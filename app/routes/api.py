@@ -9,7 +9,7 @@ from urllib.parse import parse_qs, urlparse
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import JSONResponse, Response
-from pydantic import BaseModel, StringConstraints
+from pydantic import BaseModel, Field, StringConstraints
 from sqlalchemy import func
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
@@ -18,15 +18,30 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app import proxy
 from app.database import engine
-from app.deps import CurrentUser, SessionDep, get_owned_or_404
+from app.deps import AdminUser, CurrentUser, SessionDep, get_owned_or_404
 from app.extension_queries import ExtensionFilters, build_extension_query, count_rows, exposure
 from app.fetchers.base import FetchError
-from app.models import Extension, FetchLog, InstallCountHistory, InstallObservation
+from app.models import Extension, FetchLog, InstallCountHistory, InstallObservation, ThreatListEntry
 from app.retention import freshness_cutoff
 from app.scoring import risk_level
-from app.services import fetch_and_store, fire_pending_alerts
+from app.services import (
+    apply_existing_threat_posture,
+    apply_threat_matches,
+    fetch_and_store,
+    fire_pending_alerts,
+)
 from app.threat_intel import build_threat_intel_indicators
+from app.threats import MAX_FEED_ENTRIES, normalize_entry
 from app.utils import host_permissions_of, json_list
+
+
+class _InitialFetchHTTPError(HTTPException):
+    """A store failure with explicit post-commit threat-posture state."""
+
+    def __init__(self, *, preserve_extension: bool) -> None:
+        super().__init__(status_code=502, detail="Failed to fetch extension from store")
+        self.preserve_extension = preserve_extension
+
 
 logger = logging.getLogger(__name__)
 
@@ -133,6 +148,7 @@ class ExtensionOut(BaseModel):
     risk_score: int | None
     risk_detail: dict | None
     risk_level: str | None
+    threat_match: bool
     install_footprint: int | None
     exposure: int | None  # risk_score × install_footprint, or None if either is unset
     findings: list[PackageFindingOut]
@@ -163,6 +179,16 @@ class ExtensionOut(BaseModel):
             if isinstance(findings_raw, list)
             else []
         )
+        if ext.threat_match and not any(f.code == "threat_match" for f in findings):
+            findings.append(
+                PackageFindingOut(
+                    code="threat_match",
+                    severity="critical",
+                    title="Known-bad extension matched a threat list",
+                    detail="The extension is present in a configured threat list.",
+                    source="threat_list",
+                )
+            )
         threat_intel_indicators = build_threat_intel_indicators(analysis_raw) if include_threat_intel else []
         detail = ext.risk_detail_dict()
         return cls(
@@ -184,6 +210,7 @@ class ExtensionOut(BaseModel):
             risk_score=ext.risk_score,
             risk_detail=detail,
             risk_level=risk_level(ext.risk_score),
+            threat_match=ext.threat_match,
             install_footprint=ext.install_footprint,
             exposure=exposure(ext.risk_score, ext.install_footprint),
             findings=findings,
@@ -274,6 +301,91 @@ class HistoryPoint(BaseModel):
     install_count: int
 
 
+class ThreatListItem(BaseModel):
+    store: str
+    extension_id: str
+    source: str | None = None
+    reason: str | None = None
+
+
+class ThreatListBatch(BaseModel):
+    entries: list[ThreatListItem] = Field(min_length=1, max_length=MAX_FEED_ENTRIES)
+    source: str = Field(default="soar", min_length=1, max_length=128)
+
+
+class ThreatListResult(BaseModel):
+    accepted: int
+    matched_extensions: int
+    alerts_queued: int
+
+
+@router.post("/threatlist", status_code=202)
+async def ingest_threatlist(
+    body: ThreatListBatch,
+    _: AdminUser,
+    request: Request,
+    session: SessionDep,
+) -> ThreatListResult:
+    """Idempotently ingest known-bad extension assertions from a SOAR/feed.
+
+    The write and score transition share one database transaction. Alert
+    delivery is intentionally deferred until after that commit, matching the
+    normal refresh pipeline's durable pending-event contract.
+    """
+    normalized = []
+    for item in body.entries:
+        try:
+            normalized.append(normalize_entry(item.store, item.extension_id, item.source or body.source, item.reason))
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    for item in normalized:
+        statement = pg_insert(ThreatListEntry).values(
+            store=item.store,
+            extension_id=item.extension_id,
+            source=item.source,
+            reason=item.reason,
+            added_at=datetime.now(timezone.utc),
+        )
+        if item.reason is None:
+            statement = statement.on_conflict_do_nothing(constraint="uq_threatlistentry_identity")
+        else:
+            statement = statement.on_conflict_do_update(
+                constraint="uq_threatlistentry_identity",
+                set_={"reason": item.reason},
+            )
+        await session.execute(statement)
+    await session.flush()
+
+    stored: list[ThreatListEntry] = []
+    for item in normalized:
+        row = (
+            await session.exec(
+                select(ThreatListEntry).where(
+                    ThreatListEntry.store == item.store,
+                    ThreatListEntry.extension_id == item.extension_id,
+                    ThreatListEntry.source == item.source,
+                )
+            )
+        ).one()
+        stored.append(row)
+
+    transitions = await apply_threat_matches(session, stored)
+    await session.commit()
+    client: httpx.AsyncClient = request.app.state.http_client
+    alerts_queued = 0
+    for ext, events in transitions:
+        await session.refresh(ext)
+        alerts_queued += sum(event.event_type == "threat_match" for event in events)
+        await fire_pending_alerts(events, ext, engine, client)
+
+    return ThreatListResult(
+        accepted=len(normalized),
+        matched_extensions=len(transitions),
+        alerts_queued=alerts_queued,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Extension ID validation
 # ---------------------------------------------------------------------------
@@ -305,8 +417,14 @@ def _validate_extension_id(store: StoreType, extension_id: str) -> None:
 def normalise_extension_id(store: StoreType, raw: str) -> str:
     """Extract the store-native ID from a full URL or return raw as-is."""
     raw = raw.strip()
+
+    def canonical(value: str) -> str:
+        # VS Code publisher/extension identities are case-insensitive. Keep the
+        # URL itself untouched so query parameter names remain parseable.
+        return value.lower() if store == "vscode" else value
+
     if not raw.startswith("http"):
-        return raw
+        return canonical(raw)
 
     parsed = urlparse(raw)
     if store == "chrome":
@@ -320,13 +438,13 @@ def normalise_extension_id(store: StoreType, raw: str) -> str:
         # https://marketplace.visualstudio.com/items?itemName=publisher.name
         qs = parse_qs(parsed.query)
         if "itemName" in qs:
-            return qs["itemName"][0]
+            return canonical(qs["itemName"][0])
     elif store == "edge":
         # https://microsoftedge.microsoft.com/addons/detail/{name}/{id}
         parts = [p for p in parsed.path.split("/") if p]
         if parts:
             return parts[-1]
-    return raw
+    return canonical(raw)
 
 
 def _detect_store(value: str) -> StoreType | None:
@@ -386,6 +504,9 @@ async def _fetch_and_score(
     client: httpx.AsyncClient,
 ) -> Extension:
     score_before = ext.risk_score
+    posture_events = await apply_existing_threat_posture(session, ext)
+    await session.refresh(ext)
+    await fire_pending_alerts(posture_events, ext, engine, client)
     try:
         ext, events = await fetch_and_store(ext, session, client)
     except (FetchError, httpx.TransportError) as exc:
@@ -409,7 +530,7 @@ async def _fetch_and_score(
             )
         )
         await session.commit()
-        raise HTTPException(status_code=502, detail="Failed to fetch extension from store") from exc
+        raise _InitialFetchHTTPError(preserve_extension=bool(posture_events)) from exc
     await session.commit()
     await session.refresh(ext)
     # Fire alerts only after committing above, so fire_alerts' own session can write
@@ -486,23 +607,37 @@ async def _enroll_extension(
     ext_id = ext.id
 
     if not score:
-        # Defer scoring to the scheduler (#78): the placeholder is watchlist=True and
-        # unscored, so refresh_watchlist scores it on its next run. detect_changes
-        # returns [] on that first fetch (last_fetched_at is None), so no alerts fire.
+        # Defer store scoring to the scheduler (#78), but apply any already-known
+        # threat assertion immediately so a broken/delisted store cannot hide it.
+        events = await apply_existing_threat_posture(session, ext)
+        await session.refresh(ext)
+        await fire_pending_alerts(events, ext, engine, client)
         return {"store": store, "extension_id": extension_id, "status": "deferred", "id": ext_id}
 
     try:
         scored = await _fetch_and_score(ext, session, client)
     except HTTPException as exc:
-        await _discard_placeholder(session, ext_id)
+        # Threat posture is durable and must survive a failed initial store fetch.
+        # A delisted or unreachable known-bad package is still a monitored critical
+        # extension; deleting it here would also cascade its audit alerts. The
+        # assertion may have been committed by a concurrent threat-feed ingestion
+        # after _fetch_and_score's initial posture check. Cleanup re-reads under
+        # a row lock before deciding whether this is an unanalysed placeholder (#31).
+        await session.rollback()
+        if not getattr(exc, "preserve_extension", False):
+            await _discard_placeholder(session, ext_id)
         return {"store": store, "extension_id": extension_id, "status": "error", "detail": exc.detail}
     except Exception:
         # An unexpected failure (inspector bug, DB error, …) must not leave an
         # unscored placeholder on the watchlist — the exact state the FetchError
-        # cleanup above prevents (#75). Roll back the poisoned transaction, drop
-        # the orphan, then re-raise so a genuine bug still surfaces as a 500.
+        # cleanup above prevents (#75). Roll back the poisoned transaction first;
+        # cleanup then locks and rechecks the durable row. ``apply_existing_threat_posture``
+        # commits a known-bad assertion before the fetch begins, so deleting that row
+        # would erase the monitoring posture and cascade its alert history (#31).
         await session.rollback()
         await _discard_placeholder(session, ext_id)
+        # Re-raise so a genuine bug still surfaces as a 500. The monitored row is
+        # intentionally retained when its critical threat posture was committed.
         raise
 
     return {"store": store, "extension_id": extension_id, "status": "added", "id": scored.id}
@@ -513,11 +648,17 @@ async def _discard_placeholder(session: AsyncSession, ext_id: int) -> None:
     fetch, committing the cleanup. Best-effort: a cleanup failure is swallowed so it
     can't mask the original error."""
     try:
+        # Serialize cleanup against threat-feed posture updates and refresh the
+        # identity-mapped row. A feed can commit a match after the initial lookup
+        # but before cleanup; never delete a row that is critical at the cleanup
+        # decision point (#31).
+        orphan = await session.get(Extension, ext_id, with_for_update=True, populate_existing=True)
+        if orphan is None or orphan.threat_match:
+            await session.rollback()
+            return
         for fl in (await session.exec(select(FetchLog).where(FetchLog.extension_id == ext_id))).all():
             await session.delete(fl)
-        orphan = await session.get(Extension, ext_id)
-        if orphan is not None:
-            await session.delete(orphan)
+        await session.delete(orphan)
         await session.commit()
     except Exception:
         logger.exception("Failed to discard placeholder extension %d after a failed first fetch", ext_id)

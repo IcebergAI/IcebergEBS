@@ -25,6 +25,7 @@ VALID_EVENT_TYPES = {
     "permission_change",
     "new_version",
     "capability_change",
+    "threat_match",
 }
 
 

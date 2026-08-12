@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 
 import httpx
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
@@ -12,10 +13,17 @@ from app import proxy
 from app.config import settings
 from app.database import engine
 from app.fetchers.base import FetchError
-from app.models import Extension, FetchLog
+from app.models import Extension, FetchLog, ThreatListEntry
 from app.retention import run_footprint_refresh, run_retention_prune
 from app.scheduler_state import mark_scheduler_run
-from app.services import fetch_and_store, fire_pending_alerts, recover_pending_alerts
+from app.services import (
+    apply_existing_threat_posture,
+    apply_threat_matches,
+    fetch_and_store,
+    fire_pending_alerts,
+    recover_pending_alerts,
+)
+from app.threat_feed import fetch_threat_feed
 
 logger = logging.getLogger(__name__)
 
@@ -87,6 +95,9 @@ async def _refresh_one(ext_id: int, client: httpx.AsyncClient) -> _Outcome:
             return _Outcome.GONE
         score_before = ext.risk_score
         try:
+            posture_events = await apply_existing_threat_posture(session, ext)
+            await session.refresh(ext)
+            await fire_pending_alerts(posture_events, ext, engine, client)
             ext, events = await fetch_and_store(ext, session, client)
             await session.commit()
         except (FetchError, httpx.TransportError) as exc:
@@ -236,6 +247,58 @@ async def refresh_watchlist(client: httpx.AsyncClient) -> None:
             _inflight.discard(task)
 
 
+async def refresh_threat_feed(client: httpx.AsyncClient) -> None:
+    """Pull the optional additive threat feed and apply new matches."""
+    if not settings.threat_feed_url:
+        return
+    try:
+        inputs = await fetch_threat_feed(
+            client,
+            settings.threat_feed_url,
+            default_source=settings.threat_feed_source,
+        )
+        async with AsyncSession(engine) as session:
+            for item in inputs:
+                statement = pg_insert(ThreatListEntry).values(
+                    store=item.store,
+                    extension_id=item.extension_id,
+                    source=item.source,
+                    reason=item.reason,
+                    added_at=datetime.now(timezone.utc),
+                )
+                if item.reason is None:
+                    statement = statement.on_conflict_do_nothing(constraint="uq_threatlistentry_identity")
+                else:
+                    statement = statement.on_conflict_do_update(
+                        constraint="uq_threatlistentry_identity",
+                        set_={"reason": item.reason},
+                    )
+                await session.execute(statement)
+            await session.flush()
+            stored: list[ThreatListEntry] = []
+            for item in inputs:
+                row = (
+                    await session.exec(
+                        select(ThreatListEntry).where(
+                            ThreatListEntry.store == item.store,
+                            ThreatListEntry.extension_id == item.extension_id,
+                            ThreatListEntry.source == item.source,
+                        )
+                    )
+                ).one()
+                stored.append(row)
+            transitions = await apply_threat_matches(session, stored)
+            await session.commit()
+            for ext, events in transitions:
+                await session.refresh(ext)
+                await fire_pending_alerts(events, ext, engine, client)
+        logger.info("Threat feed refresh complete (%d entries)", len(inputs))
+    except Exception:
+        # Keep the previous durable list and make the failure visible without
+        # aborting the extension refresh scheduler.
+        logger.exception("Threat feed refresh failed")
+
+
 def create_scheduler(client: httpx.AsyncClient) -> AsyncIOScheduler:
     scheduler = AsyncIOScheduler()
     scheduler.add_job(
@@ -252,6 +315,17 @@ def create_scheduler(client: httpx.AsyncClient) -> AsyncIOScheduler:
         # backlog to one run (#198).
         misfire_grace_time=None,
     )
+    if settings.threat_feed_url:
+        scheduler.add_job(
+            refresh_threat_feed,
+            trigger="interval",
+            hours=settings.threat_feed_interval_hours,
+            args=[client],
+            id="threat_feed_refresh",
+            replace_existing=True,
+            next_run_time=datetime.now(timezone.utc),
+            misfire_grace_time=None,
+        )
     # Daily data-retention prune, only when ICEBERG_EBS_RETENTION_DAYS is configured.
     # run_retention_prune is itself a no-op when disabled, but skipping the job
     # entirely avoids a pointless daily wakeup on the default (disabled) config.

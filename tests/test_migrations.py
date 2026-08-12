@@ -139,6 +139,7 @@ async def test_fresh_db_has_all_current_columns(temp_db):
     assert {"user_id", "destination_id"} <= _columns(temp_db, "alertlog")
     assert {"key_prefix", "key_suffix"} <= _columns(temp_db, "apikey")
     assert "install_footprint" in _columns(temp_db, "extension")  # #29
+    assert "threat_match" in _columns(temp_db, "extension")  # #31
     assert "installobservation" in _tables(temp_db)  # #29
     assert {"extension_id", "asset_id", "first_seen", "last_seen"} <= _columns(temp_db, "installobservation")
     assert "packagesnapshot" in _tables(temp_db)

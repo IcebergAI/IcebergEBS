@@ -71,6 +71,7 @@ def detect_changes(
     *,
     capability_old_version: str | None = None,
     capability_diff: dict[str, object] | None = None,
+    threat_match_detail: list[dict[str, object]] | None = None,
 ) -> list[ChangeEvent]:
     """Compare two Extension snapshots and return triggered change events.
 
@@ -78,6 +79,11 @@ def detect_changes(
     since there is no prior state to compare against.
     """
     if old.last_fetched_at is None:
+        # Deferred inventory enrollment creates a placeholder with no prior
+        # fetch. A threat-list ingestion is still a meaningful false→true
+        # transition and must not be swallowed as an ordinary first fetch.
+        if not old.threat_match and new.threat_match:
+            return [ChangeEvent("threat_match", None, threat_match_detail or {"matched": True})]
         return []
 
     events: list[ChangeEvent] = []
@@ -111,6 +117,9 @@ def detect_changes(
             )
         )
 
+    if not old.threat_match and new.threat_match:
+        events.append(ChangeEvent("threat_match", None, threat_match_detail or {"matched": True}))
+
     return events
 
 
@@ -125,6 +134,8 @@ def _alert_text(event_type: str, name: str, old: object, new: object) -> str:
         return f"IcebergEBS: {name} updated to version {new}"
     if event_type == "capability_change":
         return f"IcebergEBS: {name} update introduced new risky capabilities"
+    if event_type == "threat_match":
+        return f"IcebergEBS: {name} matched a known-bad extension threat list"
     return f"IcebergEBS: {name} — {event_type}"
 
 

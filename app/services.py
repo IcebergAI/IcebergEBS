@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 import anyio.to_thread
 import httpx
 from pydantic import ValidationError
+from sqlalchemy import func
 from sqlalchemy import update as sa_update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncEngine
@@ -13,15 +14,158 @@ from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.fetchers import get_fetcher
-from app.fetchers.base import ExtensionMetadata
+from app.fetchers.base import ExtensionMetadata, FetchError
 from app.inspector import InspectorError, PackageAnalysis, inspect_package
-from app.models import Extension, FetchLog, InstallCountHistory, PackageSnapshot
+from app.models import Extension, FetchLog, InstallCountHistory, PackageSnapshot, ThreatListEntry
 from app.notifications import ChangeEvent, detect_changes, fire_alerts
 from app.package_diff import diff_analysis
 from app.scoring import RiskDetail, compute_risk_score
+from app.threats import ThreatEntryInput, finding_for_entries
 from app.utils import json_list
 
 logger = logging.getLogger(__name__)
+
+
+def _identity_clause(column, store: str, extension_id: str):
+    """Match an extension identity without stranding legacy VS Code rows.
+
+    New enrollment canonicalizes VS Code identities, but deployments upgrading from
+    before that rule may still contain mixed-case rows.  Matching case-insensitively
+    keeps those rows visible without a destructive migration or history rewrite.
+    """
+    if store == "vscode":
+        return func.lower(column) == extension_id.lower()
+    return column == extension_id
+
+
+async def _threat_entries(session: AsyncSession, ext: Extension) -> list[ThreatListEntry]:
+    """Load the global threat assertions matching one extension identity."""
+    return (
+        await session.exec(
+            select(ThreatListEntry)
+            .where(
+                ThreatListEntry.store == ext.store,
+                _identity_clause(ThreatListEntry.extension_id, ext.store, ext.extension_id),
+            )
+            .order_by(ThreatListEntry.source, ThreatListEntry.id)
+        )
+    ).all()
+
+
+def _threat_detail(entries: list[ThreatListEntry]) -> list[dict[str, object]]:
+    return [{"source": e.source, "reason": e.reason} for e in entries]
+
+
+def _apply_threat_finding(ext: Extension, entries: list[ThreatListEntry]) -> None:
+    """Add/remove the synthetic finding without destroying package evidence."""
+    analysis = ext.analysis_dict()
+    finding = finding_for_entries([ThreatEntryInput(e.store, e.extension_id, e.source, e.reason) for e in entries])
+    if analysis is None:
+        if entries:
+            existing = analysis = ext.analysis_dict() or {}
+            findings = existing.get("findings") if isinstance(existing.get("findings"), list) else []
+            findings = [f for f in findings if not (isinstance(f, dict) and f.get("code") == "threat_match")]
+            findings.append(finding)
+            existing["findings"] = findings
+            ext.package_analysis = json.dumps(existing)
+        elif ext.package_analysis:
+            existing = ext.analysis_dict()
+            if existing is not None:
+                findings = existing.get("findings") if isinstance(existing.get("findings"), list) else []
+                existing["findings"] = [
+                    f for f in findings if not (isinstance(f, dict) and f.get("code") == "threat_match")
+                ]
+                ext.package_analysis = json.dumps(existing)
+        return
+    findings = analysis.get("findings")
+    findings = findings if isinstance(findings, list) else []
+    findings = [f for f in findings if not (isinstance(f, dict) and f.get("code") == "threat_match")]
+    if entries:
+        findings.append(finding)
+    analysis["findings"] = findings
+    ext.package_analysis = json.dumps(analysis)
+
+
+async def apply_threat_matches(
+    session: AsyncSession,
+    entries: list[ThreatListEntry],
+) -> list[tuple[Extension, list[ChangeEvent]]]:
+    """Apply newly ingested entries to tracked extensions in the same transaction.
+
+    The caller commits before invoking ``fire_pending_alerts``. This helper is
+    also used by the scheduled feed pull, keeping push and pull semantics equal.
+    """
+    identities = {(e.store, e.extension_id) for e in entries}
+    if not identities:
+        return []
+    result: list[tuple[Extension, list[ChangeEvent]]] = []
+    for store, extension_id in identities:
+        extension_ids = (
+            await session.exec(
+                select(Extension.id).where(
+                    Extension.store == store,
+                    _identity_clause(Extension.extension_id, store, extension_id),
+                )
+            )
+        ).all()
+        for extension_row_id in extension_ids:
+            # Lock before reading the threat rows. Concurrent feed writes use the
+            # same extension lock, so the post-lock SELECT sees all entries from a
+            # transaction that won the race and cannot overwrite its source detail
+            # or enqueue a duplicate false-to-true transition.
+            ext = (
+                await session.exec(
+                    select(Extension)
+                    .where(Extension.id == extension_row_id)
+                    .with_for_update()
+                    .execution_options(populate_existing=True)
+                )
+            ).one_or_none()
+            if ext is None:
+                continue
+            matches = (
+                await session.exec(
+                    select(ThreatListEntry)
+                    .where(
+                        ThreatListEntry.store == store,
+                        _identity_clause(ThreatListEntry.extension_id, store, extension_id),
+                    )
+                    .order_by(ThreatListEntry.source, ThreatListEntry.id)
+                )
+            ).all()
+            old = ext.model_copy()
+            ext.threat_match = bool(matches)
+            _apply_threat_finding(ext, matches)
+            if matches:
+                ext.risk_score = 100
+                detail = ext.risk_detail_dict() or {}
+                detail.setdefault("risk_level", "critical")
+                detail["total"] = 100
+                detail["risk_level"] = "critical"
+                ext.risk_detail = json.dumps(detail)
+            session.add(ext)
+            events = detect_changes(old, ext, threat_match_detail=_threat_detail(matches))
+            events = await _merge_pending_events(session, ext, events)
+            result.append((ext, events))
+    return result
+
+
+async def apply_existing_threat_posture(
+    session: AsyncSession,
+    ext: Extension,
+) -> list[ChangeEvent]:
+    """Persist a durable threat assertion before attempting a remote fetch."""
+    ext_id = ext.id
+    entries = await _threat_entries(session, ext)
+    if not entries:
+        return []
+    transitions = await apply_threat_matches(session, entries)
+    target_events = next(
+        (events for matched, events in transitions if matched.id == ext_id),
+        [],
+    )
+    await session.commit()
+    return target_events
 
 
 @dataclass
@@ -316,14 +460,8 @@ async def fetch_and_store(
     a failure FetchLog and handling the error appropriately.
     """
     fetcher = get_fetcher(ext.store, client)
-    score_before = ext.risk_score
-
-    # Snapshot state before any mutations for change detection
-    old_snap = ext.model_copy()
 
     metadata, pkg_bytes = await fetcher.fetch(ext.extension_id)
-
-    history = await _stage_install_reading(session, ext, metadata)
 
     analysis: PackageAnalysis | None = None
     if pkg_bytes:
@@ -341,6 +479,25 @@ async def fetch_and_store(
             # immutable evidence.
             analysis.analysis_complete = bool(getattr(fetcher, "package_complete", True))
 
+    # Serialize the final write with threat-list ingestion. Re-read both the
+    # extension and its entries after remote fetch/inspection so a concurrent
+    # ingestion cannot be overwritten by a stale normal score.
+    locked_ext = (
+        await session.exec(
+            select(Extension).where(Extension.id == ext.id).with_for_update().execution_options(populate_existing=True)
+        )
+    ).one_or_none()
+    if locked_ext is None:
+        raise FetchError("extension disappeared during refresh")
+    ext = locked_ext
+    score_before = ext.risk_score
+    old_snap = ext.model_copy()
+    threat_entries = await _threat_entries(session, ext)
+    threat_match = bool(threat_entries)
+    ext.threat_match = threat_match
+
+    history = await _stage_install_reading(session, ext, metadata)
+
     effective = _effective_values(ext, metadata, analysis)
 
     risk = compute_risk_score(
@@ -353,9 +510,11 @@ async def fetch_and_store(
         publisher_verified=metadata.publisher_verified,
         last_updated=effective.last_updated,
         analysis=analysis,
+        threat_match=threat_match,
     )
 
     _apply_fetch_results(ext, metadata, analysis, effective, risk)
+    _apply_threat_finding(ext, threat_entries)
     session.add(ext)
     capability_old_version, capability_diff = await _capture_package_snapshot(session, ext, analysis)
     session.add(
@@ -375,6 +534,7 @@ async def fetch_and_store(
             ext,
             capability_old_version=capability_old_version,
             capability_diff=capability_diff,
+            threat_match_detail=_threat_detail(threat_entries),
         )
     except Exception:
         logger.exception("Change detection failed for %s", ext.extension_id)

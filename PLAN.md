@@ -74,11 +74,13 @@ The headline differentiators. Backend-heavy; leverages the existing fetch/alert 
     findings. New alert event `capability_change` (a.k.a. "risky update") wired through the **existing**
     `detect_changes` → `fire_alerts` path; add it to `VALID_EVENT_TYPES`
     ([alerts.py](app/routes/api.py)) and `risk_level`/event docs. Surface the diff on the detail page.
-- **Malicious-extension feeds.**
-  - New model `ThreatListEntry(store, extension_id, source, reason, added_at)` + a loader (scheduled
-    pull *and* `POST /api/threatlist` so SOAR can push). Matcher in the score path forces **critical** +
-    a `threat_match` finding and fires a `threat_match` alert event. Reuses scoring override hook +
-    notifications.
+- ~~**Malicious-extension feeds.**~~ **Shipped (#31):**
+  - `ThreatListEntry(store, extension_id, source, reason, added_at)` is a global, idempotent assertion
+    store. Administrators/SOAR integrations can push bounded batches through `POST /api/threatlist`;
+    operators can also configure an additive HTTPS JSON feed.
+  - A current match forces **critical**, adds a stable `threat_match` finding, persists the transition,
+    and queues a `threat_match` alert only after the database commit. Feed failures retain the last known
+    list and never remove assertions implicitly.
 
 ## Phase 2 — Identity & governance (rollout gate)
 

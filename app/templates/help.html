@@ -132,6 +132,14 @@
       threat-intelligence APIs or submit packages; clicking an external lookup link sends the
       selected indicator to that service.
     </p>
+    <p class="text-[13.5px] leading-relaxed mt-3" style="color:var(--ink-soft)">
+      Administrators can push known-bad extension identities from a SOAR with
+      <span class="mono">POST /api/threatlist</span>. A match forces the extension to
+      <strong>critical</strong>, adds a <span class="mono">threat_match</span> finding, and
+      queues an alert after the database commit. Set
+      <span class="mono">ICEBERG_EBS_THREAT_FEED_URL</span> to enable an optional bounded,
+      HTTPS-only scheduled feed; pulls are additive and retain the previous list on failure.
+    </p>
   </div>
 
   <div class="surface p-6 mb-4">
@@ -206,7 +214,9 @@
       A rule fires when a monitored extension changes; a risky capability-change rule explains
       newly added permissions, remote code, domains, or static findings from a version update.
       Every destination on a matching rule is
-      delivered, and each delivery (success or failure) is recorded in the alert log.
+      delivered, and each delivery (success or failure) is recorded in the alert log. A
+      <span class="mono">threat_match</span> rule fires when a monitored extension is added to
+      a known-bad list.
     </p>
     <p class="text-[13.5px] mb-3" style="color:var(--ink-soft)">
       Destinations come in several <strong>kinds</strong>:
@@ -369,6 +379,21 @@
           <td class="mono" style="white-space:nowrap">ICEBERG_EBS_FETCH_INTERVAL_MINUTES</td>
           <td style="color:var(--muted)">60</td>
           <td style="color:var(--muted)">background refresh cadence</td>
+        </tr>
+        <tr>
+          <td class="mono" style="white-space:nowrap">ICEBERG_EBS_THREAT_FEED_URL</td>
+          <td style="color:var(--muted)">—</td>
+          <td style="color:var(--muted)">optional HTTPS JSON threat feed; pulls are additive and DNS-pinned</td>
+        </tr>
+        <tr>
+          <td class="mono" style="white-space:nowrap">ICEBERG_EBS_THREAT_FEED_SOURCE</td>
+          <td style="color:var(--muted)">operator-feed</td>
+          <td style="color:var(--muted)">source label for feed entries without one</td>
+        </tr>
+        <tr>
+          <td class="mono" style="white-space:nowrap">ICEBERG_EBS_THREAT_FEED_INTERVAL_HOURS</td>
+          <td style="color:var(--muted)">6</td>
+          <td style="color:var(--muted)">scheduled threat-feed pull cadence</td>
         </tr>
         <tr>
           <td class="mono" style="white-space:nowrap">ICEBERG_EBS_RETENTION_DAYS</td>
