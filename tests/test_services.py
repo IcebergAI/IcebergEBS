@@ -188,6 +188,7 @@ async def test_degraded_package_is_stored_for_baseline_but_not_snapshotted(test_
             ext = await session.get(Extension, ext_id)
             ext, events = await fetch_and_store(ext, session, http)
             await session.commit()
+            await session.refresh(ext)
 
     assert json.loads(ext.package_analysis)["analysis_complete"] is False
     assert {event.event_type for event in events} == {"new_version"}

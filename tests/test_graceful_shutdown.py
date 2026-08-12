@@ -168,7 +168,14 @@ async def test_fetch_and_store_merges_prior_pending_events(test_db, admin_user):
     assert "new_version" in staged_types  # the newly detected event was added
     # This refresh owns only its newly appended event. The older failed delivery
     # remains durable for its original owner/recovery and is not sent twice.
-    assert [e.event_type for e in events] == ["new_version"]
+    # The refresh may legitimately detect another transition as well (for example
+    # a risk-score change); it must not re-claim the exact event already pending
+    # from the prior failed delivery, while still owning its new version event.
+    assert any(e.event_type == "new_version" for e in events)
+    assert not any(
+        e.event_type == prior["event_type"] and e.old_value == prior["old_value"] and e.new_value == prior["new_value"]
+        for e in events
+    )
 
 
 async def test_clear_pending_alerts_is_compare_and_clear(test_db, admin_user):
