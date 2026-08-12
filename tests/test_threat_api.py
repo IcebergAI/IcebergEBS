@@ -6,6 +6,11 @@ from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.models import Extension
+from app.routes.api import normalise_extension_id
+
+
+def test_vscode_enrollment_identity_is_canonicalized():
+    assert normalise_extension_id("vscode", "Publisher.Extension") == "publisher.extension"
 
 
 async def test_threatlist_ingest_forces_existing_extension_critical(client, test_db, admin_user):

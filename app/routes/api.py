@@ -403,6 +403,10 @@ def _validate_extension_id(store: StoreType, extension_id: str) -> None:
 def normalise_extension_id(store: StoreType, raw: str) -> str:
     """Extract the store-native ID from a full URL or return raw as-is."""
     raw = raw.strip()
+    # VS Code publisher/extension identities are case-insensitive. Canonicalize
+    # enrollment so it uses the same key as threat-feed matching.
+    if store == "vscode":
+        raw = raw.lower()
     if not raw.startswith("http"):
         return raw
 
