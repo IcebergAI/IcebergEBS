@@ -8,6 +8,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.fetchers.base import ExtensionMetadata, FetchError
 from app.models import Extension, FetchLog, ThreatListEntry
+from app.routes.api import _InitialFetchHTTPError
 from tests.conftest import make_zip
 
 
@@ -443,6 +444,34 @@ async def test_unexpected_fetch_error_preserves_existing_threat_match(client, te
 
     async with AsyncSession(test_db) as session:
         stored = (await session.exec(select(Extension).where(Extension.extension_id == "testpub.crash-ext"))).one()
+        assert stored.threat_match is True
+        assert stored.risk_score == 100
+
+
+async def test_concurrent_threat_match_survives_initial_fetch_failure(client, test_db):
+    """A feed match committed during the fetch cannot be deleted as a placeholder."""
+
+    async def fail_after_concurrent_match(ext, _session, _client):
+        async with AsyncSession(test_db) as concurrent:
+            durable = await concurrent.get(Extension, ext.id)
+            assert durable is not None
+            durable.threat_match = True
+            durable.risk_score = 100
+            concurrent.add(durable)
+            await concurrent.commit()
+        raise _InitialFetchHTTPError(preserve_extension=False)
+
+    with patch("app.routes.api._fetch_and_score", new=fail_after_concurrent_match):
+        response = await client.post(
+            "/api/extensions",
+            json={"store": "vscode", "extension_id": "testpub.concurrent-threat"},
+        )
+
+    assert response.status_code == 502
+    async with AsyncSession(test_db) as session:
+        stored = (
+            await session.exec(select(Extension).where(Extension.extension_id == "testpub.concurrent-threat"))
+        ).one()
         assert stored.threat_match is True
         assert stored.risk_score == 100
 

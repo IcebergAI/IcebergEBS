@@ -619,9 +619,14 @@ async def _enroll_extension(
     except HTTPException as exc:
         # Threat posture is durable and must survive a failed initial store fetch.
         # A delisted or unreachable known-bad package is still a monitored critical
-        # extension; deleting it here would also cascade its audit alerts.  Only
-        # discard a genuinely unanalysed placeholder with no threat assertion.
-        if not getattr(exc, "preserve_extension", False):
+        # extension; deleting it here would also cascade its audit alerts. The
+        # assertion may have been committed by a concurrent threat-feed ingestion
+        # after _fetch_and_score's initial posture check, so re-read the row under
+        # a lock before deciding that it is an unanalysed placeholder (#31).
+        await session.rollback()
+        durable = await session.get(Extension, ext_id, with_for_update=True, populate_existing=True)
+        preserve = bool(getattr(exc, "preserve_extension", False)) or bool(durable is not None and durable.threat_match)
+        if not preserve:
             await _discard_placeholder(session, ext_id)
         return {"store": store, "extension_id": extension_id, "status": "error", "detail": exc.detail}
     except Exception as exc:
