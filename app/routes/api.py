@@ -624,7 +624,7 @@ async def _enroll_extension(
         if not getattr(exc, "preserve_extension", False):
             await _discard_placeholder(session, ext_id)
         return {"store": store, "extension_id": extension_id, "status": "error", "detail": exc.detail}
-    except Exception:
+    except Exception as exc:
         # An unexpected failure (inspector bug, DB error, …) must not leave an
         # unscored placeholder on the watchlist — the exact state the FetchError
         # cleanup above prevents (#75). Roll back the poisoned transaction first,
@@ -637,9 +637,9 @@ async def _enroll_extension(
             await _discard_placeholder(session, ext_id)
         else:
             logger.error(
-                "Unexpected initial fetch failure; retaining threat-matched extension %d",
+                "Unexpected initial fetch failure; retaining threat-matched extension %d (type=%s)",
                 ext_id,
-                exc_info=True,
+                type(exc).__name__,
             )
         # Re-raise so a genuine bug still surfaces as a 500. The monitored row is
         # intentionally retained when its critical threat posture was committed.
