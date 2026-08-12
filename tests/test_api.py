@@ -7,7 +7,7 @@ from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.fetchers.base import ExtensionMetadata, FetchError
-from app.models import Extension, FetchLog
+from app.models import Extension, FetchLog, ThreatListEntry
 from tests.conftest import make_zip
 
 
@@ -392,6 +392,33 @@ async def test_add_extension_fetch_failure_leaves_no_placeholder(client):
     r_list = await client.get("/api/extensions")
     assert r_list.status_code == 200
     assert all(e["extension_id"] != "testpub.ghost-ext" for e in r_list.json()["items"])
+
+
+async def test_failed_fetch_preserves_existing_threat_match(client, test_db):
+    """A delisted known-bad package remains on the watchlist after fetch failure."""
+    async with AsyncSession(test_db) as session:
+        session.add(
+            ThreatListEntry(
+                source="soc-feed",
+                store="vscode",
+                extension_id="testpub.delisted-ext",
+                reason="confirmed malicious",
+            )
+        )
+        await session.commit()
+
+    with patch("app.fetchers.VSCodeFetcher") as MockFetcher:
+        MockFetcher.return_value.fetch = AsyncMock(side_effect=FetchError("delisted"))
+        response = await client.post(
+            "/api/extensions",
+            json={"store": "vscode", "extension_id": "testpub.delisted-ext"},
+        )
+
+    assert response.status_code == 502
+    async with AsyncSession(test_db) as session:
+        stored = (await session.exec(select(Extension).where(Extension.extension_id == "testpub.delisted-ext"))).one()
+        assert stored.threat_match is True
+        assert stored.risk_score == 100
 
 
 async def test_add_extension_duplicate(client):

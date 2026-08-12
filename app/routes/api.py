@@ -608,7 +608,12 @@ async def _enroll_extension(
     try:
         scored = await _fetch_and_score(ext, session, client)
     except HTTPException as exc:
-        await _discard_placeholder(session, ext_id)
+        # Threat posture is durable and must survive a failed initial store fetch.
+        # A delisted or unreachable known-bad package is still a monitored critical
+        # extension; deleting it here would also cascade its audit alerts.  Only
+        # discard a genuinely unanalysed placeholder with no threat assertion.
+        if not ext.threat_match:
+            await _discard_placeholder(session, ext_id)
         return {"store": store, "extension_id": extension_id, "status": "error", "detail": exc.detail}
     except Exception:
         # An unexpected failure (inspector bug, DB error, …) must not leave an
