@@ -52,3 +52,10 @@ The one-line summary stays there; everything below auto-loads when editing
 4. `compute_risk_score()` calculates the risk breakdown
 5. Extension record, FetchLog, and InstallCountHistory are staged; `detect_changes()` compares the pre-fetch snapshot against the updated record; `fetch_and_store` returns `(ext, events)`
 6. The caller **commits**, `session.refresh(ext)`, then calls `fire_pending_alerts(events, ext, engine, client)` → `fire_alerts()` POSTs webhooks and commits `AlertLog` rows in its own session, decoupled from the caller's transaction. This ordering is mandatory: `fire_alerts`' second session must not run inside the caller's open write transaction
+
+Threat-list flow (#31): an administrator/SOAR `POST /api/threatlist` or the optional
+HTTPS feed upserts global `ThreatListEntry` assertions, applies matching extensions'
+critical posture and synthetic finding in the same transaction, then commits before
+`fire_pending_alerts`. The scheduled pull is additive and never removes prior
+assertions on a feed error; `Extension.threat_match` records the transition so a
+`threat_match` event is not emitted repeatedly on every refresh.

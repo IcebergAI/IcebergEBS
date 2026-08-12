@@ -164,6 +164,7 @@ def compute_risk_score(
     publisher_verified: bool | None,
     last_updated: datetime | None,
     analysis: PackageAnalysis | None,
+    threat_match: bool = False,
 ) -> RiskDetail:
     p = score_permissions(permissions, host_permissions)
     pop = score_popularity(install_count, install_history)
@@ -173,7 +174,7 @@ def compute_risk_score(
     domains = score_external_domains(analysis)
 
     total = min(p + pop + pub + stale + code + domains, 100)
-    return RiskDetail(
+    result = RiskDetail(
         permissions=p,
         popularity=pop,
         publisher=pub,
@@ -183,6 +184,12 @@ def compute_risk_score(
         total=total,
         risk_level=risk_level(total),
     )
+    if threat_match:
+        # A trusted external assertion must never be diluted by heuristic
+        # scoring. Keep the normal signal breakdown for explanation, but force
+        # the aggregate posture to the critical band.
+        return result._replace(total=100, risk_level="critical")
+    return result
 
 
 # Ordered (band, inclusive lower bound) pairs — THE single home of the score→band

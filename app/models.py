@@ -120,6 +120,11 @@ class Extension(SQLModel, table=True):
     # the next scheduler cycle rather than lost (#109). JSON list of
     # {event_type, old_value, new_value}; cleared once fire_alerts has processed them.
     pending_alert_events: Optional[str] = None
+    # Global known-bad threat-list state. Persisting the transition lets the
+    # alert pipeline emit one threat_match event rather than re-alerting every
+    # scheduler cycle, and keeps the match explainable when package bytes are
+    # temporarily unavailable.
+    threat_match: bool = False
 
     # Typed accessors for the JSON-in-str columns above (#167): each owns the one
     # defensive parse (missing / unparsable / wrong-shape → a safe fallback) so
@@ -231,6 +236,29 @@ class InstallObservation(SQLModel, table=True):
     last_seen: datetime = Field(default_factory=_utcnow, sa_column=_tz_column(nullable=False))
 
 
+class ThreatListEntry(SQLModel, table=True):
+    """An externally asserted known-bad extension identity.
+
+    Entries are global to the deployment, not owned by one watchlist user: a
+    SOAR feed must protect every user's monitored copy of the same extension.
+    The source participates in the unique key so independent feeds can explain
+    the same match without overwriting one another.
+    """
+
+    __table_args__ = (
+        UniqueConstraint("store", "extension_id", "source", name="uq_threatlistentry_identity"),
+        Index("ix_threatlistentry_extension", "store", "extension_id"),
+        CheckConstraint("store IN ('chrome', 'vscode', 'edge')", name="ck_threatlistentry_store"),
+    )
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    store: str
+    extension_id: str
+    source: str
+    reason: Optional[str] = None
+    added_at: datetime = Field(default_factory=_utcnow, sa_column=_tz_column(nullable=False))
+
+
 class AlertDestination(SQLModel, table=True):
     # A destination is one delivery channel of a given ``kind`` (#37): webhook (the
     # backwards-compatible default), slack, teams, email, jira, servicenow. The set
@@ -268,7 +296,9 @@ class AlertRule(SQLModel, table=True):
     user_id: int = Field(foreign_key="user.id", ondelete="CASCADE", index=True)
     destination_id: int = Field(foreign_key="alertdestination.id", ondelete="CASCADE", index=True)
     extension_id: Optional[int] = Field(default=None, foreign_key="extension.id", ondelete="CASCADE")
-    event_type: str  # "risk_level_change" | "publisher_change" | "permission_change" | "new_version"
+    event_type: (
+        str  # risk_level_change | publisher_change | permission_change | new_version | capability_change | threat_match
+    )
     enabled: bool = True
     created_at: datetime = Field(default_factory=_utcnow, sa_column=_tz_column(nullable=False))
 

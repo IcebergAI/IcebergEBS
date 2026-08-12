@@ -23,6 +23,11 @@ class Settings(BaseSettings):
     oidc_id_token_cookie_name: str = "iceberg_ebs_idt"
     secure_cookies: bool = True
     fetch_interval_minutes: int = 60
+    # Optional operator-managed JSON threat feed. Pulls are additive and are
+    # applied on the scheduler so a feed outage cannot erase known-bad state.
+    threat_feed_url: str = ""
+    threat_feed_source: str = "operator-feed"
+    threat_feed_interval_hours: int = 6
     httpx_timeout: float = 15.0
     # Graceful-shutdown drain window (#109): how long to await an in-flight watchlist refresh
     # before giving up and letting the durable pending-alert marker cover the rest on restart.
@@ -186,6 +191,15 @@ class Settings(BaseSettings):
                 '(generate one with: python -c "import secrets; print(secrets.token_hex(32))")'
             )
         return v
+
+    @field_validator("threat_feed_url")
+    @classmethod
+    def _validate_threat_feed_url(cls, v: str) -> str:
+        if not v:
+            return v
+        from app.threats import validate_feed_url
+
+        return validate_feed_url(v)
 
 
 settings = Settings()

@@ -9,7 +9,7 @@ from urllib.parse import parse_qs, urlparse
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import JSONResponse, Response
-from pydantic import BaseModel, StringConstraints
+from pydantic import BaseModel, Field, StringConstraints
 from sqlalchemy import func
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
@@ -18,14 +18,15 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app import proxy
 from app.database import engine
-from app.deps import CurrentUser, SessionDep, get_owned_or_404
+from app.deps import AdminUser, CurrentUser, SessionDep, get_owned_or_404
 from app.extension_queries import ExtensionFilters, build_extension_query, count_rows, exposure
 from app.fetchers.base import FetchError
-from app.models import Extension, FetchLog, InstallCountHistory, InstallObservation
+from app.models import Extension, FetchLog, InstallCountHistory, InstallObservation, ThreatListEntry
 from app.retention import freshness_cutoff
 from app.scoring import risk_level
-from app.services import fetch_and_store, fire_pending_alerts
+from app.services import apply_threat_matches, fetch_and_store, fire_pending_alerts
 from app.threat_intel import build_threat_intel_indicators
+from app.threats import MAX_FEED_ENTRIES, normalize_entry
 from app.utils import host_permissions_of, json_list
 
 logger = logging.getLogger(__name__)
@@ -133,6 +134,7 @@ class ExtensionOut(BaseModel):
     risk_score: int | None
     risk_detail: dict | None
     risk_level: str | None
+    threat_match: bool
     install_footprint: int | None
     exposure: int | None  # risk_score × install_footprint, or None if either is unset
     findings: list[PackageFindingOut]
@@ -163,6 +165,16 @@ class ExtensionOut(BaseModel):
             if isinstance(findings_raw, list)
             else []
         )
+        if ext.threat_match and not any(f.code == "threat_match" for f in findings):
+            findings.append(
+                PackageFindingOut(
+                    code="threat_match",
+                    severity="critical",
+                    title="Known-bad extension matched a threat list",
+                    detail="The extension is present in a configured threat list.",
+                    source="threat_list",
+                )
+            )
         threat_intel_indicators = build_threat_intel_indicators(analysis_raw) if include_threat_intel else []
         detail = ext.risk_detail_dict()
         return cls(
@@ -184,6 +196,7 @@ class ExtensionOut(BaseModel):
             risk_score=ext.risk_score,
             risk_detail=detail,
             risk_level=risk_level(ext.risk_score),
+            threat_match=ext.threat_match,
             install_footprint=ext.install_footprint,
             exposure=exposure(ext.risk_score, ext.install_footprint),
             findings=findings,
@@ -272,6 +285,90 @@ class WatchlistPatch(BaseModel):
 class HistoryPoint(BaseModel):
     recorded_at: datetime
     install_count: int
+
+
+class ThreatListItem(BaseModel):
+    store: str
+    extension_id: str
+    source: str | None = None
+    reason: str | None = None
+
+
+class ThreatListBatch(BaseModel):
+    entries: list[ThreatListItem] = Field(min_length=1, max_length=MAX_FEED_ENTRIES)
+    source: str = Field(default="soar", min_length=1, max_length=128)
+
+
+class ThreatListResult(BaseModel):
+    accepted: int
+    matched_extensions: int
+    alerts_queued: int
+
+
+@router.post("/threatlist", status_code=202)
+async def ingest_threatlist(
+    body: ThreatListBatch,
+    _: AdminUser,
+    request: Request,
+    session: SessionDep,
+) -> ThreatListResult:
+    """Idempotently ingest known-bad extension assertions from a SOAR/feed.
+
+    The write and score transition share one database transaction. Alert
+    delivery is intentionally deferred until after that commit, matching the
+    normal refresh pipeline's durable pending-event contract.
+    """
+    normalized = []
+    for item in body.entries:
+        try:
+            normalized.append(normalize_entry(item.store, item.extension_id, item.source or body.source, item.reason))
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    for item in normalized:
+        statement = pg_insert(ThreatListEntry).values(
+            store=item.store,
+            extension_id=item.extension_id,
+            source=item.source,
+            reason=item.reason,
+        )
+        if item.reason is None:
+            statement = statement.on_conflict_do_nothing(constraint="uq_threatlistentry_identity")
+        else:
+            statement = statement.on_conflict_do_update(
+                constraint="uq_threatlistentry_identity",
+                set_={"reason": item.reason},
+            )
+        await session.execute(statement)
+    await session.flush()
+
+    stored: list[ThreatListEntry] = []
+    for item in normalized:
+        row = (
+            await session.exec(
+                select(ThreatListEntry).where(
+                    ThreatListEntry.store == item.store,
+                    ThreatListEntry.extension_id == item.extension_id,
+                    ThreatListEntry.source == item.source,
+                )
+            )
+        ).one()
+        stored.append(row)
+
+    transitions = await apply_threat_matches(session, stored)
+    await session.commit()
+    client: httpx.AsyncClient = request.app.state.http_client
+    alerts_queued = 0
+    for ext, events in transitions:
+        await session.refresh(ext)
+        alerts_queued += sum(event.event_type == "threat_match" for event in events)
+        await fire_pending_alerts(events, ext, engine, client)
+
+    return ThreatListResult(
+        accepted=len(normalized),
+        matched_extensions=len(transitions),
+        alerts_queued=alerts_queued,
+    )
 
 
 # ---------------------------------------------------------------------------

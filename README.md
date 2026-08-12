@@ -86,6 +86,9 @@ All settings use the `ICEBERG_EBS_` prefix and can be set via `.env` or environm
 | `ICEBERG_EBS_SESSION_MAX_AGE` | `86400` | Session lifetime in seconds |
 | `ICEBERG_EBS_OIDC_SESSION_MAX_AGE` | `3600` | Session lifetime (seconds) for SSO-authenticated users — deliberately shorter than `SESSION_MAX_AGE` so an IdP-side disable is bounded |
 | `ICEBERG_EBS_FETCH_INTERVAL_MINUTES` | `60` | Background watchlist refresh cadence |
+| `ICEBERG_EBS_THREAT_FEED_URL` | — | Optional HTTPS JSON threat feed (additive, DNS-pinned pulls) |
+| `ICEBERG_EBS_THREAT_FEED_SOURCE` | `operator-feed` | Source label when feed rows omit one |
+| `ICEBERG_EBS_THREAT_FEED_INTERVAL_HOURS` | `6` | Threat-feed refresh cadence |
 | `ICEBERG_EBS_RETENTION_DAYS` | `0` | Prune `FetchLog`/`InstallCountHistory`/`AlertLog` rows older than N days (`0` = disabled) |
 | `ICEBERG_EBS_INVENTORY_FRESHNESS_DAYS` | `30` | Observations not re-seen within N days stop counting toward `install_footprint`/exposure (`0` = disabled) |
 | `ICEBERG_EBS_API_KEY_SSO_MAX_AGE_DAYS` | `30` | Max age of an API key owned by an SSO account before it expires |
@@ -105,7 +108,16 @@ Paste a full store URL or a bare ID on the Add extension page — the store is a
 
 ## Alerts & webhooks
 
-Configure destinations (webhook URLs) and alert rules under **Account → Alerts & webhooks**. Rules fire on four event types: `risk_level_change`, `publisher_change`, `permission_change`, `new_version`. Each rule can be scoped to all extensions or a specific one and toggled independently.
+Configure destinations (webhook URLs) and alert rules under **Account → Alerts & webhooks**. Rules fire on six event types: `risk_level_change`, `publisher_change`, `permission_change`, `new_version`, `capability_change`, and `threat_match`. Each rule can be scoped to all extensions or a specific one and toggled independently.
+
+Administrators and SOAR integrations can submit known-bad extension assertions with
+`POST /api/threatlist` using an admin session or bearer API key. The request body is
+`{"source":"feed-name","entries":[{"store":"chrome","extension_id":"…","reason":"…"}]}`.
+Entries are idempotent per store, ID, and source. A matching monitored extension is
+immediately marked critical, receives a `threat_match` finding, and queues a durable
+alert after the database commit. Optional scheduled feeds use the HTTPS-only
+`ICEBERG_EBS_THREAT_FEED_URL`; pulls are additive, bounded, redirect-free, and
+preserve the last known list when a pull fails.
 
 Example payload:
 

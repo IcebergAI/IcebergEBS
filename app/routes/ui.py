@@ -634,6 +634,18 @@ async def extension_detail(
             package_analysis.setdefault(key, default)
         if not isinstance(package_analysis.get("findings"), list):
             package_analysis["findings"] = []
+        if ext.threat_match and not any(
+            isinstance(f, dict) and f.get("code") == "threat_match" for f in package_analysis["findings"]
+        ):
+            package_analysis["findings"].append(
+                {
+                    "code": "threat_match",
+                    "severity": "critical",
+                    "title": "Known-bad extension matched a threat list",
+                    "detail": "The extension is present in a configured threat list.",
+                    "source": "threat_list",
+                }
+            )
         package_analysis["grouped_findings"] = group_detection_findings(package_analysis["findings"])
     # Tier every rendered permission tag from the app.permissions sets — the single
     # source shared with the scorer/inspector (#63) — instead of Jinja re-inlining

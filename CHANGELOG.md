@@ -17,6 +17,11 @@ release version; only the SemVer part appears here.
 
 ### Added
 
+- **Known-bad extension threat lists (#31)** — administrators and SOAR integrations can submit bounded,
+  idempotent `POST /api/threatlist` batches. Matching monitored extensions are forced to critical,
+  receive a `threat_match` finding, and queue a post-commit alert. An optional HTTPS-only scheduled JSON
+  feed is DNS-pinned, redirect-free, additive, and retains the last known list on failure.
+
 - **Risky update intelligence** (#30): successful package analysis is retained per extension
   version, and a new `capability_change` alert reports newly added permissions, remote code,
   domains, or static findings. The extension detail page shows the latest explainable update
