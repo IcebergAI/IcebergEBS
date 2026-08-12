@@ -126,6 +126,21 @@
   </div>
   {% endif %}
 
+  {% if capability_diff %}
+  <div class="surface p-5" style="border-left:3px solid var(--risk-high)">
+    <div class="flex items-center justify-between gap-3 flex-wrap">
+      <h2 class="section-title" style="margin:0">Risky update detected</h2>
+      <span class="mono text-[11.5px]" style="color:var(--muted)">v{{ capability_versions.old }} → v{{ capability_versions.new }}</span>
+    </div>
+    <div class="mt-3 flex flex-col gap-2 text-[13px]" style="color:var(--ink-soft)">
+      {% if capability_diff.added_permissions %}<div><strong style="color:var(--ink)">Added permissions:</strong> {{ capability_diff.added_permissions | join(', ') }}</div>{% endif %}
+      {% if capability_diff.remote_code_enabled %}<div><strong style="color:var(--ink)">Remote code:</strong> newly detected</div>{% endif %}
+      {% if capability_diff.added_domains %}<div><strong style="color:var(--ink)">New domains:</strong> {{ capability_diff.added_domains | join(', ') }}</div>{% endif %}
+      {% if capability_diff.new_findings %}<div><strong style="color:var(--ink)">New findings:</strong> {{ capability_diff.new_findings | length }}</div>{% endif %}
+    </div>
+  </div>
+  {% endif %}
+
   {# Score breakdown + Package summary #}
   <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
     {% if risk_detail %}

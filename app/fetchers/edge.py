@@ -56,8 +56,11 @@ class EdgeFetcher(BaseFetcher):
     async def fetch(self, extension_id: str) -> tuple[ExtensionMetadata, bytes | None]:
         """Single API call for metadata; manifest from the response guarantees permissions
         are always available. Attempts a full CRX download for JS static analysis —
-        falls back to the manifest-only package if the download fails.
+        falls back to the manifest-only package if the download fails. The fallback is
+        explicitly marked degraded so it can provide baseline permission data without
+        being mistaken for a complete package snapshot.
         """
+        self.package_complete = True
         data = await self._call_api(extension_id)
         metadata = _parse_response(data, extension_id)
         logger.info(
@@ -71,6 +74,7 @@ class EdgeFetcher(BaseFetcher):
         manifest_str = data.get("manifest", "")
         if manifest_str:
             pkg_bytes: bytes | None = _manifest_to_zip(manifest_str)
+            self.package_complete = False
             logger.debug("Edge manifest-only package built (%d bytes)", len(pkg_bytes))
         else:
             pkg_bytes = None
@@ -78,6 +82,7 @@ class EdgeFetcher(BaseFetcher):
 
         try:
             pkg_bytes = await self.download_package(extension_id)
+            self.package_complete = True
             logger.info("Edge CRX downloaded for %s (%d bytes)", extension_id, len(pkg_bytes))
         except (FetchError, httpx.HTTPError) as exc:
             # edge.microsoft.com/extensionwebstorebase currently returns HTTP 500 for all

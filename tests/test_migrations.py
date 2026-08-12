@@ -141,6 +141,12 @@ async def test_fresh_db_has_all_current_columns(temp_db):
     assert "install_footprint" in _columns(temp_db, "extension")  # #29
     assert "installobservation" in _tables(temp_db)  # #29
     assert {"extension_id", "asset_id", "first_seen", "last_seen"} <= _columns(temp_db, "installobservation")
+    assert "packagesnapshot" in _tables(temp_db)
+    assert {"extension_id", "version", "package_sha256", "analysis_json", "captured_at"} <= _columns(
+        temp_db, "packagesnapshot"
+    )
+    indexes = {index["name"] for index in _indexes(temp_db, "packagesnapshot")}
+    assert "ix_package_snapshot_extension_captured" in indexes
 
 
 async def test_fresh_db_indexes_recent_install_history_lookup(temp_db):

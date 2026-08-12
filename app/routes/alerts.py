@@ -19,7 +19,13 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api", tags=["alerts"])
 
-VALID_EVENT_TYPES = {"risk_level_change", "publisher_change", "permission_change", "new_version"}
+VALID_EVENT_TYPES = {
+    "risk_level_change",
+    "publisher_change",
+    "permission_change",
+    "new_version",
+    "capability_change",
+}
 
 
 async def _validate_destination(kind: str, target: str, config: dict[str, str]) -> None:

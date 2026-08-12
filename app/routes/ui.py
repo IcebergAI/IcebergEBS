@@ -1,3 +1,4 @@
+import json
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Annotated, Callable
@@ -36,10 +37,20 @@ from app.extension_queries import (
 )
 from app.findings_view import group_detection_findings
 from app.inspector import PackageAnalysis
-from app.models import AlertDestination, AlertRule, ApiKey, Extension, FetchLog, InstallObservation, User
+from app.models import (
+    AlertDestination,
+    AlertRule,
+    ApiKey,
+    Extension,
+    FetchLog,
+    InstallObservation,
+    PackageSnapshot,
+    User,
+)
 from app.oidc import service as oidc_service
 from app.oidc.config import EDITABLE_FIELDS as OIDC_EDITABLE_FIELDS
 from app.oidc.config import client_secret_status
+from app.package_diff import diff_analysis
 from app.permissions import host_permission_tier, permission_tier
 from app.ratelimit import login_limiter
 from app.retention import freshness_cutoff
@@ -583,6 +594,26 @@ async def extension_detail(
     permissions = ext.permissions_list()
     risk_detail = ext.risk_detail_dict()
     package_analysis = ext.analysis_dict()
+    snapshots = (
+        await session.exec(
+            select(PackageSnapshot)
+            .where(PackageSnapshot.extension_id == ext_id)
+            .order_by(PackageSnapshot.captured_at.desc(), PackageSnapshot.id.desc())
+            .limit(2)
+        )
+    ).all()
+    capability_diff = None
+    capability_versions = None
+    if len(snapshots) == 2:
+        try:
+            newer = json.loads(snapshots[0].analysis_json)
+            older = json.loads(snapshots[1].analysis_json)
+        except json.JSONDecodeError:
+            newer, older = {}, {}
+        if isinstance(newer, dict) and isinstance(older, dict):
+            capability_diff = diff_analysis(older, newer)
+            if capability_diff:
+                capability_versions = {"old": snapshots[1].version, "new": snapshots[0].version}
 
     # Shape guard (#150/#291): a stored host_permissions that is a non-list container or
     # carries non-string members must not reach the tier classifier (whose set membership
@@ -689,6 +720,8 @@ async def extension_detail(
             "risk_detail": risk_detail,
             "risk_rows": risk_rows,
             "package_analysis": package_analysis,
+            "capability_diff": capability_diff,
+            "capability_versions": capability_versions,
             "threat_intel_indicators": threat_intel_indicators,
             "threat_intel_primary_indicators": threat_intel_primary_indicators,
             "threat_intel_referenced_indicators": threat_intel_referenced_indicators,

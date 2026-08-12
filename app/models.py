@@ -148,6 +148,22 @@ class Extension(SQLModel, table=True):
         """Stored risk_detail breakdown as a dict, or None when absent/malformed/not an object."""
         return json_object(self.risk_detail, "risk_detail", self.id)
 
+
+class PackageSnapshot(SQLModel, table=True):
+    """Immutable successful package analysis for one observed extension version."""
+
+    __table_args__ = (
+        UniqueConstraint("extension_id", "version", name="uq_package_snapshot_extension_version"),
+        Index("ix_package_snapshot_extension_captured", "extension_id", desc("captured_at"), desc("id")),
+    )
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    extension_id: int = Field(foreign_key="extension.id", ondelete="CASCADE", index=True)
+    version: str
+    package_sha256: str
+    analysis_json: str
+    captured_at: datetime = Field(default_factory=_utcnow, sa_column=_tz_column(nullable=False))
+
     # The pending_alert_events marker is decoded by services._parse_pending_events, which
     # returns typed ChangeEvents (defined in notifications.py, so it can't live here without
     # a circular import) and drops non-dict *and* malformed-event entries in one place (#197).

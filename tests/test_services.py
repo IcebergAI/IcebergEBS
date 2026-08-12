@@ -15,11 +15,13 @@ import httpx
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
+import app.services as services
 from app.fetchers.base import ExtensionMetadata
 from app.inspector import PackageAnalysis
-from app.models import Extension, InstallCountHistory
+from app.models import Extension, InstallCountHistory, PackageSnapshot
+from app.notifications import ChangeEvent
 from app.scoring import compute_risk_score
-from app.services import _apply_fetch_results, _effective_values, fetch_and_store
+from app.services import _apply_fetch_results, _effective_values, _merge_pending_events, fetch_and_store
 from tests.conftest import make_fake_crx, make_zip
 
 RECENT = datetime.now(timezone.utc) - timedelta(days=5)
@@ -131,6 +133,90 @@ async def test_zero_install_count_is_real_data(test_db, admin_user):
     ext, _ = await _fetch(test_db, ext_id, _meta(install_count=0))
     assert ext.install_count == 0
     assert await _history_count(test_db, ext_id) == 1
+
+
+async def test_versioned_snapshot_emits_capability_change_once(test_db, admin_user):
+    ext_id = await _make_ext(test_db, admin_user.id)
+    first = make_fake_crx({"manifest_version": 3, "name": "x", "version": "1.0", "permissions": ["storage"]})
+    await _fetch(test_db, ext_id, _meta(version="1.0"), pkg=first)
+    second = make_fake_crx({"manifest_version": 3, "name": "x", "version": "2.0", "permissions": ["storage", "tabs"]})
+    _, events = await _fetch(test_db, ext_id, _meta(version="2.0"), pkg=second)
+    capability = next(event for event in events if event.event_type == "capability_change")
+    assert capability.new_value["diff"]["added_permissions"] == ["tabs"]
+    async with AsyncSession(test_db) as session:
+        snapshots = (
+            await session.exec(
+                select(PackageSnapshot).where(PackageSnapshot.extension_id == ext_id).order_by(PackageSnapshot.version)
+            )
+        ).all()
+    assert [snapshot.version for snapshot in snapshots] == ["1.0", "2.0"]
+    _, duplicate_events = await _fetch(test_db, ext_id, _meta(version="2.0"), pkg=second)
+    # The first refresh owns delivery of the durable marker. A repeated refresh
+    # must not return that already-owned marker to a second caller, otherwise two
+    # concurrent/manual refreshes can deliver the same webhook twice. Recovery
+    # still sees the marker if the first delivery failed.
+    assert duplicate_events == []
+
+
+async def test_snapshot_uses_inspected_package_version_when_store_version_missing(test_db, admin_user):
+    """The package identity must not fall back to a stale extension version."""
+    ext_id = await _make_ext(test_db, admin_user.id, version="1.0")
+    package = make_fake_crx({"manifest_version": 3, "name": "x", "version": "2.0", "permissions": ["storage"]})
+
+    ext, _ = await _fetch(test_db, ext_id, _meta(version=""), pkg=package)
+
+    assert ext.version == "2.0"
+    async with AsyncSession(test_db) as session:
+        snapshots = (await session.exec(select(PackageSnapshot).where(PackageSnapshot.extension_id == ext_id))).all()
+    assert [snapshot.version for snapshot in snapshots] == ["2.0"]
+
+
+async def test_degraded_package_is_stored_for_baseline_but_not_snapshotted(test_db, admin_user, monkeypatch):
+    """A manifest-only fallback must never become trusted immutable evidence."""
+    ext_id = await _make_ext(test_db, admin_user.id, store="edge", version="1.0", last_fetched_at=RECENT)
+    package = make_fake_crx({"manifest_version": 3, "name": "x", "version": "2.0", "permissions": ["tabs"]})
+
+    class DegradedFetcher:
+        package_complete = False
+
+        async def fetch(self, _extension_id):
+            return _meta(version="2.0"), package
+
+    monkeypatch.setattr(services, "get_fetcher", lambda _store, _client: DegradedFetcher())
+    async with httpx.AsyncClient() as http:
+        async with AsyncSession(test_db) as session:
+            ext = await session.get(Extension, ext_id)
+            ext, events = await fetch_and_store(ext, session, http)
+            await session.commit()
+            await session.refresh(ext)
+
+    assert json.loads(ext.package_analysis)["analysis_complete"] is False
+    assert {event.event_type for event in events} == {"new_version"}
+    async with AsyncSession(test_db) as session:
+        snapshots = (await session.exec(select(PackageSnapshot).where(PackageSnapshot.extension_id == ext_id))).all()
+    assert snapshots == []
+
+
+async def test_duplicate_pending_event_is_not_claimed_by_second_refresh(test_db, admin_user):
+    """Only the refresh that appends an event may return it for delivery."""
+    ext_id = await _make_ext(test_db, admin_user.id)
+    event = ChangeEvent("new_version", "1.0", "2.0")
+
+    async with AsyncSession(test_db) as session:
+        ext = await session.get(Extension, ext_id)
+        first = await _merge_pending_events(session, ext, [event])
+        await session.commit()
+
+    async with AsyncSession(test_db) as session:
+        ext = await session.get(Extension, ext_id)
+        second = await _merge_pending_events(session, ext, [event])
+        await session.commit()
+
+    assert first == [event]
+    assert second == []
+    async with AsyncSession(test_db) as session:
+        stored = await session.get(Extension, ext_id)
+    assert stored.pending_alert_events is not None
 
 
 async def test_first_fetch_with_partial_metadata(test_db, admin_user):

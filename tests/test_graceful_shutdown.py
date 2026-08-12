@@ -21,6 +21,7 @@ from app.fetchers.base import ExtensionMetadata, FetchError
 from app.models import AlertDestination, AlertLog, AlertRule, Extension
 from app.notifications import ChangeEvent
 from app.services import (
+    _ack_pending_events,
     _clear_pending_alerts,
     _parse_pending_events,
     fetch_and_store,
@@ -165,8 +166,16 @@ async def test_fetch_and_store_merges_prior_pending_events(test_db, admin_user):
     staged_types = [e["event_type"] for e in json.loads(ext.pending_alert_events)]
     assert "risk_level_change" in staged_types  # the prior undelivered event survived
     assert "new_version" in staged_types  # the newly detected event was added
-    # The caller fires the full merged set, not just this refresh's new events.
-    assert [e.event_type for e in events] == staged_types
+    # This refresh owns only its newly appended event. The older failed delivery
+    # remains durable for its original owner/recovery and is not sent twice.
+    # The refresh may legitimately detect another transition as well (for example
+    # a risk-score change); it must not re-claim the exact event already pending
+    # from the prior failed delivery, while still owning its new version event.
+    assert any(e.event_type == "new_version" for e in events)
+    assert not any(
+        e.event_type == prior["event_type"] and e.old_value == prior["old_value"] and e.new_value == prior["new_value"]
+        for e in events
+    )
 
 
 async def test_clear_pending_alerts_is_compare_and_clear(test_db, admin_user):
@@ -202,11 +211,40 @@ async def test_clear_pending_alerts_is_compare_and_clear(test_db, admin_user):
         assert (await session.get(Extension, ext_id)).pending_alert_events is None
 
 
-async def test_concurrent_fetch_and_store_preserves_both_events(test_db, admin_user):
-    """Two refreshes of the SAME extension overlapping (manual API refresh racing the scheduler)
-    must not lose an event. Both load the marker before either commits (barrier), then the
-    row-locked re-read in fetch_and_store serialises the merge so both events survive — a plain
-    in-memory read-modify-write would last-writer-wins and drop one (#109 review)."""
+async def test_ack_pending_events_preserves_events_appended_later(test_db, admin_user):
+    """Normal delivery acknowledges its own events without clearing newer work."""
+    old = {"event_type": "new_version", "old_value": "1", "new_value": "2"}
+    newer = {"event_type": "risk_level_change", "old_value": "low", "new_value": "high"}
+    async with AsyncSession(test_db) as session:
+        ext = Extension(
+            user_id=admin_user.id,
+            store="vscode",
+            extension_id="pub.ack",
+            name="A",
+            publisher="pub",
+            version="2.0.0",
+            store_url="https://example.com",
+            risk_score=10,
+            pending_alert_events=json.dumps([old, newer]),
+        )
+        session.add(ext)
+        await session.commit()
+        await session.refresh(ext)
+        ext_id = ext.id
+
+    await _ack_pending_events(ext_id, test_db, [ChangeEvent(**newer)])
+
+    async with AsyncSession(test_db) as session:
+        remaining = json.loads((await session.get(Extension, ext_id)).pending_alert_events)
+    assert remaining == [old]
+
+
+async def test_concurrent_fetch_and_store_deduplicates_same_event(test_db, admin_user):
+    """Overlapping refreshes preserve one event and one delivery owner.
+
+    Both callers load the marker before either commits, so the row-locked merge
+    must deduplicate their identical transition rather than deliver it twice.
+    """
     async with AsyncSession(test_db) as session:
         ext = Extension(
             user_id=admin_user.id,
@@ -245,10 +283,10 @@ async def test_concurrent_fetch_and_store_preserves_both_events(test_db, admin_u
 
     async with AsyncSession(test_db) as session:
         staged = json.loads((await session.get(Extension, ext_id)).pending_alert_events)
-    # Each refresh detected a new_version event; the row-locked merge preserved BOTH of them.
-    # A lost-update (in-memory read-modify-write) would keep only one refresh's events.
+    # Both refreshes detected the same transition. Exact-event dedupe keeps one
+    # durable event, preventing duplicate downstream delivery.
     new_version_events = [e for e in staged if e["event_type"] == "new_version"]
-    assert len(new_version_events) == 2
+    assert len(new_version_events) == 1
 
 
 async def test_clear_pending_alerts_loses_race_to_concurrent_append(test_db, admin_user):

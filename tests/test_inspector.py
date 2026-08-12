@@ -550,12 +550,15 @@ def test_to_json_dict_round_trips_a_real_analysis():
 
 def test_to_json_dict_excludes_internal_and_transient_fields():
     """_finding_keys is bookkeeping; version/author are manifest fallbacks
-    consumed in services.py and deliberately never persisted."""
+    consumed in services.py and deliberately never persisted. The completeness
+    marker is intentionally persisted so degraded package evidence remains
+    visible to downstream consumers."""
     analysis = PackageAnalysis(version="9.9", author="Somebody")
     stored = analysis.to_json_dict()
     assert "_finding_keys" not in stored
     assert "version" not in stored
     assert "author" not in stored
+    assert stored["analysis_complete"] is True
 
 
 def test_stored_defaults_and_to_json_dict_share_the_same_keys():

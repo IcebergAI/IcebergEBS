@@ -44,6 +44,10 @@ class PackageAnalysis:
     # Fields extracted from the manifest that may fill gaps in store metadata
     version: str = ""
     author: str = ""  # present in some Chrome/Edge manifests as "author" field
+    # False means the bytes were a deliberate degraded fallback (currently Edge's
+    # manifest-only package). Degraded analysis may support baseline scoring, but
+    # must never become immutable evidence for a complete package version.
+    analysis_complete: bool = True
     # Running set of finding identity tuples for O(1) dedupe in _add_finding.
     # Internal bookkeeping only — not serialized and excluded from equality/repr
     # so it doesn't affect comparisons or tests.

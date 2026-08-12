@@ -390,7 +390,8 @@ async def test_edge_fetch_metadata():
 
 @respx.mock
 async def test_edge_fetch_uses_manifest_when_crx_unavailable():
-    """When the CRX download fails, permissions still come from the API manifest."""
+    """When the CRX download fails, permissions still come from the API manifest,
+    but the fetch is marked incomplete so callers cannot snapshot it."""
     respx.get(f"{_EDGE_API_BASE}/testid?hl=en-US").mock(return_value=httpx.Response(200, json=EDGE_API_RESPONSE))
     respx.get(url__regex=r".*extensionwebstorebase.*").mock(return_value=httpx.Response(405))
     async with httpx.AsyncClient() as client:
@@ -399,6 +400,7 @@ async def test_edge_fetch_uses_manifest_when_crx_unavailable():
 
     assert meta.name == "Bitwarden Password Manager"
     assert pkg_bytes is not None
+    assert fetcher.package_complete is False
     # Verify the fallback zip contains the manifest with permissions
     with _zipfile.ZipFile(io.BytesIO(pkg_bytes)) as zf:
         manifest = _json.loads(zf.read("manifest.json"))
@@ -418,6 +420,7 @@ async def test_edge_fetch_upgrades_to_crx_when_available():
         meta, pkg_bytes = await fetcher.fetch("testid")
 
     assert pkg_bytes == raw_crx  # got the real package, not the manifest fallback
+    assert fetcher.package_complete is True
 
 
 @respx.mock
