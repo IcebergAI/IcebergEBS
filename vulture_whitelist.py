@@ -17,6 +17,10 @@ deferred  # unused variable (app/routes/api.py:324)
 duplicates  # unused variable (app/routes/api.py:325)
 invalid  # unused variable (app/routes/api.py:326)
 errors  # unused variable (app/routes/api.py:327)
+# ThreatListResult response-model fields are serialized by FastAPI; vulture
+# cannot trace their construction at the route boundary.
+accepted  # unused variable (app/routes/api.py:303)
+matched_extensions  # unused variable (app/routes/api.py:304)
 # ProxyMode.NONE is only ever constructed by value (ProxyMode(str.upper())) and
 # compared via the fall-through branch in resolve_proxy_url — never named (#216).
 NONE  # unused variable (app/proxy.py:47)
