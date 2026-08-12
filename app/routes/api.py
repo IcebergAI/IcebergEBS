@@ -24,7 +24,12 @@ from app.fetchers.base import FetchError
 from app.models import Extension, FetchLog, InstallCountHistory, InstallObservation, ThreatListEntry
 from app.retention import freshness_cutoff
 from app.scoring import risk_level
-from app.services import apply_threat_matches, fetch_and_store, fire_pending_alerts
+from app.services import (
+    apply_existing_threat_posture,
+    apply_threat_matches,
+    fetch_and_store,
+    fire_pending_alerts,
+)
 from app.threat_intel import build_threat_intel_indicators
 from app.threats import MAX_FEED_ENTRIES, normalize_entry
 from app.utils import host_permissions_of, json_list
@@ -490,6 +495,9 @@ async def _fetch_and_score(
     client: httpx.AsyncClient,
 ) -> Extension:
     score_before = ext.risk_score
+    posture_events = await apply_existing_threat_posture(session, ext)
+    await session.refresh(ext)
+    await fire_pending_alerts(posture_events, ext, engine, client)
     try:
         ext, events = await fetch_and_store(ext, session, client)
     except (FetchError, httpx.TransportError) as exc:
@@ -590,9 +598,11 @@ async def _enroll_extension(
     ext_id = ext.id
 
     if not score:
-        # Defer scoring to the scheduler (#78): the placeholder is watchlist=True and
-        # unscored, so refresh_watchlist scores it on its next run. detect_changes
-        # returns [] on that first fetch (last_fetched_at is None), so no alerts fire.
+        # Defer store scoring to the scheduler (#78), but apply any already-known
+        # threat assertion immediately so a broken/delisted store cannot hide it.
+        events = await apply_existing_threat_posture(session, ext)
+        await session.refresh(ext)
+        await fire_pending_alerts(events, ext, engine, client)
         return {"store": store, "extension_id": extension_id, "status": "deferred", "id": ext_id}
 
     try:

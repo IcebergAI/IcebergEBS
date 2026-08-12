@@ -114,6 +114,22 @@ async def apply_threat_matches(
     return result
 
 
+async def apply_existing_threat_posture(
+    session: AsyncSession,
+    ext: Extension,
+) -> list[ChangeEvent]:
+    """Persist a durable threat assertion before attempting a remote fetch."""
+    entries = await _threat_entries(session, ext)
+    if not entries:
+        return []
+    transitions = await apply_threat_matches(session, entries)
+    await session.commit()
+    for matched, events in transitions:
+        if matched.id == ext.id:
+            return events
+    return []
+
+
 @dataclass
 class _EffectiveValues:
     """The values actually scored and stored for a fetch, after the keep-stale

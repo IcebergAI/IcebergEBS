@@ -16,7 +16,13 @@ from app.fetchers.base import FetchError
 from app.models import Extension, FetchLog, ThreatListEntry
 from app.retention import run_footprint_refresh, run_retention_prune
 from app.scheduler_state import mark_scheduler_run
-from app.services import apply_threat_matches, fetch_and_store, fire_pending_alerts, recover_pending_alerts
+from app.services import (
+    apply_existing_threat_posture,
+    apply_threat_matches,
+    fetch_and_store,
+    fire_pending_alerts,
+    recover_pending_alerts,
+)
 from app.threat_feed import fetch_threat_feed
 
 logger = logging.getLogger(__name__)
@@ -89,6 +95,9 @@ async def _refresh_one(ext_id: int, client: httpx.AsyncClient) -> _Outcome:
             return _Outcome.GONE
         score_before = ext.risk_score
         try:
+            posture_events = await apply_existing_threat_posture(session, ext)
+            await session.refresh(ext)
+            await fire_pending_alerts(posture_events, ext, engine, client)
             ext, events = await fetch_and_store(ext, session, client)
             await session.commit()
         except (FetchError, httpx.TransportError) as exc:
