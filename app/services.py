@@ -155,13 +155,14 @@ async def apply_existing_threat_posture(
     ext: Extension,
 ) -> list[ChangeEvent]:
     """Persist a durable threat assertion before attempting a remote fetch."""
+    ext_id = ext.id
     entries = await _threat_entries(session, ext)
     if not entries:
         return []
     transitions = await apply_threat_matches(session, entries)
     await session.commit()
     for matched, events in transitions:
-        if matched.id == ext.id:
+        if matched.id == ext_id:
             return events
     return []
 
