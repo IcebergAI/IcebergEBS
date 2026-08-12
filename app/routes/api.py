@@ -621,31 +621,21 @@ async def _enroll_extension(
         # A delisted or unreachable known-bad package is still a monitored critical
         # extension; deleting it here would also cascade its audit alerts. The
         # assertion may have been committed by a concurrent threat-feed ingestion
-        # after _fetch_and_score's initial posture check, so re-read the row under
-        # a lock before deciding that it is an unanalysed placeholder (#31).
+        # after _fetch_and_score's initial posture check. Cleanup re-reads under
+        # a row lock before deciding whether this is an unanalysed placeholder (#31).
         await session.rollback()
-        durable = await session.get(Extension, ext_id, with_for_update=True, populate_existing=True)
-        preserve = bool(getattr(exc, "preserve_extension", False)) or bool(durable is not None and durable.threat_match)
-        if not preserve:
+        if not getattr(exc, "preserve_extension", False):
             await _discard_placeholder(session, ext_id)
         return {"store": store, "extension_id": extension_id, "status": "error", "detail": exc.detail}
-    except Exception as exc:
+    except Exception:
         # An unexpected failure (inspector bug, DB error, …) must not leave an
         # unscored placeholder on the watchlist — the exact state the FetchError
-        # cleanup above prevents (#75). Roll back the poisoned transaction first,
-        # then inspect the durable row: ``apply_existing_threat_posture`` commits
-        # a known-bad assertion before the fetch begins, so deleting that row here
+        # cleanup above prevents (#75). Roll back the poisoned transaction first;
+        # cleanup then locks and rechecks the durable row. ``apply_existing_threat_posture``
+        # commits a known-bad assertion before the fetch begins, so deleting that row
         # would erase the monitoring posture and cascade its alert history (#31).
         await session.rollback()
-        durable = await session.get(Extension, ext_id)
-        if durable is None or not durable.threat_match:
-            await _discard_placeholder(session, ext_id)
-        else:
-            logger.error(
-                "Unexpected initial fetch failure; retaining threat-matched extension %d (type=%s)",
-                ext_id,
-                type(exc).__name__,
-            )
+        await _discard_placeholder(session, ext_id)
         # Re-raise so a genuine bug still surfaces as a 500. The monitored row is
         # intentionally retained when its critical threat posture was committed.
         raise
@@ -658,11 +648,17 @@ async def _discard_placeholder(session: AsyncSession, ext_id: int) -> None:
     fetch, committing the cleanup. Best-effort: a cleanup failure is swallowed so it
     can't mask the original error."""
     try:
+        # Serialize cleanup against threat-feed posture updates and refresh the
+        # identity-mapped row. A feed can commit a match after the initial lookup
+        # but before cleanup; never delete a row that is critical at the cleanup
+        # decision point (#31).
+        orphan = await session.get(Extension, ext_id, with_for_update=True, populate_existing=True)
+        if orphan is None or orphan.threat_match:
+            await session.rollback()
+            return
         for fl in (await session.exec(select(FetchLog).where(FetchLog.extension_id == ext_id))).all():
             await session.delete(fl)
-        orphan = await session.get(Extension, ext_id)
-        if orphan is not None:
-            await session.delete(orphan)
+        await session.delete(orphan)
         await session.commit()
     except Exception:
         logger.exception("Failed to discard placeholder extension %d after a failed first fetch", ext_id)
