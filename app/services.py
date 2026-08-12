@@ -160,11 +160,12 @@ async def apply_existing_threat_posture(
     if not entries:
         return []
     transitions = await apply_threat_matches(session, entries)
+    target_events = next(
+        (events for matched, events in transitions if matched.id == ext_id),
+        [],
+    )
     await session.commit()
-    for matched, events in transitions:
-        if matched.id == ext_id:
-            return events
-    return []
+    return target_events
 
 
 @dataclass
