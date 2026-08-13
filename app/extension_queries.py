@@ -66,6 +66,7 @@ class ExtensionFilters:
 
     store: str | None = None
     risk: str | None = None
+    triage: str | None = None
     publisher: str | None = None
     q: str | None = None
     sort: str = "risk_score"
@@ -80,11 +81,22 @@ def build_extension_query(user_id: int, filters: ExtensionFilters):
     stmt = select(Extension).where(Extension.user_id == user_id)
     if filters.store:
         stmt = stmt.where(Extension.store == filters.store)
-    if filters.risk and filters.risk in RISK_BANDS:
+    if filters.risk == "suppressed":
+        stmt = stmt.where(
+            Extension.risk_override == "allow",
+            Extension.threat_match.is_(False),
+        )
+    elif filters.risk and filters.risk in RISK_BANDS:
         low, high = RISK_BANDS[filters.risk]
-        stmt = stmt.where(Extension.risk_score.is_not(None), Extension.risk_score >= low)
+        stmt = stmt.where(
+            Extension.risk_score.is_not(None),
+            Extension.risk_score >= low,
+            ~((Extension.risk_override == "allow") & Extension.threat_match.is_(False)),
+        )
         if high is not None:
             stmt = stmt.where(Extension.risk_score < high)
+    if filters.triage:
+        stmt = stmt.where(Extension.triage_status == filters.triage)
     if filters.publisher:
         stmt = stmt.where(Extension.publisher == filters.publisher)
     if filters.q:

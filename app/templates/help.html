@@ -69,11 +69,18 @@
     </table>
     </div>
     <div class="flex items-center gap-2 mt-4 text-[12px]">
+      <span class="badge badge-suppressed">suppressed by allow decision</span>
       <span class="badge badge-low">low 0–24</span>
       <span class="badge badge-medium">medium 25–49</span>
       <span class="badge badge-high">high 50–74</span>
       <span class="badge badge-critical">critical 75–100</span>
     </div>
+    <p class="text-[13px] leading-relaxed mt-4" style="color:var(--ink-soft)">
+      The detail page preserves this heuristic score while applying an explicit analyst policy.
+      <strong>Allow</strong> suppresses the effective posture, <strong>deny</strong> forces critical,
+      and a known-bad threat-list match always stays critical even when a local allow decision exists.
+      Triage status, assignee, and notes persist independently of background refreshes.
+    </p>
   </div>
 
   <div class="surface p-6 mb-4">

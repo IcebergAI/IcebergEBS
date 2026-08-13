@@ -54,7 +54,7 @@ from app.package_diff import diff_analysis
 from app.permissions import host_permission_tier, permission_tier
 from app.ratelimit import login_limiter
 from app.retention import freshness_cutoff
-from app.scoring import RiskDetail, risk_level
+from app.scoring import RiskDetail, effective_risk_level, risk_level
 from app.senders import kind_descriptors
 from app.threat_intel import build_threat_intel_indicators
 from app.utils import host_permissions_of
@@ -249,7 +249,14 @@ def _ext_to_dict(e: Extension) -> dict:
         # Band computed server-side from scoring.risk_level — the single home of
         # the 75/50/25 thresholds. The dashboard JS maps band → CSS class; the
         # colours live only in app.css's --risk-* tokens (#105).
-        "risk_band": risk_level(e.risk_score) or "unknown",
+        "risk_band": effective_risk_level(
+            e.risk_score,
+            threat_match=e.threat_match,
+            risk_override=e.risk_override,
+        )
+        or "unknown",
+        "triage_status": e.triage_status,
+        "risk_override": e.risk_override,
         "watchlist": e.watchlist,
     }
 
@@ -421,10 +428,18 @@ def _build_qs(base_params: dict) -> Callable[..., str]:
     return qs
 
 
-def _export_url(fmt: str, *, store, risk, q, sort, order) -> str:
+def _export_url(fmt: str, *, store, risk, q, sort, order, triage=None) -> str:
     """Build the CSV/JSON export URL honouring the active filters/sort (but not
     pagination)."""
-    params = {"format": fmt, "store": store, "risk": risk, "q": q, "sort": sort, "order": order}
+    params = {
+        "format": fmt,
+        "store": store,
+        "risk": risk,
+        "triage": triage,
+        "q": q,
+        "sort": sort,
+        "order": order,
+    }
     clean = {k: v for k, v in params.items() if v not in (None, "")}
     return "/api/extensions/export?" + urlencode(clean)
 
@@ -439,6 +454,7 @@ async def dashboard(
     session: SessionDep,
     store: str | None = None,
     risk: str | None = None,
+    triage: str | None = None,
     q: str | None = None,
     sort: str = "risk_score",
     order: str = "desc",
@@ -450,8 +466,10 @@ async def dashboard(
     # way a typed `int` param would (#152).
     if store not in ("chrome", "vscode", "edge"):
         store = None
-    if risk not in RISK_BANDS:
+    if risk not in {*RISK_BANDS, "suppressed"}:
         risk = None
+    if triage not in ("new", "triaging", "accepted-risk", "blocked", "resolved"):
+        triage = None
     if sort not in SORT_COLUMNS:
         sort = "risk_score"
     if order not in ("asc", "desc"):
@@ -474,7 +492,7 @@ async def dashboard(
     # Filtered + sorted + paginated page of full rows for the table. Same filter
     # object the API endpoints use (built from coerced params rather than via the
     # 422-ing dependency) — the dashboard doesn't filter by publisher.
-    filters = ExtensionFilters(store=store, risk=risk, q=q, sort=sort, order=order)
+    filters = ExtensionFilters(store=store, risk=risk, triage=triage, q=q, sort=sort, order=order)
     stmt = build_extension_query(current_user.id, filters)
     filtered_total = await count_rows(session, stmt)
     total_pages = max((filtered_total + _DASHBOARD_PAGE_SIZE - 1) // _DASHBOARD_PAGE_SIZE, 1)
@@ -495,7 +513,15 @@ async def dashboard(
     showing_from = offset + 1 if filtered_total else 0
     showing_to = offset + len(ext_dicts)
 
-    base_params = {"store": store, "risk": risk, "q": q, "sort": sort, "order": order, "page": page}
+    base_params = {
+        "store": store,
+        "risk": risk,
+        "triage": triage,
+        "q": q,
+        "sort": sort,
+        "order": order,
+        "page": page,
+    }
     qs = _build_qs(base_params)
 
     return _render(
@@ -503,8 +529,8 @@ async def dashboard(
         "dashboard.html",
         {
             "qs": qs,
-            "export_csv_url": _export_url("csv", store=store, risk=risk, q=q, sort=sort, order=order),
-            "export_json_url": _export_url("json", store=store, risk=risk, q=q, sort=sort, order=order),
+            "export_csv_url": _export_url("csv", store=store, risk=risk, triage=triage, q=q, sort=sort, order=order),
+            "export_json_url": _export_url("json", store=store, risk=risk, triage=triage, q=q, sort=sort, order=order),
             "extensions": ext_dicts,
             "top_exposure": top_exposure,
             "extensions_count": stats.extensions_count,
@@ -518,6 +544,7 @@ async def dashboard(
             # Filter / sort / pagination state for the controls.
             "filter_store": store,
             "filter_risk": risk,
+            "filter_triage": triage,
             "search_q": q or "",
             "sort": sort,
             "order": order,
@@ -723,7 +750,12 @@ async def extension_detail(
             "ext": ext,
             # Band from scoring.risk_level (the single home of the thresholds);
             # the template maps it to --risk-* token classes (#105).
-            "risk_band": risk_level(ext.risk_score) or "unknown",
+            "risk_band": effective_risk_level(
+                ext.risk_score,
+                threat_match=ext.threat_match,
+                risk_override=ext.risk_override,
+            )
+            or "unknown",
             "footprint_assets": footprint_assets,
             "footprint_departments": footprint_departments,
             "exposure": exposure,

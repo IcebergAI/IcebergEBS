@@ -125,8 +125,15 @@
       <div class="flex items-center gap-1.5">
         <span class="label-cap">Risk</span>
         <a class="badge" href="{{ qs(risk=None, page=1) }}" style="{% if not filter_risk %}{{ active_pill }}{% endif %}">Any</a>
-        {% for lvl in ['critical', 'high', 'medium', 'low'] %}
+        {% for lvl in ['critical', 'high', 'medium', 'low', 'suppressed'] %}
         <a class="badge badge-{{ lvl }}" href="{{ qs(risk=lvl, page=1) }}" style="{% if filter_risk == lvl %}{{ active_pill }}{% endif %}">{{ lvl }}</a>
+        {% endfor %}
+      </div>
+      <div class="flex items-center gap-1.5">
+        <span class="label-cap">Triage</span>
+        <a class="badge" href="{{ qs(triage=None, page=1) }}" style="{% if not filter_triage %}{{ active_pill }}{% endif %}">Any</a>
+        {% for state in ['new', 'triaging', 'accepted-risk', 'blocked', 'resolved'] %}
+        <a class="badge" href="{{ qs(triage=state, page=1) }}" style="{% if filter_triage == state %}{{ active_pill }}{% endif %}">{{ state }}</a>
         {% endfor %}
       </div>
     </div>

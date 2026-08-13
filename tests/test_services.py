@@ -383,6 +383,19 @@ def test_apply_fetch_results_writes_fresh_values():
     assert ext.last_fetched_at is not None
 
 
+def test_apply_fetch_results_preserves_allow_and_deny_policy():
+    analysis = PackageAnalysis(permissions=["tabs"], host_permissions=["<all_urls>"])
+    for override, expected in (("allow", 0), ("deny", 100)):
+        ext = _plain_ext(version="1.0.0")
+        ext.risk_override = override
+        effective = _effective_values(ext, _meta(version="2.0.0"), analysis)
+        heuristic = _risk()
+        _apply_fetch_results(ext, _meta(version="2.0.0"), analysis, effective, heuristic)
+        assert ext.heuristic_risk_score == heuristic.total
+        assert ext.risk_score == expected
+        assert json.loads(ext.risk_detail)["risk_level"] == ("suppressed" if override == "allow" else "critical")
+
+
 async def test_bomd_manifest_does_not_clobber_permissions_or_fire_a_removal_alert(test_db, admin_user):
     """#274 end to end.
 

@@ -15,6 +15,43 @@ document.addEventListener('alpine:init', () => {
       findingsCount: data.findings_count || 0,
       intelCount: data.intel_count || 0,
       historyCount: data.history_count || 0,
+      triageStatus: data.triage_status || 'new',
+      triageAssignee: data.triage_assignee || '',
+      triageNotes: data.triage_notes || '',
+      riskOverride: data.risk_override || 'none',
+      triageSaving: false,
+      triageError: false,
+      triageMessage: '',
+      async saveTriage() {
+        this.triageSaving = true;
+        this.triageError = false;
+        this.triageMessage = '';
+        try {
+          const response = await fetch(`/api/extensions/${this.extId}/triage`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              triage_status: this.triageStatus,
+              triage_assignee: this.triageAssignee,
+              triage_notes: this.triageNotes,
+              risk_override: this.riskOverride,
+            }),
+          });
+          if (response.ok) {
+            this.triageMessage = 'Triage saved';
+            location.reload();
+            return;
+          }
+          const detail = await response.json();
+          this.triageError = true;
+          this.triageMessage = detail.detail || 'Triage could not be saved';
+        } catch {
+          this.triageError = true;
+          this.triageMessage = 'Triage could not be saved';
+        } finally {
+          this.triageSaving = false;
+        }
+      },
       async toggleWatchlist() {
         const r = await fetch(`/api/extensions/${this.extId}/watchlist`, {
           method: 'PATCH',
