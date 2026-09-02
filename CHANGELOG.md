@@ -27,6 +27,13 @@ release version; only the SemVer part appears here.
   domains, or static findings. The extension detail page shows the latest explainable update
   delta; baselines and failed inspections never create alerts.
 
+### Security
+
+- **CI supply chain**: bumped the pinned `zizmor` from 1.27.0, which upstream yanked for
+  GHSA-f42p-wjw5-97qh, to 1.30.0, and refreshed the `actions/deploy-pages` pin in the docs
+  workflow to the current v5 release. All three Pages action pins now carry exact
+  `# vN.N.N` comments so a moving major tag cannot silently desync a pin from its comment.
+
 ## [0.1.0-beta.1] — 2026-07-21
 
 First beta. Everything below is the work merged to `main` to date; there is no earlier
