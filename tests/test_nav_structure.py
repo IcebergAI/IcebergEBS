@@ -34,7 +34,7 @@ async def member_client(test_db):
             User(
                 username="member",
                 password_hash=cached_password_hash("testpass"),
-                is_admin=False,
+                role="analyst",
             )
         )
         await s.commit()

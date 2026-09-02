@@ -55,10 +55,14 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/></svg>
         Dashboard
       </a>
+      {# Write-only entry point: hidden for the read-only auditor role (#33) — the
+         page itself also redirects them, and the API refuses the POST. #}
+      {% if can_write %}
       <a href="/extensions/add" class="rail-link {% block nav_add %}{% endblock %}">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 8v8M8 12h8"/></svg>
         Add extension
       </a>
+      {% endif %}
       </div>
 
       {% if username %}
@@ -97,6 +101,19 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="10" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
         Single sign-on
       </a>
+      <a href="/admin/audit" class="rail-link {% block nav_audit %}{% endblock %}">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h12l4 4v12H4z"/><path d="M8 12h8M8 16h8M8 8h4"/></svg>
+        Audit log
+      </a>
+      </div>
+      {% elif can_read_audit %}
+      {# The auditor role (#33) gets exactly one workspace-wide page: the trail (#34). #}
+      <div class="rail-group">
+      <div class="rail-group-label">Audit</div>
+      <a href="/admin/audit" class="rail-link {% block nav_audit_only %}{% endblock %}">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h12l4 4v12H4z"/><path d="M8 12h8M8 16h8M8 8h4"/></svg>
+        Audit log
+      </a>
       </div>
       {% endif %}
       {% endif %}
@@ -109,7 +126,7 @@
           <span class="rail-avatar">{{ username[0]|upper }}</span>
           <span class="rail-id-meta">
             <span class="rail-id-name">{{ username }}</span>
-            <span class="rail-id-role">{% if is_admin %}workspace admin{% else %}member{% endif %}</span>
+            <span class="rail-id-role">{% if is_admin %}workspace admin{% elif role == 'auditor' %}auditor · read-only{% else %}analyst{% endif %}</span>
           </span>
           <svg class="rail-id-caret" :class="open && 'rotated'" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
         </button>

@@ -1,10 +1,11 @@
 from datetime import datetime
 from typing import Optional
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 from pydantic import BaseModel, ConfigDict, Field
 from sqlmodel import select
 
+from app import audit
 from app.auth import generate_api_key, hash_api_key
 from app.deps import CurrentUser, SessionDep, SessionUser, get_owned_or_404
 from app.models import ApiKey
@@ -47,6 +48,7 @@ async def list_keys(
 @router.post("/keys", status_code=201)
 async def create_key(
     body: ApiKeyCreateIn,
+    request: Request,
     current_user: SessionUser,
     session: SessionDep,
 ) -> ApiKeyCreateOut:
@@ -65,6 +67,17 @@ async def create_key(
         key_suffix=key_suffix,
     )
     session.add(api_key)
+    await session.flush()
+    # Prefix/suffix only — never the key or its hash (#34 detail hygiene).
+    audit.record(
+        session,
+        current_user,
+        "apikey.create",
+        "apikey",
+        api_key.id,
+        {"label": body.label, "readonly": body.readonly, "key_prefix": key_prefix, "key_suffix": key_suffix},
+        request=request,
+    )
     await session.commit()
     await session.refresh(api_key)
     # raw_key is not an ORM attribute (returned once, never stored), so graft it
@@ -75,10 +88,20 @@ async def create_key(
 @router.delete("/keys/{key_id}")
 async def revoke_key(
     key_id: int,
+    request: Request,
     current_user: CurrentUser,
     session: SessionDep,
 ):
     api_key = await get_owned_or_404(session, ApiKey, key_id, current_user.id)
+    audit.record(
+        session,
+        current_user,
+        "apikey.revoke",
+        "apikey",
+        key_id,
+        {"label": api_key.label, "key_prefix": api_key.key_prefix, "key_suffix": api_key.key_suffix},
+        request=request,
+    )
     await session.delete(api_key)
     await session.commit()
     return {"ok": True}

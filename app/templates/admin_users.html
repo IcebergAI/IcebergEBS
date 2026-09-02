@@ -4,13 +4,13 @@
 {% block nav_admin %}active{% endblock %}
 
 {% block content %}
-<script id="users-data" type="application/json">{{ {'users': users, 'current_user_id': current_user_id} | tojson }}</script>
+<script id="users-data" type="application/json">{{ {'users': users, 'current_user_id': current_user_id, 'roles': roles} | tojson }}</script>
 <div x-data="userAdmin">
 
 <div class="flex items-end justify-between mb-5 flex-wrap gap-3">
   <div>
     <h1 class="page-title">Users</h1>
-    <p class="page-sub">Each user maintains their own watchlist, alert rules, and webhook destinations.</p>
+    <p class="page-sub">Each user maintains their own watchlist. <strong>Admins</strong> manage users, alert destinations and settings; <strong>analysts</strong> add and triage extensions; <strong>auditors</strong> are read-only and can review the <a href="/admin/audit">audit log</a>.</p>
   </div>
   <button class="btn btn-primary btn-sm" @click="showCreate = !showCreate">
     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
@@ -34,9 +34,15 @@
       <label class="label-cap block mb-1.5">Email <span style="text-transform:none;letter-spacing:0;font-weight:400;color:var(--muted)">(optional)</span></label>
       <input type="text" x-model="form.email" placeholder="user@example.com" @keydown.enter="createUser()">
     </div>
-    <label class="flex items-center gap-2 cursor-pointer text-[13px]" style="color:var(--ink-soft)">
-      <input type="checkbox" x-model="form.is_admin"> Admin privileges
-    </label>
+    <div>
+      <label class="label-cap block mb-1.5">Role</label>
+      <select x-model="form.role">
+        <template x-for="r in roles" :key="r">
+          <option :value="r" x-text="r" :selected="r === form.role"></option>
+        </template>
+      </select>
+      <div class="text-[12px] mt-1" style="color:var(--muted)" x-text="roleHint(form.role)"></div>
+    </div>
     <div x-show="createError" class="text-[12.5px]" style="color:var(--risk-critical)" x-text="createError"></div>
     <div class="flex gap-2 mt-1">
       <button class="btn btn-primary" @click="createUser()" :disabled="creating">
@@ -58,7 +64,7 @@
       <tr>
         <td>
           <div class="flex items-center gap-2.5">
-            <div class="avatar" :style="u.is_admin ? '' : 'background: var(--muted)'" x-text="u.username[0].toUpperCase()"></div>
+            <div class="avatar" :style="u.role === 'admin' ? '' : 'background: var(--muted)'" x-text="u.username[0].toUpperCase()"></div>
             <div>
               <div class="font-medium" style="color:var(--ink)"><span x-text="u.username"></span>
                 <span x-show="u.id === currentUserId" class="text-[11px] font-normal" style="color:var(--muted)">(you)</span>
@@ -68,8 +74,8 @@
         </td>
         <td style="color:var(--ink-soft)" x-text="u.email || '—'"></td>
         <td>
-          <span x-show="u.is_admin" class="badge" style="background:var(--accent-soft);color:var(--accent);border-color:color-mix(in oklch, var(--accent) 25%, transparent)">admin</span>
-          <span x-show="!u.is_admin" class="badge" style="background:var(--surface-2);color:var(--ink-soft);border-color:var(--line)">user</span>
+          <span x-show="u.role === 'admin'" class="badge" style="background:var(--accent-soft);color:var(--accent);border-color:color-mix(in oklch, var(--accent) 25%, transparent)">admin</span>
+          <span x-show="u.role !== 'admin'" class="badge" style="background:var(--surface-2);color:var(--ink-soft);border-color:var(--line)" x-text="u.role"></span>
           {# SSO-provisioned accounts (#32): show which IdP owns the identity. #}
           <span x-show="u.auth_provider !== 'local'" class="badge" style="background:var(--surface-2);color:var(--ink-soft);border-color:var(--line)" x-text="'sso: ' + u.auth_provider"></span>
         </td>

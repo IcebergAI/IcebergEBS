@@ -185,7 +185,7 @@ async def admin_user(test_db) -> User:
         user = User(
             username="testadmin",
             password_hash=cached_password_hash("testpass"),
-            is_admin=True,
+            role="admin",
         )
         s.add(user)
         await s.commit()

@@ -17,9 +17,10 @@ from sqlalchemy.exc import IntegrityError
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from app import proxy
+from app import audit, proxy
+from app.audit import AuditActor
 from app.database import engine
-from app.deps import AdminUser, CurrentUser, SessionDep, get_owned_or_404
+from app.deps import AdminUser, AnalystUser, CurrentUser, SessionDep, get_owned_or_404
 from app.extension_queries import ExtensionFilters, build_extension_query, count_rows, exposure
 from app.fetchers.base import FetchError
 from app.models import Extension, FetchLog, InstallCountHistory, InstallObservation, ThreatListEntry
@@ -360,7 +361,7 @@ class ThreatListResult(BaseModel):
 @router.post("/threatlist", status_code=202)
 async def ingest_threatlist(
     body: ThreatListBatch,
-    _: AdminUser,
+    current_user: AdminUser,
     request: Request,
     session: SessionDep,
 ) -> ThreatListResult:
@@ -409,6 +410,15 @@ async def ingest_threatlist(
         stored.append(row)
 
     transitions = await apply_threat_matches(session, stored)
+    audit.record(
+        session,
+        current_user,
+        "threatlist.ingest",
+        "threatlist",
+        None,
+        {"entries": len(normalized), "source": body.source, "matched_extensions": len(transitions)},
+        request=request,
+    )
     await session.commit()
     client: httpx.AsyncClient = request.app.state.http_client
     alerts_queued = 0
@@ -597,9 +607,16 @@ async def _enroll_extension(
     client: httpx.AsyncClient,
     user_id: int,
     *,
+    actor: AuditActor,
+    via: str,
     score: bool = True,
 ) -> dict:
     """Validate, dedupe, then create one extension.
+
+    ``actor``/``via`` feed the audit trail (#34): one ``extension.create`` row per
+    enrolled extension, staged after the placeholder is flushed (so it carries the
+    new id) and committed with it; a placeholder discarded after a failed first
+    fetch gets a matching ``extension.discard`` row so the trail stays truthful.
 
     The single enrollment primitive behind the add, bulk and inventory endpoints.
     Returns a result dict with ``status`` in {added, deferred, duplicate, invalid,
@@ -631,6 +648,17 @@ async def _enroll_extension(
     )
     session.add(ext)
     try:
+        # Flush first so the audit row can reference the new id, then commit both
+        # together (the #34 same-transaction invariant).
+        await session.flush()
+        audit.record(
+            session,
+            actor,
+            "extension.create",
+            "extension",
+            ext.id,
+            {"store": store, "extension_id": extension_id, "via": via, "scored_inline": score},
+        )
         await session.commit()
     except IntegrityError:
         # A concurrent request inserted the same (user, store, extension_id) between
@@ -663,7 +691,7 @@ async def _enroll_extension(
         # a row lock before deciding whether this is an unanalysed placeholder (#31).
         await session.rollback()
         if not getattr(exc, "preserve_extension", False):
-            await _discard_placeholder(session, ext_id)
+            await _discard_placeholder(session, ext_id, actor=actor)
         return {"store": store, "extension_id": extension_id, "status": "error", "detail": exc.detail}
     except Exception:
         # An unexpected failure (inspector bug, DB error, …) must not leave an
@@ -673,7 +701,7 @@ async def _enroll_extension(
         # commits a known-bad assertion before the fetch begins, so deleting that row
         # would erase the monitoring posture and cascade its alert history (#31).
         await session.rollback()
-        await _discard_placeholder(session, ext_id)
+        await _discard_placeholder(session, ext_id, actor=actor)
         # Re-raise so a genuine bug still surfaces as a 500. The monitored row is
         # intentionally retained when its critical threat posture was committed.
         raise
@@ -681,10 +709,11 @@ async def _enroll_extension(
     return {"store": store, "extension_id": extension_id, "status": "added", "id": scored.id}
 
 
-async def _discard_placeholder(session: AsyncSession, ext_id: int) -> None:
+async def _discard_placeholder(session: AsyncSession, ext_id: int, *, actor: AuditActor) -> None:
     """Delete a placeholder Extension and its FetchLog rows after a failed first
     fetch, committing the cleanup. Best-effort: a cleanup failure is swallowed so it
-    can't mask the original error."""
+    can't mask the original error. Audited as ``extension.discard`` (#34) so the
+    earlier ``extension.create`` row doesn't describe a row that no longer exists."""
     try:
         # Serialize cleanup against threat-feed posture updates and refresh the
         # identity-mapped row. A feed can commit a match after the initial lookup
@@ -696,6 +725,14 @@ async def _discard_placeholder(session: AsyncSession, ext_id: int) -> None:
             return
         for fl in (await session.exec(select(FetchLog).where(FetchLog.extension_id == ext_id))).all():
             await session.delete(fl)
+        audit.record(
+            session,
+            actor,
+            "extension.discard",
+            "extension",
+            ext_id,
+            {"store": orphan.store, "extension_id": orphan.extension_id, "reason": "first fetch failed"},
+        )
         await session.delete(orphan)
         await session.commit()
     except Exception:
@@ -910,11 +947,14 @@ async def export_extensions(
 async def add_extension(
     body: ExtensionIn,
     request: Request,
-    current_user: CurrentUser,
+    current_user: AnalystUser,
     session: SessionDep,
 ) -> ExtensionOut:
     client: httpx.AsyncClient = request.app.state.http_client
-    result = await _enroll_extension(body.store, body.extension_id, session, client, current_user.id)
+    actor = AuditActor.from_request(current_user, request)
+    result = await _enroll_extension(
+        body.store, body.extension_id, session, client, current_user.id, actor=actor, via="add"
+    )
     if result["status"] == "invalid":
         raise HTTPException(status_code=422, detail=result["detail"])
     if result["status"] == "duplicate":
@@ -932,7 +972,7 @@ MAX_BULK_ITEMS = 100
 async def bulk_add_extensions(
     body: BulkIn,
     request: Request,
-    current_user: CurrentUser,
+    current_user: AnalystUser,
     session: SessionDep,
 ) -> BulkResult:
     """Enroll many extensions in one request, reusing the add+score path.
@@ -959,6 +999,7 @@ async def bulk_add_extensions(
     # current_user ORM attributes — re-reading current_user.id mid-loop would
     # trigger a lazy (sync) refresh outside the async context.
     user_id = current_user.id
+    actor = AuditActor.from_request(current_user, request)
     client: httpx.AsyncClient = request.app.state.http_client
     results: list[dict] = []
     for entry in entries:
@@ -966,7 +1007,11 @@ async def bulk_add_extensions(
         if entry.get("status") == "invalid":
             results.append(entry)
             continue
-        results.append(await _enroll_extension(entry["store"], entry["extension_id"], session, client, user_id))
+        results.append(
+            await _enroll_extension(
+                entry["store"], entry["extension_id"], session, client, user_id, actor=actor, via="bulk"
+            )
+        )
 
     tally = {"added": 0, "duplicate": 0, "invalid": 0, "error": 0}
     for r in results:
@@ -987,7 +1032,7 @@ MAX_INVENTORY_ITEMS = 1000
 async def ingest_inventory(
     body: InventoryBatch,
     request: Request,
-    current_user: CurrentUser,
+    current_user: AnalystUser,
     session: SessionDep,
 ) -> InventoryResult:
     """Bulk-upsert org install inventory from the SOAR (#29).
@@ -1011,6 +1056,7 @@ async def ingest_inventory(
     # Capture the id up front: each _enroll_extension commits, expiring the
     # current_user ORM attributes (same caveat as the bulk endpoint).
     user_id = current_user.id
+    actor = AuditActor.from_request(current_user, request)
     client: httpx.AsyncClient = request.app.state.http_client
     now = datetime.now(timezone.utc)
 
@@ -1032,7 +1078,9 @@ async def ingest_inventory(
                 }
             )
             continue
-        enroll = await _enroll_extension(item.store, item.extension_id, session, client, user_id, score=False)
+        enroll = await _enroll_extension(
+            item.store, item.extension_id, session, client, user_id, actor=actor, via="inventory", score=False
+        )
         norm_id = enroll.get("extension_id", item.extension_id)
         if enroll["status"] in ("invalid", "error"):
             tally[enroll["status"]] += 1
@@ -1079,6 +1127,16 @@ async def ingest_inventory(
         if ext is not None:
             ext.install_footprint = int(count or 0)
             session.add(ext)
+    # One summary row for the batch (#34): observations aren't individually audited —
+    # the per-extension ``extension.create`` rows already cover new enrollments.
+    audit.record(
+        session,
+        actor,
+        "inventory.ingest",
+        "inventory",
+        None,
+        {"source": body.source, "observations": len(body.observations), "extensions_touched": len(affected), **tally},
+    )
     await session.commit()
 
     return InventoryResult(
@@ -1104,11 +1162,21 @@ async def get_extension(
 @router.delete("/extensions/{ext_id}")
 async def delete_extension(
     ext_id: int,
-    current_user: CurrentUser,
+    request: Request,
+    current_user: AnalystUser,
     session: SessionDep,
 ):
     ext = await get_owned_or_404(session, Extension, ext_id, current_user.id)
 
+    audit.record(
+        session,
+        current_user,
+        "extension.delete",
+        "extension",
+        ext_id,
+        {"store": ext.store, "extension_id": ext.extension_id, "name": ext.name},
+        request=request,
+    )
     # Every child FK (AlertLog, AlertRule, FetchLog, InstallCountHistory) is
     # ON DELETE CASCADE, so deleting the extension removes its dependent rows.
     await session.delete(ext)
@@ -1120,11 +1188,24 @@ async def delete_extension(
 async def refresh_extension(
     ext_id: int,
     request: Request,
-    current_user: CurrentUser,
+    current_user: AnalystUser,
     session: SessionDep,
 ) -> ExtensionOut:
     ext = await get_owned_or_404(session, Extension, ext_id, current_user.id)
     client: httpx.AsyncClient = request.app.state.http_client
+    # Staged BEFORE the fetch: _fetch_and_score owns the commit on both the success
+    # path and the recorded-failure path, so the row lands with whichever FetchLog
+    # the attempt produces (the attempt is the auditable action; the FetchLog says
+    # how it went). An unexpected exception rolls both back together.
+    audit.record(
+        session,
+        current_user,
+        "extension.refresh",
+        "extension",
+        ext_id,
+        {"store": ext.store, "extension_id": ext.extension_id},
+        request=request,
+    )
     return ExtensionOut.from_db(await _fetch_and_score(ext, session, client))
 
 
@@ -1132,12 +1213,22 @@ async def refresh_extension(
 async def toggle_watchlist(
     ext_id: int,
     body: WatchlistPatch,
-    current_user: CurrentUser,
+    request: Request,
+    current_user: AnalystUser,
     session: SessionDep,
 ) -> ExtensionOut:
     ext = await get_owned_or_404(session, Extension, ext_id, current_user.id)
     ext.watchlist = body.watchlist
     session.add(ext)
+    audit.record(
+        session,
+        current_user,
+        "extension.watchlist",
+        "extension",
+        ext_id,
+        {"watchlist": body.watchlist},
+        request=request,
+    )
     await session.commit()
     await session.refresh(ext)
     return ExtensionOut.from_db(ext)
@@ -1147,7 +1238,8 @@ async def toggle_watchlist(
 async def update_extension_triage(
     ext_id: int,
     body: TriagePatch,
-    current_user: CurrentUser,
+    request: Request,
+    current_user: AnalystUser,
     session: SessionDep,
 ) -> ExtensionOut:
     """Persist owner-scoped analyst disposition and its effective risk policy."""
@@ -1194,6 +1286,21 @@ async def update_extension_triage(
     ext.risk_detail = json.dumps(detail)
     ext.triage_updated_at = datetime.now(timezone.utc)
     session.add(ext)
+    # Risk acceptance is the mutation a SOC most wants a trail for (#34): record the
+    # fields this request set (the resulting values) plus the effective score.
+    audit.record(
+        session,
+        current_user,
+        "extension.triage",
+        "extension",
+        ext_id,
+        {
+            **{f: getattr(ext, f) for f in sorted(supplied)},
+            "risk_score": ext.risk_score,
+            "risk_level": detail["risk_level"],
+        },
+        request=request,
+    )
     await session.commit()
     await session.refresh(ext)
     return ExtensionOut.from_db(ext)

@@ -163,6 +163,61 @@
         removed, while their extensions are kept (unassigned and taken off the watchlist) so
         fetch and alert history survives.</li>
     </ul>
+    <h3 class="text-[13.5px] font-medium mt-4 mb-2" style="color:var(--ink)">Roles</h3>
+    <p class="text-[13.5px] leading-relaxed mb-2" style="color:var(--ink-soft)">
+      Every account has one role. The JSON API enforces it (a refused action is a <span class="mono">403</span>);
+      the pages simply don't offer controls your role can't use.
+    </p>
+    <div style="overflow-x:auto;border:1px solid var(--line);border-radius:8px">
+    <table>
+      <thead><tr><th>Role</th><th>Can</th><th>Cannot</th></tr></thead>
+      <tbody>
+        <tr>
+          <td class="mono">admin</td>
+          <td style="color:var(--muted)">everything below, plus manage users, alert destinations and rules, proxy and SSO settings, threat-list ingestion, and read the audit log</td>
+          <td style="color:var(--muted)">—</td>
+        </tr>
+        <tr>
+          <td class="mono">analyst</td>
+          <td style="color:var(--muted)">add, bulk-import, refresh, watch and delete extensions; push inventory; record triage and risk decisions; manage their own API keys and password</td>
+          <td style="color:var(--muted)">manage users, alert destinations or rules, settings; read the audit log</td>
+        </tr>
+        <tr>
+          <td class="mono">auditor</td>
+          <td style="color:var(--muted)">read everything they own, and read the <a href="/admin/audit">audit log</a>; manage their own API keys and password</td>
+          <td style="color:var(--muted)">change anything else — every mutating request is refused</td>
+        </tr>
+      </tbody>
+    </table>
+    </div>
+    <p class="text-[13.5px] leading-relaxed mt-2" style="color:var(--ink-soft)">
+      New local users default to <span class="mono">analyst</span>; the seeded break-glass account is an admin.
+      An API key inherits its owner's role (a read-only key is additionally limited to GET).
+    </p>
+  </div>
+
+  <div class="surface p-6 mb-4">
+    <h2 class="section-title">Audit log</h2>
+    <p class="text-[13.5px] leading-relaxed mb-2" style="color:var(--ink-soft)">
+      Every change made through IcebergEBS is recorded — who did it, what it was, which record it touched,
+      and the client address — and shown newest-first at <a href="/admin/audit">admin / audit log</a>
+      (admins and auditors) or <span class="mono">GET /api/audit</span> (filter by
+      <span class="mono">actor</span>, <span class="mono">action</span>, <span class="mono">target_type</span>,
+      <span class="mono">target_id</span>, <span class="mono">since</span>; paginate with <span class="mono">limit</span>/<span class="mono">offset</span>).
+    </p>
+    <ul class="text-[13.5px] leading-relaxed pl-5 list-disc" style="color:var(--ink-soft)">
+      <li>Recorded: extension add / delete / refresh / watchlist / triage, inventory and threat-list
+        ingestion, alert destination and rule changes and test sends, API-key creation and revocation,
+        user creation, deletion and password changes, proxy and SSO settings changes and proxy probes,
+        SSO account provisioning and IdP-driven role changes.</li>
+      <li>An entry is written in the same database transaction as the change it describes: a rejected
+        request leaves no entry, and a saved change can't be missing one.</li>
+      <li>Details never include secrets — settings changes record which fields changed, keys record only
+        their displayed prefix/suffix, and password changes record only that one happened.</li>
+      <li>Entries are kept when the actor's account or the target record is later deleted, and are
+        <strong>never</strong> removed by the retention job.</li>
+      <li>Scheduled background refreshes are system activity and live in each extension's fetch history, not here.</li>
+    </ul>
   </div>
 
   <div class="surface p-6 mb-4">
@@ -178,9 +233,12 @@
     <ul class="text-[13.5px] leading-relaxed pl-5 list-disc" style="color:var(--ink-soft)">
       <li>A first SSO login creates the account automatically (username = the IdP email). SSO
         accounts have no local password — password changes are the identity provider's job.</li>
-      <li>Admin membership can follow IdP groups: map <code class="mono">group=admin</code> pairs
-        in the provider's role map. Unmapped users sign in as regular users, never admins, and the
-        flag is re-checked on every SSO login (removing the group demotes and signs out other sessions).</li>
+      <li>Roles can follow IdP groups: map <code class="mono">group=admin</code>,
+        <code class="mono">group=analyst</code> or <code class="mono">group=auditor</code> pairs in the
+        provider's role map (the older <code class="mono">group=user</code> still means analyst). A user in
+        several mapped groups gets the most privileged one; unmapped users sign in as analysts, never admins.
+        The role is re-checked on every SSO login — a change signs out that user's other sessions and
+        is recorded in the audit log.</li>
       <li>The authentication mode is <strong>both</strong> (password + SSO), <strong>local</strong>
         (password only), or <strong>oidc</strong> (SSO only). OIDC-only mode is refused unless a
         complete provider is enabled, so a bad config can't lock everyone out; local accounts stay

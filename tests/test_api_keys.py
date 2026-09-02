@@ -71,7 +71,7 @@ async def test_revoke_nonexistent_key(client):
 
 async def test_cannot_revoke_other_users_key(client, test_db, admin_user):
     async with AsyncSession(test_db) as s:
-        other = User(username="other", password_hash=cached_password_hash("password1"), is_admin=False)
+        other = User(username="other", password_hash=cached_password_hash("password1"), role="analyst")
         s.add(other)
         await s.commit()
         await s.refresh(other)

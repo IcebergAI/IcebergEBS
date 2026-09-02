@@ -16,7 +16,7 @@ async def test_list_users_admin(client):
 async def test_list_users_requires_admin(client, test_db):
     # Create a regular (non-admin) user and log in as them
     async with AsyncSession(test_db) as s:
-        regular = User(username="regularuser", password_hash=cached_password_hash("pw"), is_admin=False)
+        regular = User(username="regularuser", password_hash=cached_password_hash("pw"), role="analyst")
         s.add(regular)
         await s.commit()
 
@@ -58,7 +58,7 @@ async def test_create_user(client):
     data = r.json()
     assert data["username"] == "newuser"
     assert data["email"] == "new@example.com"
-    assert data["is_admin"] is False
+    assert data["role"] == "analyst"  # default role (#33)
 
 
 async def test_create_user_duplicate(client):
@@ -162,7 +162,7 @@ async def test_delete_user_preserves_history(client, test_db, admin_user):
     )
 
     async with AsyncSession(test_db) as s:
-        victim = User(username="victim", password_hash=cached_password_hash("pw"), is_admin=False)
+        victim = User(username="victim", password_hash=cached_password_hash("pw"), role="analyst")
         s.add(victim)
         await s.commit()
         await s.refresh(victim)
@@ -256,7 +256,7 @@ async def test_user_isolation(client, test_db):
 
     # Create user B
     async with AsyncSession(test_db) as s:
-        user_b = User(username="userb", password_hash=cached_password_hash("pw"), is_admin=False)
+        user_b = User(username="userb", password_hash=cached_password_hash("pw"), role="analyst")
         s.add(user_b)
         await s.commit()
         await s.refresh(user_b)

@@ -148,6 +148,12 @@ async def test_fresh_db_has_all_current_columns(temp_db):
     )
     indexes = {index["name"] for index in _indexes(temp_db, "packagesnapshot")}
     assert "ix_package_snapshot_extension_captured" in indexes
+    assert "role" in _columns(temp_db, "user") and "is_admin" not in _columns(temp_db, "user")  # #33
+    assert "auditlog" in _tables(temp_db)  # #34
+    assert {"actor_id", "actor", "action", "target_type", "target_id", "detail", "ip", "at"} <= _columns(
+        temp_db, "auditlog"
+    )
+    assert {"ix_auditlog_at_desc", "ix_auditlog_target"} <= {i["name"] for i in _indexes(temp_db, "auditlog")}
 
 
 async def test_fresh_db_indexes_recent_install_history_lookup(temp_db):
@@ -395,3 +401,60 @@ def test_proxysettings_mode_check_repairs_legacy_explicit_empty_url(temp_db):
     finally:
         engine.dispose()
     assert mode == "SYSTEM"  # coerced away from the fail-open EXPLICIT+empty state
+
+
+_PRE_RBAC = "d6e7f8a9b0c1"  # extension triage — the revision before roles (#33) / audit log (#34)
+_RBAC = "e7f8a9b0c1d2"
+
+
+def test_rbac_migration_backfills_roles_and_roundtrips(temp_db):
+    """is_admin → role backfill (#33): admins become ``admin``, everyone else the
+    pre-RBAC "regular user" level ``analyst``. Down restores is_admin from role and
+    never drops a user row (the #218 downgrade rule); up again is clean."""
+    _upgrade_to(temp_db, _PRE_RBAC)
+    sync = create_engine(_sync_url(temp_db))
+    try:
+        with sync.begin() as conn:
+            for name, admin in (("root", True), ("bob", False)):
+                conn.execute(
+                    text(
+                        'INSERT INTO "user"(username, password_hash, is_admin, auth_provider, role_managed_by_idp, '
+                        "created_at) VALUES (:u, 'h', :a, 'local', false, :t)"
+                    ),
+                    {"u": name, "a": admin, "t": datetime(2024, 1, 1, tzinfo=timezone.utc)},
+                )
+        _upgrade_to(temp_db, _RBAC)
+        with sync.connect() as conn:
+            roles = dict(conn.execute(text('SELECT username, role FROM "user"')).fetchall())
+            assert roles == {"root": "admin", "bob": "analyst"}
+            # The DDL default is dropped after the backfill, like the triage migration.
+            default = conn.execute(
+                text(
+                    "SELECT column_default FROM information_schema.columns WHERE table_name='user' AND column_name='role'"
+                )
+            ).scalar()
+            assert default is None
+            assert "auditlog" in inspect(conn).get_table_names()
+            # The CHECK is live.
+            with pytest.raises(Exception, match="ck_user_role"):
+                with conn.begin_nested():
+                    conn.execute(text("UPDATE \"user\" SET role = 'superuser' WHERE username = 'bob'"))
+
+        with sync.connect() as conn:
+            cfg = _alembic_config()
+            cfg.attributes["connection"] = conn
+            command.downgrade(cfg, _PRE_RBAC)
+            conn.commit()
+        with sync.connect() as conn:
+            cols = {c["name"] for c in inspect(conn).get_columns("user")}
+            assert "is_admin" in cols and "role" not in cols
+            assert "auditlog" not in inspect(conn).get_table_names()
+            flags = dict(conn.execute(text('SELECT username, is_admin FROM "user"')).fetchall())
+            assert flags == {"root": True, "bob": False}  # nobody was deleted, admin restored
+
+        _upgrade_to(temp_db, _RBAC)
+        with sync.connect() as conn:
+            roles = dict(conn.execute(text('SELECT username, role FROM "user"')).fetchall())
+            assert roles == {"root": "admin", "bob": "analyst"}
+    finally:
+        sync.dispose()

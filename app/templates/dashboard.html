@@ -17,11 +17,13 @@
     </a>
     <a href="{{ export_json_url }}" class="btn btn-ghost btn-sm" title="Export the current view as JSON">JSON</a>
     {% endif %}
+    {% if can_write %}
     <a href="/extensions/bulk" class="btn btn-ghost btn-sm">Bulk import</a>
     <a href="/extensions/add" class="btn btn-primary btn-sm">
       <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
       Add extension
     </a>
+    {% endif %}
   </div>
 </div>
 
@@ -93,8 +95,12 @@
 <div class="surface p-12 text-center">
   <svg class="mx-auto mb-3" width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="color:var(--muted)"><path d="M12 3l8 4v5c0 5-3.5 8-8 9-4.5-1-8-4-8-9V7l8-4z"/></svg>
   <div class="text-[15px] font-medium mb-1" style="color:var(--ink)">No extensions tracked yet</div>
+  {% if can_write %}
   <div class="text-[13px] mb-4" style="color:var(--muted)">Add one to start collecting metadata and risk scores.</div>
   <a href="/extensions/add" class="btn btn-primary">Add your first extension</a>
+  {% else %}
+  <div class="text-[13px]" style="color:var(--muted)">Your role is read-only; an analyst or admin adds extensions.</div>
+  {% endif %}
 </div>
 {% else %}
 
@@ -203,11 +209,13 @@
             <td style="color:var(--ink-soft)" x-text="updatedText(ext)"></td>
             <td>
               <div class="flex items-center justify-end gap-1">
+                {% if can_write %}
                 <div class="flex gap-1" @click.stop>
                   <button class="btn btn-ghost btn-sm" title="Refresh" @click="refreshExt(ext.id)">
                     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 15-6.7L21 8"/><path d="M21 3v5h-5"/></svg>
                   </button>
                 </div>
+                {% endif %}
                 {# Decorative affordance: the whole row opens the detail page (@click),
                    but the Refresh button was the only visible control saying so. Sits
                    OUTSIDE the @click.stop group so the row's own @click still fires. #}

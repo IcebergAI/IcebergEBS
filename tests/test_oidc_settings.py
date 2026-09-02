@@ -35,7 +35,7 @@ async def test_put_rejects_secret_keys(client):
 
 
 async def test_put_rejects_bad_role_map_value(client):
-    r = await client.put("/api/oidc/settings", json={"oidc_authentik_role_map": "group=analyst"})
+    r = await client.put("/api/oidc/settings", json={"oidc_authentik_role_map": "group=superuser"})
     assert r.status_code == 422
     assert "role map" in r.json()["detail"]
 

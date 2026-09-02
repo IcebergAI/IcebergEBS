@@ -15,12 +15,12 @@ from authlib.integrations.starlette_client import OAuthError
 from app import oidc_settings
 from app.auth import _session_after_password_change, create_session_cookie, verify_credentials
 from app.config import settings
-from app.models import User
+from app.models import Role, User
 from app.oidc import service as oidc_service
 from app.oidc.base import OIDCIdentity, get_adapter
 from app.oidc.config import OIDCProviderConfig, env_config, validate_config
 from app.oidc.entra import EntraAdapter
-from app.oidc.service import _NonClosingTransport, map_is_admin, provision_oidc_user
+from app.oidc.service import _NonClosingTransport, map_role, provision_oidc_user
 
 
 def _cfg(role_map: dict[str, str] | None = None) -> OIDCProviderConfig:
@@ -126,7 +126,7 @@ async def test_jit_creates_non_admin_user(session):
     assert user.username == "new@sso.test"
     assert user.email == "new@sso.test"
     assert user.password_hash is None
-    assert user.is_admin is False
+    assert user.role == "analyst"  # unmapped ⇒ analyst, the pre-RBAC "regular user" level (#33)
     assert user.auth_provider == "authentik"
     assert user.oidc_subject == "sub-1"
     assert user.role_managed_by_idp is True
@@ -135,18 +135,30 @@ async def test_jit_creates_non_admin_user(session):
 async def test_role_map_grants_admin(session):
     cfg = _cfg(role_map={"ebs-admins": "admin"})
     user, _ = await provision_oidc_user(session, cfg=cfg, identity=_identity(groups=["ebs-admins"]))
-    assert user.is_admin is True
+    assert user.role == "admin"
 
 
-def test_map_is_admin_any_match_and_no_self_elevation():
-    cfg = _cfg(role_map={"a": "user", "b": "admin"})
-    # Any-match: group order (IdP-controlled) must not matter for the boolean.
-    assert map_is_admin(cfg, _identity(groups=["a", "b"])) is True
-    assert map_is_admin(cfg, _identity(groups=["b", "a"])) is True
-    assert map_is_admin(cfg, _identity(groups=["a"])) is False
-    # Unmapped groups and an empty map never elevate.
-    assert map_is_admin(cfg, _identity(groups=["unmapped"])) is False
-    assert map_is_admin(_cfg(), _identity(groups=["ebs-admins"])) is False
+async def test_role_map_grants_auditor(session):
+    """Least privilege is opt-in (#33): a group mapped to auditor provisions read-only."""
+    cfg = _cfg(role_map={"ebs-readers": "auditor"})
+    user, _ = await provision_oidc_user(session, cfg=cfg, identity=_identity(groups=["ebs-readers"]))
+    assert user.role == "auditor"
+
+
+def test_map_role_highest_match_and_no_self_elevation():
+    cfg = _cfg(role_map={"a": "user", "b": "admin", "c": "auditor"})
+    # Any-match, highest wins: group order (IdP-controlled) must not matter.
+    assert map_role(cfg, _identity(groups=["a", "b"])) is Role.ADMIN
+    assert map_role(cfg, _identity(groups=["b", "a"])) is Role.ADMIN
+    assert map_role(cfg, _identity(groups=["c", "b"])) is Role.ADMIN
+    # A user in an auditor group AND the legacy "user" group is an analyst, not read-only.
+    assert map_role(cfg, _identity(groups=["c", "a"])) is Role.ANALYST
+    assert map_role(cfg, _identity(groups=["c"])) is Role.AUDITOR
+    # Legacy "user" is an alias of analyst — an existing group=user config keeps working.
+    assert map_role(cfg, _identity(groups=["a"])) is Role.ANALYST
+    # Unmapped groups and an empty map never elevate — and never demote below analyst.
+    assert map_role(cfg, _identity(groups=["unmapped"])) is Role.ANALYST
+    assert map_role(_cfg(), _identity(groups=["ebs-admins"])) is Role.ANALYST
 
 
 async def test_returning_user_not_duplicated(session):
@@ -163,7 +175,7 @@ async def test_returning_admin_sync_up_and_down_bumps_session_cutoff(session, mo
 
     cfg = _cfg(role_map={"ebs-admins": "admin"})
     user, _ = await provision_oidc_user(session, cfg=cfg, identity=_identity(groups=["ebs-admins"]))
-    assert user.is_admin is True
+    assert user.role == "admin"
 
     # Cookie minted under the admin authorization state.
     issued_at = datetime.now(timezone.utc)
@@ -174,13 +186,13 @@ async def test_returning_admin_sync_up_and_down_bumps_session_cutoff(session, mo
     demoted, _ = await provision_oidc_user(session, cfg=cfg, identity=_identity(groups=[]))
 
     assert demoted.id == user.id
-    assert demoted.is_admin is False
+    assert demoted.role == "analyst"
     # The pre-sync cookie is now stale (password_changed_at is the generic cutoff).
     assert _session_after_password_change(demoted, issued_at) is False
 
     # Sync back up on re-adding the group.
     promoted, _ = await provision_oidc_user(session, cfg=cfg, identity=_identity(groups=["ebs-admins"]))
-    assert promoted.is_admin is True
+    assert promoted.role == "admin"
 
 
 async def test_locally_managed_user_never_synced(session):
@@ -189,7 +201,7 @@ async def test_locally_managed_user_never_synced(session):
         username="breakglass@sso.test",
         password_hash="x",
         email=None,
-        is_admin=True,
+        role="admin",
         auth_provider="authentik",
         oidc_issuer="https://idp.test/",
         oidc_subject="sub-breakglass",
@@ -202,11 +214,11 @@ async def test_locally_managed_user_never_synced(session):
         session, cfg=_cfg(role_map={"ebs-admins": "admin"}), identity=_identity(subject="sub-breakglass", groups=[])
     )
     assert created is False
-    assert user.is_admin is True  # not demoted despite no admin group
+    assert user.role == "admin"  # not demoted despite no admin group
 
 
 async def test_email_collision_with_local_account_denied(session):
-    session.add(User(username="victim", password_hash="x", email="admin@corp.test", is_admin=True))
+    session.add(User(username="victim", password_hash="x", email="admin@corp.test", role="admin"))
     await session.commit()
 
     with pytest.raises(oidc_service.OIDCProvisionError) as exc:
@@ -521,7 +533,7 @@ async def test_returning_email_sync_skips_local_account_collision(session):
     # account. A returning SSO account adopting a LOCAL account's address (the break-glass
     # admin's, say) would commit cleanly through the index — the app-level _email_owner
     # check must refuse it, symmetric with JIT provisioning.
-    session.add(User(username="breakglass", password_hash="x", email="admin@corp.test", is_admin=True))
+    session.add(User(username="breakglass", password_hash="x", email="admin@corp.test", role="admin"))
     await session.commit()
     a, _ = await provision_oidc_user(session, cfg=_cfg(), identity=_identity(subject="sub-a", email="a@corp.test"))
     a_id = a.id  # capture before later commits expire the instance
@@ -764,7 +776,7 @@ def test_auth_mode_local_disables_providers():
     [
         ({"auth_mode": "jwt"}, "Authentication mode"),
         ({"oidc_redirect_base_url": "not-a-url"}, "absolute http"),
-        ({"oidc_authentik_role_map": "group=analyst"}, "role map"),
+        ({"oidc_authentik_role_map": "group=superuser"}, "role map"),
         ({"oidc_authentik_role_map": "junkpair"}, "role map"),
         ({"oidc_authentik_app_slug": ""}, "incomplete"),
         ({"oidc_authentik_scopes": "email profile"}, "openid"),
@@ -1148,7 +1160,7 @@ async def test_login_start_network_error_redirects_not_500(anon_client, patch_oi
 
 
 async def test_callback_email_collision_denies(anon_client, patch_oidc, session):
-    session.add(User(username="victim", password_hash="x", email="route@sso.test", is_admin=True))
+    session.add(User(username="victim", password_hash="x", email="route@sso.test", role="admin"))
     await session.commit()
     patch_oidc(_FakeOIDCClient(claims=_claims()))
     r = await anon_client.get("/auth/oidc/authentik/callback?code=x&state=y")

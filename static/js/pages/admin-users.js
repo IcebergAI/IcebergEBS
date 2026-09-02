@@ -1,5 +1,5 @@
 // User admin page component (#106). Server data comes from the #users-data JSON
-// island ({users, current_user_id}).
+// island ({users, current_user_id, roles}). Roles (#33): admin | analyst | auditor.
 
 document.addEventListener('alpine:init', () => {
   Alpine.data('userAdmin', () => {
@@ -7,14 +7,22 @@ document.addEventListener('alpine:init', () => {
     return {
       users: data.users || [],
       currentUserId: data.current_user_id,
+      roles: data.roles || ['admin', 'analyst', 'auditor'],
       showCreate: false,
       creating: false,
       createError: '',
       deleteError: '',
-      form: { username: '', password: '', email: '', is_admin: false },
+      form: { username: '', password: '', email: '', role: 'analyst' },
       resetForm() {
-        this.form = { username: '', password: '', email: '', is_admin: false };
+        this.form = { username: '', password: '', email: '', role: 'analyst' };
         this.createError = '';
+      },
+      roleHint(role) {
+        return {
+          admin: 'Full access: users, alert destinations and rules, settings, threat lists.',
+          analyst: 'Adds, refreshes and triages extensions; cannot manage users, alerting or settings.',
+          auditor: 'Read-only. Can review the audit log; every change is refused.',
+        }[role] || '';
       },
       createdText(u) {
         return new Date(u.created_at).toLocaleDateString();
@@ -25,7 +33,7 @@ document.addEventListener('alpine:init', () => {
         if (!this.form.password) { this.createError = 'Password is required'; return; }
         this.creating = true;
         try {
-          const body = { username: this.form.username.trim(), password: this.form.password, is_admin: this.form.is_admin };
+          const body = { username: this.form.username.trim(), password: this.form.password, role: this.form.role };
           if (this.form.email.trim()) body.email = this.form.email.trim();
           const r = await fetch('/api/users', {
             method: 'POST',

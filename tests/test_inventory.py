@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, patch
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
+from app.audit import AuditActor
 from app.models import Extension, InstallObservation, User
 from tests.conftest import cached_password_hash
 from tests.test_api import _fake_metadata, _fake_vsix
@@ -371,7 +372,15 @@ async def test_enroll_extension_insert_race_returns_duplicate(test_db, admin_use
             return await real_find(*args, **kwargs)
 
         with patch.object(api, "_find_extension", flaky_find):
-            result = await api._enroll_extension("vscode", "race.ext", session, MagicMock(), user_id=admin_user.id)
+            result = await api._enroll_extension(
+                "vscode",
+                "race.ext",
+                session,
+                MagicMock(),
+                user_id=admin_user.id,
+                actor=AuditActor(id=admin_user.id, username="testadmin"),
+                via="add",
+            )
 
     assert result["status"] == "duplicate"
     assert result["id"] == winner_id

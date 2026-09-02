@@ -14,12 +14,12 @@ from typing import NamedTuple
 from urllib.parse import urlparse, urlsplit, urlunsplit
 
 import httpx
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, field_validator
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from app import oidc_settings, proxy, proxy_settings
+from app import audit, oidc_settings, proxy, proxy_settings
 from app.deps import AdminUser, SessionDep
 from app.models import AlertDestination
 from app.webhooks import _authority, validate_webhook_url
@@ -149,13 +149,26 @@ async def get_proxy_settings(_: AdminUser, session: SessionDep) -> ProxySettings
 
 
 @router.put("/proxy/settings")
-async def put_proxy_settings(body: ProxySettingsUpdate, _: AdminUser, session: SessionDep) -> ProxySettingsOut:
+async def put_proxy_settings(
+    body: ProxySettingsUpdate, request: Request, current_user: AdminUser, session: SessionDep
+) -> ProxySettingsOut:
     # The EXPLICIT⇒URL invariant is enforced inside update_settings, on the
     # RESULTING row under a FOR UPDATE lock — a route-level pre-check would be a
     # TOCTOU against a concurrent PUT (e.g. one request sets mode=EXPLICIT while
     # another clears proxy_url; each pre-check passes, the merge fails open).
+    changes = body.model_dump(exclude_unset=True)
+    # Field NAMES only: proxy_url carries credentials (#216) and must never reach
+    # the trail. The row is handed to update_settings so it commits with the change.
+    trail = audit.build(
+        current_user,
+        "settings.proxy.update",
+        "settings",
+        "proxy",
+        {"fields": sorted(changes), "mode": changes.get("mode")},
+        request=request,
+    )
     try:
-        row = await proxy_settings.update_settings(session, body.model_dump(exclude_unset=True))
+        row = await proxy_settings.update_settings(session, changes, audit=trail)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from None
     return ProxySettingsOut.model_validate(row)
@@ -167,7 +180,7 @@ async def get_proxy_targets(_: AdminUser, session: SessionDep) -> dict:
 
 
 @router.post("/proxy/test")
-async def test_proxy(body: ProxyTestIn, _: AdminUser, session: SessionDep) -> dict:
+async def test_proxy(body: ProxyTestIn, request: Request, current_user: AdminUser, session: SessionDep) -> dict:
     """Dial one known egress target with the currently-saved routing config.
 
     Redirects are never followed: a probe only needs to prove reachability, and a
@@ -182,6 +195,13 @@ async def test_proxy(body: ProxyTestIn, _: AdminUser, session: SessionDep) -> di
     if target is None:
         raise HTTPException(status_code=400, detail="Unknown target")
     cfg = proxy.ProxyConfig(mode=row.mode, proxy_url=row.proxy_url, no_proxy=row.no_proxy)
+    # The probe is an outbound action; record the attempt durably before dialling
+    # (#34). The label only — never the resolved URL/IP. (Built `cfg` first: this
+    # commit expires `row`.)
+    audit.record(
+        session, current_user, "settings.proxy.test", "settings", "proxy", {"target": body.target}, request=request
+    )
+    await session.commit()
     # via_proxy reports the route of the ATTEMPTED request only: it stays False
     # until the routing decision for the URL actually dialled (for webhooks, the
     # pinned-IP form — what the routing transport sees in production) is computed.

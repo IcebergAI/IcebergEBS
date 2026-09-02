@@ -518,7 +518,7 @@ async def test_proxy_api_requires_admin(client, test_db, method, path, body):
     from app.main import app
 
     async with AsyncSession(test_db) as s:
-        s.add(User(username="plainuser", password_hash=cached_password_hash("pw"), is_admin=False))
+        s.add(User(username="plainuser", password_hash=cached_password_hash("pw"), role="analyst"))
         await s.commit()
 
     async def override_session():
