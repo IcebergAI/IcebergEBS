@@ -2,6 +2,7 @@ import json
 import logging
 from datetime import datetime
 from typing import Annotated
+from urllib.parse import urlsplit
 
 import httpx
 from fastapi import APIRouter, HTTPException, Query, Request
@@ -27,6 +28,30 @@ VALID_EVENT_TYPES = {
     "capability_change",
     "threat_match",
 }
+
+
+def _audit_target(target: str) -> str:
+    """The trail's view of a destination target: the ORIGIN only for URL targets.
+
+    A Slack/Teams incoming-webhook URL is a capability token — the path IS the
+    credential — and Jira/ServiceNow base URLs name internal hosts. The audit log is
+    readable by auditors and retained forever, so it records where alerts go
+    (scheme + host [+ port]) and never the path, query, or **userinfo**: built from
+    ``hostname``/``port``, not ``netloc``, because netloc keeps a ``user:pass@``
+    prefix (review finding on #353). Non-URL targets (email recipients) are not
+    credentials and are kept as-is (#34).
+    """
+    parts = urlsplit(target.strip())
+    if parts.scheme not in ("http", "https") or not parts.hostname:
+        return target
+    host = parts.hostname
+    if ":" in host:  # IPv6 literal — hostname strips the brackets; put them back
+        host = f"[{host}]"
+    try:
+        port = parts.port
+    except ValueError:  # non-numeric port: don't echo the junk, keep the host only
+        port = None
+    return f"{parts.scheme}://{host}" if port is None else f"{parts.scheme}://{host}:{port}"
 
 
 async def _validate_destination(kind: str, target: str, config: dict[str, str]) -> None:
@@ -161,16 +186,20 @@ async def create_destination(
     )
     session.add(dest)
     await session.flush()
-    # target is recorded (a webhook URL is a capability token for Slack-style hooks,
-    # but it is the admin's own destination and the whole point of the trail is to
-    # show WHERE alerts were pointed); config values are field-name-only (#34).
+    # Origin only — a webhook URL's path is a capability token (see _audit_target);
+    # config values are field-name-only (#34).
     audit.record(
         session,
         current_user,
         "destination.create",
         "destination",
         dest.id,
-        {"label": body.label, "kind": body.kind, "target": body.target, "config_fields": sorted(body.config)},
+        {
+            "label": body.label,
+            "kind": body.kind,
+            "target": _audit_target(body.target),
+            "config_fields": sorted(body.config),
+        },
         request=request,
     )
     await session.commit()
@@ -218,7 +247,7 @@ async def update_destination(
             "fields": sorted(body.model_fields_set),
             "label": dest.label,
             "kind": dest.kind,
-            "target": dest.target,
+            "target": _audit_target(dest.target),
             "enabled": dest.enabled,
         },
         request=request,
@@ -242,7 +271,7 @@ async def delete_destination(
         "destination.delete",
         "destination",
         dest_id,
-        {"label": dest.label, "kind": dest.kind, "target": dest.target},
+        {"label": dest.label, "kind": dest.kind, "target": _audit_target(dest.target)},
         request=request,
     )
     # The FK ON DELETE actions handle the cleanup: the destination's rules cascade

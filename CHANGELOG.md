@@ -44,7 +44,9 @@ release version; only the SemVer part appears here.
   `AuditLog` row — who, what, which record, from which IP — in the **same transaction**
   as the change. Readable by admins and auditors at `/admin/audit` and `GET /api/audit`
   (filter by actor / action / target / since). Never pruned. Detail never carries
-  secrets: settings changes record field names, keys record prefix/suffix only.
+  secrets: settings changes record field names, keys record prefix/suffix only, and
+  alert destinations record the target's **origin** (scheme + host) — a Slack-style
+  webhook path is a capability token and never reaches the trail.
 
 ### Changed
 

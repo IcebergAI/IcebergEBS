@@ -213,7 +213,8 @@
       <li>An entry is written in the same database transaction as the change it describes: a rejected
         request leaves no entry, and a saved change can't be missing one.</li>
       <li>Details never include secrets — settings changes record which fields changed, keys record only
-        their displayed prefix/suffix, and password changes record only that one happened.</li>
+        their displayed prefix/suffix, alert destinations record only the target's origin (never a webhook
+        URL's path, which is the credential), and password changes record only that one happened.</li>
       <li>Entries are kept when the actor's account or the target record is later deleted, and are
         <strong>never</strong> removed by the retention job.</li>
       <li>Scheduled background refreshes are system activity and live in each extension's fetch history, not here.</li>

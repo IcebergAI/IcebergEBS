@@ -11,11 +11,12 @@ from datetime import datetime, timezone
 import httpx
 import pytest
 from authlib.integrations.starlette_client import OAuthError
+from sqlmodel import select
 
 from app import oidc_settings
 from app.auth import _session_after_password_change, create_session_cookie, verify_credentials
 from app.config import settings
-from app.models import Role, User
+from app.models import AuditLog, Role, User
 from app.oidc import service as oidc_service
 from app.oidc.base import OIDCIdentity, get_adapter
 from app.oidc.config import OIDCProviderConfig, env_config, validate_config
@@ -416,6 +417,10 @@ async def test_recovery_widens_username_suffix_on_collision(session):
     assert created is True
     assert user.username == oidc_service._derive_username("new@sso.test", identity, width=32)
     assert len(user.username.split("-")[-1]) == 32
+    # The retry rolled the first attempt back — including its staged audit row — so
+    # exactly one user.provision entry exists, naming the FINAL username (#34).
+    rows = (await session.exec(select(AuditLog).where(AuditLog.action == "user.provision"))).all()
+    assert [(r.target_id, r.detail_dict()["username"]) for r in rows] == [(str(user.id), user.username)]
 
 
 async def test_recovery_gives_up_with_provisioning_conflict(session):
