@@ -36,13 +36,22 @@ def _audit_target(target: str) -> str:
     A Slack/Teams incoming-webhook URL is a capability token — the path IS the
     credential — and Jira/ServiceNow base URLs name internal hosts. The audit log is
     readable by auditors and retained forever, so it records where alerts go
-    (scheme + host) and never the path/query. Non-URL targets (email recipients)
-    are not credentials and are kept as-is (#34, review finding).
+    (scheme + host [+ port]) and never the path, query, or **userinfo**: built from
+    ``hostname``/``port``, not ``netloc``, because netloc keeps a ``user:pass@``
+    prefix (review finding on #353). Non-URL targets (email recipients) are not
+    credentials and are kept as-is (#34).
     """
     parts = urlsplit(target.strip())
-    if parts.scheme in ("http", "https") and parts.netloc:
-        return f"{parts.scheme}://{parts.netloc}"
-    return target
+    if parts.scheme not in ("http", "https") or not parts.hostname:
+        return target
+    host = parts.hostname
+    if ":" in host:  # IPv6 literal — hostname strips the brackets; put them back
+        host = f"[{host}]"
+    try:
+        port = parts.port
+    except ValueError:  # non-numeric port: don't echo the junk, keep the host only
+        port = None
+    return f"{parts.scheme}://{host}" if port is None else f"{parts.scheme}://{host}:{port}"
 
 
 async def _validate_destination(kind: str, target: str, config: dict[str, str]) -> None:
