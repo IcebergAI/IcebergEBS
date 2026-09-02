@@ -48,7 +48,7 @@ jobs:
           # zizmor artipacked: don't leave the repo token in .git/config —
           # nothing in this job pushes.
           persist-credentials: false
-      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
           enable-cache: true
       - run: uv sync --locked
@@ -65,7 +65,7 @@ jobs:
           # zizmor artipacked: don't leave the repo token in .git/config —
           # nothing in this job pushes.
           persist-credentials: false
-      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
           enable-cache: true
       # Named check so a stale lockfile fails with an obvious signal rather than
@@ -95,7 +95,7 @@ jobs:
           # zizmor artipacked: don't leave the repo token in .git/config —
           # nothing in this job pushes.
           persist-credentials: false
-      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
           enable-cache: true
       # mypy needs the app's deps importable (and the pydantic plugin).
@@ -111,7 +111,7 @@ jobs:
           # zizmor artipacked: don't leave the repo token in .git/config —
           # nothing in this job pushes.
           persist-credentials: false
-      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
           enable-cache: true
       - run: uv sync --locked
@@ -136,7 +136,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
           enable-cache: true
       # zizmor: CI/CD security audit (unpinned actions, artipacked, template
