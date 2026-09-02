@@ -145,7 +145,7 @@ jobs:
       - name: zizmor
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: uvx zizmor@1.27.0 .github/workflows/
+        run: uvx zizmor@1.30.0 .github/workflows/
       # actionlint: syntax + shellcheck over every run: block. Installed from the
       # Go module proxy at a pinned version and verified by Go's checksum database
       # (sum.golang.org) rather than trusting a third-party action — one less thing
