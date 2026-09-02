@@ -132,6 +132,26 @@ async def test_destination_and_rule_crud_are_audited(client, test_db):
     assert rows[3].detail_dict()["label"] == "renamed"
 
 
+async def test_destination_audit_records_origin_not_capability_url(client, test_db):
+    """A Slack-style webhook path is the credential; auditors read the trail forever."""
+    hook = "https://hooks.slack.com/services/T000/B000/SECRETTOKENxyz"
+    r = await client.post("/api/alerts/destinations", json={"label": "slack", "kind": "slack", "target": hook})
+    assert r.status_code == 201, r.text
+    dest_id = r.json()["id"]
+    await client.patch(f"/api/alerts/destinations/{dest_id}", json={"label": "renamed"})
+    await client.delete(f"/api/alerts/destinations/{dest_id}")
+    rows = await _rows(test_db)
+    assert [r.action for r in rows] == ["destination.create", "destination.update", "destination.delete"]
+    for row in rows:
+        assert row.detail_dict()["target"] == "https://hooks.slack.com"
+        assert "SECRETTOKEN" not in (row.detail or "") and "/services/" not in (row.detail or "")
+    # Non-URL targets (email recipients) are not credentials and stay readable.
+    from app.routes.alerts import _audit_target
+
+    assert _audit_target("soc@example.com, oncall@example.com") == "soc@example.com, oncall@example.com"
+    assert _audit_target("https://jira.corp.internal/rest/api/3?x=1") == "https://jira.corp.internal"
+
+
 async def test_api_key_lifecycle_never_records_the_secret(client, test_db):
     r = await client.post("/api/keys", json={"label": "ci", "readonly": True})
     raw = r.json()["raw_key"]

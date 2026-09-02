@@ -455,6 +455,7 @@ async def provision_oidc_user(
     )
     session.add(user)
     try:
+        await _flush_with_provision_audit(session, user, cfg.key)
         await session.commit()
     except IntegrityError:
         # A unique violation. It can be (a) a concurrent callback that JIT-created
@@ -482,6 +483,7 @@ async def provision_oidc_user(
         user.username = _derive_username(normalized_email, identity, width=32)
         session.add(user)
         try:
+            await _flush_with_provision_audit(session, user, cfg.key)
             await session.commit()
         except IntegrityError:
             await session.rollback()
@@ -489,17 +491,23 @@ async def provision_oidc_user(
             raise OIDCProvisionError("provisioning conflict") from None
     await session.refresh(user)
     logger.info("OIDC JIT-provisioned user %s via %s (role=%s)", user.username, cfg.key, user.role)
-    # Recorded after the insert is durable rather than staged with it: the insert
-    # commit above is retried under a re-derived username on a unique-violation, and
-    # a staged row would be discarded by that rollback (#34).
+    return user, True
+
+
+async def _flush_with_provision_audit(session: AsyncSession, user: User, provider: str) -> None:
+    """Flush the JIT insert, then stage its ``user.provision`` row in the SAME
+    transaction (#34): the flush assigns the id the row references, and the
+    caller's single commit lands both — or the unique-violation rollback discards
+    both, so the retry under a re-derived username starts clean. A separate
+    post-commit audit write would leave a durable account with no trail entry if
+    the process died in between, and the returning-user path never re-records it.
+    """
+    await session.flush()
     audit.record(
         session,
         user,
         "user.provision",
         "user",
         user.id,
-        {"username": user.username, "role": user.role, "provider": cfg.key, "via": "oidc"},
+        {"username": user.username, "role": user.role, "provider": provider, "via": "oidc"},
     )
-    await session.commit()
-    await session.refresh(user)  # the commit expired the instance the callback reads
-    return user, True
