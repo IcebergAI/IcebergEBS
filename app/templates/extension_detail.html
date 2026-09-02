@@ -25,6 +25,9 @@
 {# ── Action row ──────────────────────────────────────────── #}
 <div class="flex items-center justify-end mb-4 flex-wrap gap-3">
   <div class="flex items-center gap-2">
+    {# Mutating controls are rendered only for roles the API will accept (#33):
+       an auditor sees the state, not the switches. #}
+    {% if can_write %}
     <button class="switch" :class="watchlist && 'on'" @click="toggleWatchlist()" title="Auto-refresh on background scheduler">
       <span class="track"><span class="thumb"></span></span>
       <span x-text="watchlist ? 'Watching' : 'Not watching'"></span>
@@ -34,14 +37,19 @@
       <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 15-6.7L21 8"/><path d="M21 3v5h-5"/></svg>
       Refresh now
     </button>
+    {% else %}
+    <span class="chip" title="Auto-refresh on background scheduler" x-text="watchlist ? 'Watching' : 'Not watching'"></span>
+    {% endif %}
     <a href="{{ ext.store_url }}" target="_blank" rel="noopener noreferrer" class="btn btn-secondary btn-sm">
       <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 4h6v6"/><path d="M10 14L21 3"/><path d="M21 14v5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5"/></svg>
       Store page
     </a>
     {# Isolate the destructive action from the benign ones — the same divider the
        watchlist switch already uses, so Delete isn't flush with Refresh/Store page. #}
+    {% if can_write %}
     <div class="w-px h-5 mx-1" style="background:var(--line)"></div>
     <button class="btn btn-danger btn-sm" @click="deleteExt">Delete</button>
+    {% endif %}
   </div>
 </div>
 
@@ -118,6 +126,7 @@
     </div>
     {% endif %}
   </div>
+  {% if can_write %}
   <div class="triage-grid mt-4">
     <label><span class="label-cap">Status</span><select x-model="triageStatus"><option value="new">New</option><option value="triaging">Triaging</option><option value="accepted-risk">Accepted risk</option><option value="blocked">Blocked</option><option value="resolved">Resolved</option></select></label>
     <label><span class="label-cap">Assignee</span><input type="text" maxlength="128" x-model="triageAssignee" placeholder="Queue or analyst"></label>
@@ -128,6 +137,15 @@
     <span class="text-[12.5px]" role="status" aria-live="polite" :class="triageError && 'risk-critical'" x-text="triageMessage"></span>
     <button class="btn btn-primary triage-save" @click="saveTriage" :disabled="triageSaving" x-text="triageSaving ? 'Saving…' : 'Save triage'"></button>
   </div>
+  {% else %}
+  {# Read-only disposition for the auditor role (#33). #}
+  <dl class="triage-grid mt-4">
+    <div><dt class="label-cap">Status</dt><dd class="text-[13.5px] mt-1" style="color:var(--ink)">{{ ext.triage_status }}</dd></div>
+    <div><dt class="label-cap">Assignee</dt><dd class="text-[13.5px] mt-1" style="color:var(--ink)">{{ ext.triage_assignee or '—' }}</dd></div>
+    <div><dt class="label-cap">Risk policy</dt><dd class="text-[13.5px] mt-1" style="color:var(--ink)">{{ ext.risk_override }}</dd></div>
+    <div class="triage-notes"><dt class="label-cap">Notes</dt><dd class="text-[13.5px] mt-1" style="color:var(--ink);white-space:pre-wrap">{{ ext.triage_notes or '—' }}</dd></div>
+  </dl>
+  {% endif %}
 </section>
 
 {# ── Tab bar ─────────────────────────────────────────────── #}

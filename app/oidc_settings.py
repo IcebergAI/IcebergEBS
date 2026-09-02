@@ -18,7 +18,7 @@ from typing import Any
 from sqlalchemy.exc import IntegrityError
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from app.models import OIDCSettings, _utcnow
+from app.models import AuditLog, OIDCSettings, _utcnow
 from app.oidc.config import (
     EDITABLE_FIELDS,
     OIDCRuntimeConfig,
@@ -83,8 +83,15 @@ async def get_settings(session: AsyncSession) -> OIDCSettings:
     return row
 
 
-async def update_settings(session: AsyncSession, changes: dict[str, Any]) -> OIDCSettings:
+async def update_settings(
+    session: AsyncSession, changes: dict[str, Any], *, audit: AuditLog | None = None
+) -> OIDCSettings:
     """Apply a whitelisted patch to the singleton row and refresh the snapshot.
+
+    ``audit`` (#34) is an unattached ``AuditLog`` row added to the session right
+    before the commit — only when a change is actually written, so a validation
+    failure or a no-op save leaves no trail entry, and a written change can't
+    lack one.
 
     Validation runs on the RESULTING config under a ``FOR UPDATE`` row lock —
     validating the request fields alone would be a TOCTOU: two concurrent PUTs
@@ -119,6 +126,8 @@ async def update_settings(session: AsyncSession, changes: dict[str, Any]) -> OID
         setattr(row, f, getattr(candidate, f))
     row.updated_at = _utcnow()
     session.add(row)
+    if audit is not None:
+        session.add(audit)
     try:
         await session.commit()
     except IntegrityError as exc:

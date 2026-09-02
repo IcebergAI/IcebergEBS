@@ -26,7 +26,7 @@ from app.auth import (
     verify_credentials,
 )
 from app.config import settings
-from app.deps import AdminUserUI, SessionDep, WebUser
+from app.deps import AdminUserUI, AnalystUserUI, AuditReaderUI, SessionDep, WebUser
 from app.extension_queries import (
     EXPOSURE_EXPR,
     RISK_BANDS,
@@ -41,10 +41,12 @@ from app.models import (
     AlertDestination,
     AlertRule,
     ApiKey,
+    AuditLog,
     Extension,
     FetchLog,
     InstallObservation,
     PackageSnapshot,
+    Role,
     User,
 )
 from app.oidc import service as oidc_service
@@ -112,7 +114,15 @@ def _clear_flash(response) -> None:
 def _render(request: Request, template: str, ctx: dict, user: User | None = None) -> HTMLResponse:
     flash = _get_flash(request)
     ctx["flash"] = flash
-    ctx["is_admin"] = user.is_admin if user else False
+    # Role flags (#33) for the shell + per-page control gating. The API is the
+    # enforcement point (403); these only stop the UI from offering a control that
+    # will be refused. Keep them in lockstep with deps.py's allowed sets.
+    role = user.role if user else None
+    ctx["role"] = role
+    ctx["is_admin"] = role == Role.ADMIN
+    ctx["can_write"] = role in (Role.ADMIN, Role.ANALYST)  # AnalystUser
+    ctx["can_manage_alerts"] = role == Role.ADMIN  # destinations + rules are AdminUser
+    ctx["can_read_audit"] = role in (Role.ADMIN, Role.AUDITOR)  # AuditReader
     ctx["username"] = user.username if user else ""
     ctx["app_version"] = get_version()
     # Pre-stamp <html data-theme> from the cookie static/js/theme-boot.js maintains,
@@ -566,15 +576,17 @@ async def dashboard(
 @router.get("/extensions/add", response_class=HTMLResponse)
 async def add_extension_page(
     request: Request,
-    current_user: WebUser,
+    current_user: AnalystUserUI,
 ):
+    # Write-only page: an auditor is bounced to the dashboard (#33) rather than
+    # shown a form whose submit the API will 403.
     return _render(request, "add_extension.html", {}, user=current_user)
 
 
 @router.get("/extensions/bulk", response_class=HTMLResponse)
 async def bulk_import_page(
     request: Request,
-    current_user: WebUser,
+    current_user: AnalystUserUI,
 ):
     return _render(request, "bulk_import.html", {}, user=current_user)
 
@@ -793,7 +805,7 @@ async def admin_users_page(
             "id": u.id,
             "username": u.username,
             "email": u.email,
-            "is_admin": u.is_admin,
+            "role": u.role,
             "auth_provider": u.auth_provider,
             "created_at": u.created_at.isoformat(),
         }
@@ -805,6 +817,61 @@ async def admin_users_page(
         {
             "users": users_data,
             "current_user_id": current_user.id,
+            "roles": [r.value for r in Role],
+        },
+        user=current_user,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Audit trail (#34) — admin + auditor
+# ---------------------------------------------------------------------------
+
+AUDIT_PAGE_LIMIT = 200
+
+
+@router.get("/admin/audit", response_class=HTMLResponse)
+async def admin_audit_page(
+    request: Request,
+    current_user: AuditReaderUI,
+    session: SessionDep,
+    actor: str | None = None,
+    action: str | None = None,
+    target_type: str | None = None,
+    target_id: str | None = None,
+):
+    """Server-rendered newest-first view of the trail — no page JS, so the auditor
+    role (the one most likely to be a locked-down browser) needs nothing beyond the
+    shell. Filters mirror ``GET /api/audit``."""
+    stmt = select(AuditLog)
+    filters = {"actor": actor, "action": action, "target_type": target_type, "target_id": target_id}
+    for column, value in filters.items():
+        if value:
+            stmt = stmt.where(getattr(AuditLog, column) == value)
+    rows = (await session.exec(stmt.order_by(AuditLog.at.desc(), AuditLog.id.desc()).limit(AUDIT_PAGE_LIMIT))).all()
+    entries = [
+        {
+            "id": r.id,
+            "at": r.at,
+            "ago": _ago(r.at),
+            "actor": r.actor,
+            "actor_id": r.actor_id,
+            "action": r.action,
+            "target_type": r.target_type,
+            "target_id": r.target_id,
+            "detail": r.detail_dict(),
+            "ip": r.ip,
+        }
+        for r in rows
+    ]
+    return _render(
+        request,
+        "admin_audit.html",
+        {
+            "entries": entries,
+            "filters": {k: v or "" for k, v in filters.items()},
+            "limit": AUDIT_PAGE_LIMIT,
+            "truncated": len(rows) >= AUDIT_PAGE_LIMIT,
         },
         user=current_user,
     )

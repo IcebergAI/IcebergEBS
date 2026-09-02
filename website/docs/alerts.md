@@ -92,8 +92,14 @@ redirecting to the login page.
 | **One extension** | `GET`, `DELETE`, `POST …/refresh`, `PATCH …/watchlist`, `GET …/history` (install-count timeline; bounded — `limit` ≤ 500, newest points, oldest→newest, plus a `since` cursor for increments) under `/api/extensions/{id}` |
 | **Alerts** | `/api/alerts/destinations`, `/api/alerts/rules` (both full CRUD), `POST /api/alerts/destinations/{id}/test`, `GET /api/alerts/log` |
 | **API keys** | `GET`, `POST`, `DELETE` under `/api/keys` |
-| **Users** *(admin)* | `/api/users`, plus self-service `PATCH /api/users/me/password` |
+| **Users** *(admin)* | `/api/users` (create takes `role`: `admin` / `analyst` / `auditor`), plus self-service `PATCH /api/users/me/password` |
 | **Admin config** | `/api/proxy/settings`, `/api/proxy/test`, `/api/oidc/settings` |
+| **Audit log** *(admin, auditor)* | `GET /api/audit` — newest first; filter by `actor`, `action`, `target_type`, `target_id`, `since`; `limit` ≤ 500 + `offset` |
+
+Roles gate the write side: every extension mutation needs `admin` or `analyst`; alert
+destinations + rules, users, settings and threat-list ingestion need `admin`; an
+`auditor` gets `403` on every mutating route but keeps self-service over their own
+password and API keys. An API key carries its owner's role.
 
 Bulk endpoints are capped — 100 for `POST /api/extensions/bulk`, 1000 for
 `POST /api/inventory`, which is the endpoint to point an inventory export at.

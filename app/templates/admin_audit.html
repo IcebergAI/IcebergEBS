@@ -1,0 +1,93 @@
+{% extends "base.html" %}
+{% block title %}IcebergEBS — Audit log{% endblock %}
+{% block crumb %}Audit log{% endblock %}
+{% block nav_audit %}active{% endblock %}
+{% block nav_audit_only %}active{% endblock %}
+
+{% block content %}
+{# Server-rendered on purpose (#34): the auditor role is the one most likely to sit
+   behind a locked-down browser, and a trail viewer that needs page JS to show
+   anything is a trail viewer that can be blanked by a CSP or a script error.
+   Filters are plain GET params, so a view is a shareable URL. #}
+<div class="flex items-end justify-between mb-5 flex-wrap gap-3">
+  <div>
+    <h1 class="page-title">Audit log</h1>
+    <p class="page-sub">Every change made through IcebergEBS, newest first — who, what, which record, from where. Rows are written in the same transaction as the change and are never pruned.</p>
+  </div>
+</div>
+
+<form method="get" action="/admin/audit" class="surface p-4 mb-4">
+  <div class="flex flex-wrap items-end gap-3">
+    <div>
+      <label class="label-cap block mb-1.5" for="f-actor">Actor</label>
+      <input id="f-actor" type="text" name="actor" value="{{ filters.actor }}" placeholder="username" style="width:160px">
+    </div>
+    <div>
+      <label class="label-cap block mb-1.5" for="f-action">Action</label>
+      <input id="f-action" type="text" name="action" value="{{ filters.action }}" placeholder="extension.delete" style="width:180px">
+    </div>
+    <div>
+      <label class="label-cap block mb-1.5" for="f-type">Target type</label>
+      <input id="f-type" type="text" name="target_type" value="{{ filters.target_type }}" placeholder="extension" style="width:130px">
+    </div>
+    <div>
+      <label class="label-cap block mb-1.5" for="f-id">Target id</label>
+      <input id="f-id" type="text" name="target_id" value="{{ filters.target_id }}" placeholder="42" style="width:100px">
+    </div>
+    <button type="submit" class="btn btn-primary btn-sm">Filter</button>
+    {% if filters.actor or filters.action or filters.target_type or filters.target_id %}
+    <a href="/admin/audit" class="btn btn-ghost btn-sm">Clear</a>
+    {% endif %}
+  </div>
+</form>
+
+{% if entries %}
+<div class="surface overflow-hidden">
+<div style="overflow-x:auto">
+<table>
+  <thead>
+    <tr><th>When</th><th>Actor</th><th>Action</th><th>Target</th><th>Detail</th><th>From</th></tr>
+  </thead>
+  <tbody>
+    {% for e in entries %}
+    <tr>
+      <td style="white-space:nowrap" title="{{ e.at.isoformat() }}">
+        <div style="color:var(--ink)">{{ e.at.strftime('%Y-%m-%d %H:%M:%S') }}</div>
+        <div class="text-[11.5px]" style="color:var(--muted)">{{ e.ago }}</div>
+      </td>
+      <td>
+        <a href="/admin/audit?actor={{ e.actor|urlencode }}" class="font-medium" style="color:var(--ink)">{{ e.actor }}</a>
+        {% if e.actor_id is none %}<div class="text-[11px]" style="color:var(--muted)">account deleted</div>{% endif %}
+      </td>
+      <td><a href="/admin/audit?action={{ e.action|urlencode }}" class="mono text-[12px]">{{ e.action }}</a></td>
+      <td class="mono text-[12px]" style="color:var(--ink-soft)">
+        {% if e.target_id %}
+        <a href="/admin/audit?target_type={{ e.target_type|urlencode }}&amp;target_id={{ e.target_id|urlencode }}">{{ e.target_type }} #{{ e.target_id }}</a>
+        {% else %}{{ e.target_type }}{% endif %}
+      </td>
+      <td class="text-[12px]" style="color:var(--ink-soft);max-width:420px">
+        {% if e.detail %}
+        <dl class="flex flex-wrap gap-x-3 gap-y-0.5">
+          {% for k, v in e.detail.items() %}
+          <div><dt class="inline" style="color:var(--muted)">{{ k }}</dt> <dd class="inline mono" style="word-break:break-all">{{ v }}</dd></div>
+          {% endfor %}
+        </dl>
+        {% else %}—{% endif %}
+      </td>
+      <td class="mono text-[12px]" style="color:var(--muted);white-space:nowrap">{{ e.ip or '—' }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+</div>
+</div>
+{% if truncated %}
+<p class="text-[12.5px] mt-3" style="color:var(--muted)">Showing the newest {{ limit }} entries — narrow with a filter, or page through <span class="mono">GET /api/audit</span>.</p>
+{% endif %}
+{% else %}
+<div class="surface p-8 text-center">
+  <div class="text-[15px] font-medium mb-1" style="color:var(--ink)">No audit entries{% if filters.actor or filters.action or filters.target_type or filters.target_id %} match{% else %} yet{% endif %}</div>
+  <div class="text-[13px]" style="color:var(--muted)">Every add, delete, triage decision, alert-routing change, key, user and settings change lands here.</div>
+</div>
+{% endif %}
+{% endblock %}

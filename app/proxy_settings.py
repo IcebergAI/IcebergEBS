@@ -16,7 +16,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app import proxy
 from app.config import settings
-from app.models import ProxySettings, _utcnow
+from app.models import AuditLog, ProxySettings, _utcnow
 
 _SINGLETON_ID = 1
 
@@ -78,8 +78,13 @@ async def get_settings(session: AsyncSession) -> ProxySettings:
     return row
 
 
-async def update_settings(session: AsyncSession, changes: dict[str, Any]) -> ProxySettings:
+async def update_settings(
+    session: AsyncSession, changes: dict[str, Any], *, audit: AuditLog | None = None
+) -> ProxySettings:
     """Apply a whitelisted patch to the singleton row and refresh the snapshot.
+
+    ``audit`` (#34) is an unattached ``AuditLog`` row added to the session right
+    before the commit, so it lands with the change and never without it.
 
     The EXPLICIT⇒URL invariant is enforced HERE, on the resulting row, under a
     ``FOR UPDATE`` row lock — validating before the update (in the route) is a
@@ -117,6 +122,8 @@ async def update_settings(session: AsyncSession, changes: dict[str, Any]) -> Pro
         raise ValueError("explicit mode requires a proxy URL")
     row.updated_at = _utcnow()
     session.add(row)
+    if audit is not None:
+        session.add(audit)
     try:
         await session.commit()
     except IntegrityError as exc:

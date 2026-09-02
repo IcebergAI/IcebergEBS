@@ -19,6 +19,7 @@ from app.oidc import service as oidc_service
 from app.ratelimit import api_limiter, login_request_limiter
 from app.routes import alerts as alerts_routes
 from app.routes import api as api_routes
+from app.routes import audit as audit_routes
 from app.routes import keys as keys_routes
 from app.routes import oidc as oidc_routes
 from app.routes import oidc_settings as oidc_settings_routes
@@ -297,6 +298,7 @@ app.include_router(api_routes.router)
 app.include_router(users_routes.router)
 app.include_router(alerts_routes.router)
 app.include_router(keys_routes.router)
+app.include_router(audit_routes.router)
 app.include_router(proxy_routes.router)
 app.include_router(oidc_routes.router)
 app.include_router(oidc_settings_routes.router)

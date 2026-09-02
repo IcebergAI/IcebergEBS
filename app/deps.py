@@ -9,9 +9,9 @@ from typing import Annotated, TypeVar
 from fastapi import Depends, HTTPException
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from app.auth import require_admin, require_admin_ui, require_api_auth, require_auth, require_session_user
+from app.auth import require_api_auth, require_auth, require_role, require_role_ui, require_session_user
 from app.database import get_session
-from app.models import User
+from app.models import Role, User
 
 # Database session (one per request).
 SessionDep = Annotated[AsyncSession, Depends(get_session)]
@@ -66,6 +66,23 @@ WebUser = Annotated[User, Depends(require_auth)]
 # Raises JSON 401, never redirects.
 SessionUser = Annotated[User, Depends(require_session_user)]
 
-# Admin-only variants of the two above.
-AdminUser = Annotated[User, Depends(require_admin)]
-AdminUserUI = Annotated[User, Depends(require_admin_ui)]
+# Role gates (#33). Each is an EXPLICIT allowed set (see auth.require_role) —
+# pick the narrowest one that fits the route:
+#
+#   AdminUser     users, alert destinations + rules, settings, threat-list ingest
+#   AnalystUser   every extension mutation (add / bulk / inventory / delete / refresh /
+#                 watchlist / triage) — admin OR analyst
+#   AuditReader   the audit trail — admin OR auditor (an auditor's whole purpose;
+#                 an analyst does not get to read other users' actions)
+#
+# Reads stay on CurrentUser: the auditor role is "read everything, change nothing".
+# Self-service credential routes (own password, own API keys) also stay on
+# CurrentUser/SessionUser — an auditor must be able to rotate a leaked secret.
+AdminUser = Annotated[User, Depends(require_role(Role.ADMIN))]
+AnalystUser = Annotated[User, Depends(require_role(Role.ADMIN, Role.ANALYST))]
+AuditReader = Annotated[User, Depends(require_role(Role.ADMIN, Role.AUDITOR))]
+
+# HTML counterparts (303 redirects instead of JSON 401/403).
+AdminUserUI = Annotated[User, Depends(require_role_ui(Role.ADMIN))]
+AnalystUserUI = Annotated[User, Depends(require_role_ui(Role.ADMIN, Role.ANALYST))]
+AuditReaderUI = Annotated[User, Depends(require_role_ui(Role.ADMIN, Role.AUDITOR))]

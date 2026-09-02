@@ -42,10 +42,15 @@
 <section class="mb-8">
   <div class="flex items-center justify-between mb-3">
     <h2 class="section-title" style="margin:0">Rules</h2>
+    {% if can_manage_alerts %}
     <button class="btn btn-primary btn-sm" @click="showAddRule=!showAddRule" :disabled="destinations.length===0">
       <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
       New rule
     </button>
+    {% else %}
+    {# Destinations + rules are admin-only (#33): analysts and auditors see, admins change. #}
+    <span class="text-[12px]" style="color:var(--muted)">Managed by an admin</span>
+    {% endif %}
   </div>
 
   <template x-if="destinations.length===0">
@@ -114,11 +119,15 @@
           <span class="chip" style="background:var(--accent-soft);color:var(--accent);border-color:color-mix(in oklch,var(--accent) 22%,transparent)" x-text="r.dest_label"></span>
         </div>
         <div class="flex items-center gap-2">
+          {% if can_manage_alerts %}
           <button class="switch" :class="r.enabled && 'on'" @click="toggleRule(r)">
             <span class="track"><span class="thumb"></span></span>
             <span class="text-[12px]" style="color:var(--muted)" x-text="r.enabled ? 'On' : 'Off'"></span>
           </button>
           <button class="btn btn-danger btn-sm" @click="deleteRule(r.id)">Delete</button>
+          {% else %}
+          <span class="text-[12px]" style="color:var(--muted)" x-text="r.enabled ? 'On' : 'Off'"></span>
+          {% endif %}
         </div>
       </div>
     </template>
@@ -129,10 +138,14 @@
 <section class="mb-8">
   <div class="flex items-center justify-between mb-3">
     <h2 class="section-title" style="margin:0">Destinations</h2>
+    {% if can_manage_alerts %}
     <button class="btn btn-secondary btn-sm" @click="showAddDest=!showAddDest">
       <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
       New destination
     </button>
+    {% else %}
+    <span class="text-[12px]" style="color:var(--muted)">Managed by an admin</span>
+    {% endif %}
   </div>
 
   <div class="surface p-5 mb-3" x-show="showAddDest" x-cloak style="max-width:520px">
@@ -189,11 +202,18 @@
             <td><span class="chip" x-text="kindLabel(d.kind)"></span></td>
             <td class="mono text-[12px]" style="color:var(--muted);max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" x-text="d.target"></td>
             <td>
+              {% if can_manage_alerts %}
               <button class="badge" @click="toggleDest(d)"
                       :style="d.enabled ? 'background:var(--risk-low-bg);color:var(--badge-low-color);border-color:color-mix(in oklch, var(--risk-low) 25%, transparent)' : 'background:var(--surface-2);color:var(--muted);border-color:var(--line)'"
                       x-text="d.enabled ? '● enabled' : '○ disabled'"></button>
+              {% else %}
+              <span class="badge"
+                    :style="d.enabled ? 'background:var(--risk-low-bg);color:var(--badge-low-color);border-color:color-mix(in oklch, var(--risk-low) 25%, transparent)' : 'background:var(--surface-2);color:var(--muted);border-color:var(--line)'"
+                    x-text="d.enabled ? '● enabled' : '○ disabled'"></span>
+              {% endif %}
             </td>
             <td>
+              {% if can_manage_alerts %}
               <div class="flex justify-end items-center gap-2">
                 <span x-show="d._testMsg"
                       :style="d._testOk ? 'color:var(--risk-low)' : 'color:var(--risk-critical)'"
@@ -202,6 +222,7 @@
                 <button class="btn btn-secondary btn-sm" @click="testDest(d)" :disabled="d._testing">Test</button>
                 <button class="btn btn-danger btn-sm" @click="deleteDest(d.id)">Delete</button>
               </div>
+              {% endif %}
             </td>
           </tr>
         </template>

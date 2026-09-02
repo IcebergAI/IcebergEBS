@@ -19,15 +19,16 @@ from sqlalchemy.exc import IntegrityError
 from sqlmodel import func, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
+from app import audit
 from app.config import settings
 from app.fetchers.transport import build_egress_transport
-from app.models import User, _utcnow
+from app.models import Role, User, _utcnow
 from app.oidc import auth0 as _auth0  # noqa: F401 - registers adapter
 from app.oidc import authentik as _authentik  # noqa: F401 - registers adapter
 from app.oidc import entra as _entra  # noqa: F401 - registers adapter
 from app.oidc import okta as _okta  # noqa: F401 - registers adapter
 from app.oidc.base import OIDCIdentity
-from app.oidc.config import OIDCProviderConfig
+from app.oidc.config import ROLE_MAP_ALIASES, OIDCProviderConfig
 
 logger = logging.getLogger(__name__)
 
@@ -191,15 +192,29 @@ async def end_session_url(provider: str, *, post_logout_redirect_uri: str, id_to
     return f"{endpoint}?{urlencode(params)}"
 
 
-def map_is_admin(cfg: OIDCProviderConfig, identity: OIDCIdentity) -> bool:
-    """True iff any IdP group maps to "admin" in the provider's allowlist.
+# Highest-wins order for map_role: a user in both an "auditor" group and an
+# "admin" group is an admin — the IdP does not guarantee group order, so the
+# deterministic union (any-match, take the most privileged) is the only sane
+# semantics, exactly as the pre-#33 boolean was any-match.
+_ROLE_PRECEDENCE: tuple[Role, ...] = (Role.ADMIN, Role.ANALYST, Role.AUDITOR)
 
-    Default is non-admin (no self-elevation). Any-match rather than
-    deep_thought's first-match: the IdP does not guarantee group order, and for a
-    boolean the deterministic union is the only sane semantics. Widens to a role
-    enum when RBAC lands (#33).
+
+def map_role(cfg: OIDCProviderConfig, identity: OIDCIdentity) -> Role:
+    """Resolve the workspace role from the IdP groups via the provider's allowlist (#33).
+
+    Any-match, highest role wins. **No match ⇒ analyst** — the pre-RBAC "regular
+    user" level, so an existing deployment's unmapped SSO users keep the access
+    they had (the sync runs on every login and a demotion revokes sessions, so a
+    silently changed default would lock out a whole org at next sign-in).
+    Least-privilege is opt-in: map the group to ``auditor``. The legacy ``user``
+    value is an alias of ``analyst`` (config.ROLE_MAP_ALIASES). Admin never
+    self-elevates: an empty map yields analyst for everyone.
     """
-    return any(cfg.role_map.get(group) == "admin" for group in identity.groups)
+    mapped = {ROLE_MAP_ALIASES.get(cfg.role_map.get(group, ""), cfg.role_map.get(group)) for group in identity.groups}
+    for role in _ROLE_PRECEDENCE:
+        if role.value in mapped:
+            return role
+    return Role.ANALYST
 
 
 def _subject_hash(identity: OIDCIdentity) -> str:
@@ -239,21 +254,31 @@ async def _sync_returning_user(
         dirty = True
 
     if user.role_managed_by_idp:
-        mapped = map_is_admin(cfg, identity)
-        if mapped != user.is_admin:
-            previous = user.is_admin
-            user.is_admin = mapped
+        mapped = map_role(cfg, identity).value
+        if mapped != user.role:
+            previous = user.role
+            user.role = mapped
             # Revoke sessions minted under the previous authorization state
             # (password_changed_at is the generic session cutoff — see models.User).
             # The callback issues this login a fresh cookie after commit.
             user.password_changed_at = _utcnow()
             dirty = True
             logger.warning(
-                "OIDC admin sync for user %s via %s: is_admin %s -> %s",
+                "OIDC role sync for user %s via %s: %s -> %s",
                 user.username,
                 cfg.key,
                 previous,
                 mapped,
+            )
+            # An IdP-driven authorization change is a user change (#34): the actor is
+            # the account itself, acting through the provider. Committed with it below.
+            audit.record(
+                session,
+                user,
+                "user.role_sync",
+                "user",
+                user.id,
+                {"previous": previous, "role": mapped, "provider": cfg.key, "via": "oidc"},
             )
 
     if dirty:
@@ -421,7 +446,7 @@ async def provision_oidc_user(
         username=username,
         password_hash=None,
         email=normalized_email,
-        is_admin=map_is_admin(cfg, identity),
+        role=map_role(cfg, identity).value,
         auth_provider=cfg.key,
         oidc_issuer=identity.issuer,
         oidc_subject=identity.subject,
@@ -463,5 +488,18 @@ async def provision_oidc_user(
             logger.warning("OIDC JIT provisioning conflict for provider %s", cfg.key)
             raise OIDCProvisionError("provisioning conflict") from None
     await session.refresh(user)
-    logger.info("OIDC JIT-provisioned user %s via %s (admin=%s)", user.username, cfg.key, user.is_admin)
+    logger.info("OIDC JIT-provisioned user %s via %s (role=%s)", user.username, cfg.key, user.role)
+    # Recorded after the insert is durable rather than staged with it: the insert
+    # commit above is retried under a re-derived username on a unique-violation, and
+    # a staged row would be discarded by that rollback (#34).
+    audit.record(
+        session,
+        user,
+        "user.provision",
+        "user",
+        user.id,
+        {"username": user.username, "role": user.role, "provider": cfg.key, "via": "oidc"},
+    )
+    await session.commit()
+    await session.refresh(user)  # the commit expired the instance the callback reads
     return user, True

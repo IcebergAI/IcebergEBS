@@ -8,9 +8,9 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict
 from sqlmodel import select
 
-from app import proxy
+from app import audit, proxy
 from app.alert_queries import get_alert_log
-from app.deps import CurrentUser, SessionDep, get_owned_or_404
+from app.deps import AdminUser, CurrentUser, SessionDep, get_owned_or_404
 from app.models import AlertDestination, AlertRule, Extension
 from app.senders import AlertMessage, DestinationConfigError, get_sender, kind_descriptors, sender_kinds
 from app.senders.webhook import extension_deep_link
@@ -146,7 +146,8 @@ async def list_destinations(
 @router.post("/alerts/destinations", status_code=201)
 async def create_destination(
     body: DestinationIn,
-    current_user: CurrentUser,
+    request: Request,
+    current_user: AdminUser,
     session: SessionDep,
 ) -> DestinationOut:
     await _validate_destination(body.kind, body.target, body.config)
@@ -159,6 +160,19 @@ async def create_destination(
         enabled=body.enabled,
     )
     session.add(dest)
+    await session.flush()
+    # target is recorded (a webhook URL is a capability token for Slack-style hooks,
+    # but it is the admin's own destination and the whole point of the trail is to
+    # show WHERE alerts were pointed); config values are field-name-only (#34).
+    audit.record(
+        session,
+        current_user,
+        "destination.create",
+        "destination",
+        dest.id,
+        {"label": body.label, "kind": body.kind, "target": body.target, "config_fields": sorted(body.config)},
+        request=request,
+    )
     await session.commit()
     await session.refresh(dest)
     return DestinationOut.from_db(dest)
@@ -168,7 +182,8 @@ async def create_destination(
 async def update_destination(
     dest_id: int,
     body: DestinationPatch,
-    current_user: CurrentUser,
+    request: Request,
+    current_user: AdminUser,
     session: SessionDep,
 ) -> DestinationOut:
     # Row-lock + refresh (#217): the resulting-state validation below reads the
@@ -193,6 +208,21 @@ async def update_destination(
     if body.enabled is not None:
         dest.enabled = body.enabled
     session.add(dest)
+    audit.record(
+        session,
+        current_user,
+        "destination.update",
+        "destination",
+        dest_id,
+        {
+            "fields": sorted(body.model_fields_set),
+            "label": dest.label,
+            "kind": dest.kind,
+            "target": dest.target,
+            "enabled": dest.enabled,
+        },
+        request=request,
+    )
     await session.commit()
     await session.refresh(dest)
     return DestinationOut.from_db(dest)
@@ -201,10 +231,20 @@ async def update_destination(
 @router.delete("/alerts/destinations/{dest_id}")
 async def delete_destination(
     dest_id: int,
-    current_user: CurrentUser,
+    request: Request,
+    current_user: AdminUser,
     session: SessionDep,
 ):
     dest = await get_owned_or_404(session, AlertDestination, dest_id, current_user.id)
+    audit.record(
+        session,
+        current_user,
+        "destination.delete",
+        "destination",
+        dest_id,
+        {"label": dest.label, "kind": dest.kind, "target": dest.target},
+        request=request,
+    )
     # The FK ON DELETE actions handle the cleanup: the destination's rules cascade
     # away, and the AlertLog history rows pointing at this destination (and at those
     # rules) keep their user_id but have destination_id/rule_id set to NULL — so they
@@ -233,7 +273,8 @@ async def list_rules(
 @router.post("/alerts/rules", status_code=201)
 async def create_rule(
     body: RuleIn,
-    current_user: CurrentUser,
+    request: Request,
+    current_user: AdminUser,
     session: SessionDep,
 ) -> RuleOut:
     if body.event_type not in VALID_EVENT_TYPES:
@@ -256,6 +297,21 @@ async def create_rule(
         enabled=body.enabled,
     )
     session.add(rule)
+    await session.flush()
+    audit.record(
+        session,
+        current_user,
+        "rule.create",
+        "rule",
+        rule.id,
+        {
+            "destination_id": body.destination_id,
+            "extension_id": body.extension_id,
+            "event_type": body.event_type,
+            "enabled": body.enabled,
+        },
+        request=request,
+    )
     await session.commit()
     await session.refresh(rule)
     return RuleOut.model_validate(rule)
@@ -265,7 +321,8 @@ async def create_rule(
 async def update_rule(
     rule_id: int,
     body: RulePatch,
-    current_user: CurrentUser,
+    request: Request,
+    current_user: AdminUser,
     session: SessionDep,
 ) -> RuleOut:
     rule = await get_owned_or_404(session, AlertRule, rule_id, current_user.id)
@@ -277,6 +334,15 @@ async def update_rule(
     if body.enabled is not None:
         rule.enabled = body.enabled
     session.add(rule)
+    audit.record(
+        session,
+        current_user,
+        "rule.update",
+        "rule",
+        rule_id,
+        {"fields": sorted(body.model_fields_set), "destination_id": rule.destination_id, "enabled": rule.enabled},
+        request=request,
+    )
     await session.commit()
     await session.refresh(rule)
     return RuleOut.model_validate(rule)
@@ -285,10 +351,20 @@ async def update_rule(
 @router.delete("/alerts/rules/{rule_id}")
 async def delete_rule(
     rule_id: int,
-    current_user: CurrentUser,
+    request: Request,
+    current_user: AdminUser,
     session: SessionDep,
 ):
     rule = await get_owned_or_404(session, AlertRule, rule_id, current_user.id)
+    audit.record(
+        session,
+        current_user,
+        "rule.delete",
+        "rule",
+        rule_id,
+        {"destination_id": rule.destination_id, "extension_id": rule.extension_id, "event_type": rule.event_type},
+        request=request,
+    )
     # AlertLog.rule_id is ON DELETE SET NULL, so the history rows survive the rule.
     await session.delete(rule)
     await session.commit()
@@ -318,7 +394,7 @@ async def alert_log(
 async def test_destination(
     dest_id: int,
     request: Request,
-    current_user: CurrentUser,
+    current_user: AdminUser,
     session: SessionDep,
 ):
     dest = await get_owned_or_404(session, AlertDestination, dest_id, current_user.id)
@@ -342,8 +418,22 @@ async def test_destination(
         app_url=extension_deep_link(0),
     )
     client: httpx.AsyncClient = request.app.state.http_client
+    target, config = dest.target, dest.config_dict()  # read before the commit below expires `dest`
+    # An outbound send is an action with external effect (a Jira/ServiceNow test
+    # creates a real ticket), so the trail records the ATTEMPT durably before the
+    # wire is touched — the row must exist even if delivery hangs or fails (#34).
+    audit.record(
+        session,
+        current_user,
+        "destination.test",
+        "destination",
+        dest_id,
+        {"label": dest.label, "kind": dest.kind},
+        request=request,
+    )
+    await session.commit()
     try:
-        await sender.send(client, dest.target, dest.config_dict(), message)
+        await sender.send(client, target, config, message)
         return {"ok": True}
     except Exception as exc:
         # Never surface the raw exception text to the caller: it can contain the

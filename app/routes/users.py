@@ -1,15 +1,16 @@
 from datetime import datetime, timezone
 from typing import Annotated
 
-from fastapi import APIRouter, HTTPException, Response
+from fastapi import APIRouter, HTTPException, Request, Response
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_validator
 from sqlalchemy import delete as sa_delete
 from sqlalchemy import update as sa_update
 from sqlmodel import select
 
+from app import audit
 from app.auth import MAX_PASSWORD_BYTES, clear_session, hash_password, verify_password
 from app.deps import AdminUser, CurrentUser, SessionDep
-from app.models import ApiKey, Extension, User
+from app.models import ApiKey, Extension, Role, User
 
 router = APIRouter(prefix="/api", tags=["users"])
 
@@ -34,7 +35,8 @@ class UserOut(BaseModel):
     id: int
     username: str
     email: str | None
-    is_admin: bool
+    # Workspace role (#33): admin | analyst | auditor — replaced the is_admin bool.
+    role: Role
     # "local" for password accounts, else the SSO provider key (#32) — lets the
     # admin UI tell SSO-provisioned accounts from local ones.
     auth_provider: str = "local"
@@ -44,7 +46,9 @@ class CreateUserIn(BaseModel):
     username: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=MAX_USERNAME_LENGTH)]
     password: str = Field(min_length=8)
     email: Annotated[str, StringConstraints(strip_whitespace=True, max_length=MAX_EMAIL_LENGTH)] | None = None
-    is_admin: bool = False
+    # Defaults to the least-surprising working role; an admin must opt a user INTO
+    # admin, and into the read-only auditor role, explicitly (#33).
+    role: Role = Role.ANALYST
 
     _check_password = field_validator("password")(_reject_over_long_password)
 
@@ -74,7 +78,8 @@ async def list_users(
 @router.post("/users", status_code=201)
 async def create_user(
     body: CreateUserIn,
-    _: AdminUser,
+    request: Request,
+    current_user: AdminUser,
     session: SessionDep,
 ) -> UserOut:
     existing = (await session.exec(select(User).where(User.username == body.username))).first()
@@ -85,9 +90,19 @@ async def create_user(
         username=body.username,
         password_hash=await hash_password(body.password),
         email=body.email,
-        is_admin=body.is_admin,
+        role=body.role.value,
     )
     session.add(user)
+    await session.flush()
+    audit.record(
+        session,
+        current_user,
+        "user.create",
+        "user",
+        user.id,
+        {"username": user.username, "role": user.role, "email": user.email},
+        request=request,
+    )
     await session.commit()
     await session.refresh(user)
     return UserOut.model_validate(user)
@@ -96,6 +111,7 @@ async def create_user(
 @router.delete("/users/{user_id}")
 async def delete_user(
     user_id: int,
+    request: Request,
     current_user: AdminUser,
     session: SessionDep,
 ):
@@ -105,6 +121,16 @@ async def delete_user(
     target = await session.get(User, user_id)
     if not target:
         raise HTTPException(status_code=404, detail="User not found")
+
+    audit.record(
+        session,
+        current_user,
+        "user.delete",
+        "user",
+        user_id,
+        {"username": target.username, "role": target.role, "auth_provider": target.auth_provider},
+        request=request,
+    )
 
     # Preserve history rather than hard-cascading owned data (#28). The user's config
     # rows (rules, destinations, API keys) are ON DELETE CASCADE; AlertLog rows keep
@@ -127,6 +153,7 @@ async def delete_user(
 @router.patch("/users/me/password")
 async def change_password(
     body: ChangePasswordIn,
+    request: Request,
     response: Response,
     current_user: CurrentUser,
     session: SessionDep,
@@ -143,6 +170,8 @@ async def change_password(
     current_user.password_changed_at = datetime.now(timezone.utc)
     session.add(current_user)
     await session.execute(sa_delete(ApiKey).where(ApiKey.user_id == current_user.id))
+    # The event only — never anything about the password itself (#34).
+    audit.record(session, current_user, "user.password_change", "user", current_user.id, request=request)
     await session.commit()
     clear_session(response)
     return {"ok": True}

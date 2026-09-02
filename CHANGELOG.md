@@ -27,6 +27,34 @@ release version; only the SemVer part appears here.
   domains, or static findings. The extension detail page shows the latest explainable update
   delta; baselines and failed inspections never create alerts.
 
+- **Role-based access control (#33)** — `User.is_admin` is replaced by a `role` of
+  `admin` / `analyst` / `auditor`. Auditors are read-only (every mutating route is 403;
+  they keep self-service over their own password and API keys); analysts add, refresh
+  and triage extensions but cannot manage users, alert destinations/rules, or settings;
+  admins do everything. `require_admin` is generalised to `require_role(...)` with
+  explicit allowed sets. Existing admins migrate to `admin`, everyone else to `analyst`.
+  SSO role maps accept `group=admin|analyst|auditor` (the old `user` value still means
+  `analyst`); an unmapped SSO login stays an analyst. The rail, the users page and the
+  extension/alert pages hide controls the caller's role cannot use.
+
+- **Audit log (#34)** — every mutating action (extension add/discard/delete/refresh/
+  watchlist/triage, inventory and threat-list ingestion, destination + rule CRUD and
+  test sends, API-key mint/revoke, user create/delete/password change, proxy + SSO
+  settings updates and proxy probes, SSO provisioning and role sync) writes an
+  `AuditLog` row — who, what, which record, from which IP — in the **same transaction**
+  as the change. Readable by admins and auditors at `/admin/audit` and `GET /api/audit`
+  (filter by actor / action / target / since). Never pruned. Detail never carries
+  secrets: settings changes record field names, keys record prefix/suffix only.
+
+### Changed
+
+- **`POST /api/users` takes `role`** (`admin` / `analyst` / `auditor`, default
+  `analyst`) instead of `is_admin`; `GET /api/users` returns `role`. An `is_admin`
+  key in the request body is ignored.
+- **Alert destinations and rules are admin-only.** Previously any user could
+  create them; per #33 they are workspace-admin capabilities. Existing rows are
+  untouched and still fire.
+
 ### Security
 
 - **CI supply chain**: bumped the pinned `zizmor` from 1.27.0, which upstream yanked for

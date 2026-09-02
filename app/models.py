@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+from enum import StrEnum
 from typing import Any, Optional
 
 from sqlalchemy import CheckConstraint, Column, DateTime, Index, desc, text
@@ -20,6 +21,28 @@ def _tz_column(*, nullable: bool) -> Column[Any]:
     returned per call because a Column instance binds to a single table.
     """
     return Column(DateTime(timezone=True), nullable=nullable)
+
+
+class Role(StrEnum):
+    """Workspace roles (#33), least → most privileged.
+
+    * ``auditor`` — read-only: every workspace mutation is refused (403). May still
+      manage their **own** credentials (password, API keys), so a compromised
+      auditor password can be rotated without an admin.
+    * ``analyst`` — triage: add / delete / refresh / watchlist / triage extensions,
+      push inventory. Cannot manage users, alert destinations + rules, or settings.
+    * ``admin`` — everything.
+
+    Stored as a plain string column backed by the ``ck_user_role`` CHECK (the
+    #217 "enforce the invariant in the DB" rule), like ``Extension.triage_status``.
+    Authorization is an explicit allowed-set per route (``auth.require_role``),
+    not a rank comparison — the audit log is readable by admin **and** auditor but
+    not analyst, which no linear hierarchy expresses.
+    """
+
+    ADMIN = "admin"
+    ANALYST = "analyst"
+    AUDITOR = "auditor"
 
 
 class User(SQLModel, table=True):
@@ -59,6 +82,12 @@ class User(SQLModel, table=True):
             "(oidc_issuer IS NULL) = (oidc_subject IS NULL)",
             name="ck_user_issuer_subject_together",
         ),
+        # Schema backstop for the role enum (#33) — keep in lockstep with ``Role``;
+        # tests/test_rbac.py fails on drift.
+        CheckConstraint(
+            "role IN ('admin', 'analyst', 'auditor')",
+            name="ck_user_role",
+        ),
     )
 
     id: Optional[int] = Field(default=None, primary_key=True)
@@ -67,7 +96,10 @@ class User(SQLModel, table=True):
     # refused by the password login path (see auth.verify_credentials).
     password_hash: Optional[str] = None
     email: Optional[str] = None
-    is_admin: bool = False
+    # Workspace role (#33) — one of ``Role``; replaced the ``is_admin`` bool. Local
+    # accounts default to analyst (the pre-RBAC "regular user" level); the seeded
+    # break-glass account and admin-created admins carry ``admin``.
+    role: str = Field(default=Role.ANALYST.value, index=True)
     # "local" for password accounts, else the OIDC adapter key (#32) — used to pick
     # the adapter + for the admin-UI badge, NOT as the identity key (see __table_args__).
     auth_provider: str = Field(default="local", index=True)
@@ -77,13 +109,13 @@ class User(SQLModel, table=True):
     # IdP tenant provenance (Entra `tid`). Immutable once set — a returning login
     # from a different tenant is an identity conflict, not the same account.
     auth_tenant: Optional[str] = None
-    # True only for JIT-provisioned SSO accounts: their is_admin flag is re-derived
+    # True only for JIT-provisioned SSO accounts: their role is re-derived
     # from IdP groups on every login. Locally-created users (incl. the seeded
     # break-glass admin) keep False, so the IdP can never demote them.
     role_managed_by_idp: bool = False
     created_at: datetime = Field(default_factory=_utcnow, sa_column=_tz_column(nullable=False))
     # Generic session-revocation cutoff (M1 / #6, widened by #32): bumped on
-    # password change AND on an IdP-driven authorization change (is_admin sync).
+    # password change AND on an IdP-driven authorization change (role sync).
     # Sessions/cookies signed before this instant are rejected.
     password_changed_at: Optional[datetime] = Field(default_factory=_utcnow, sa_column=_tz_column(nullable=True))
 
@@ -434,3 +466,50 @@ class AlertLog(SQLModel, table=True):
     sent_at: datetime = Field(default_factory=_utcnow, sa_column=_tz_column(nullable=False))
     success: bool
     error: Optional[str] = None
+
+
+class AuditLog(SQLModel, table=True):
+    """Append-only trail of every mutating action (#34).
+
+    One row per state change made **by a user** (extension add/delete/refresh/
+    watchlist/triage, destination + rule CRUD, API-key mint/revoke, user
+    create/delete/password change, settings updates, threat-list ingestion, SSO
+    provisioning and role sync). Scheduler-driven refreshes are system actions and
+    are recorded by ``FetchLog``, not here.
+
+    **Invariant — the row commits with the change.** ``app/audit.py:record`` only
+    ``session.add``s; the route's own ``commit()`` persists both together, so a
+    rolled-back mutation leaves no audit row and a committed one can't be missing
+    its row (a crash between two commits would otherwise open exactly the gap this
+    table exists to close). ``tests/test_audit.py`` guards both directions.
+
+    **Forensics survive deletion.** ``actor_id`` is ``SET NULL`` on user deletion
+    (like ``AlertLog.user_id``) and ``actor`` snapshots the username, so the trail
+    still names who acted after the account is gone. ``target_id`` is a string:
+    targets are heterogeneous (ints, usernames, a settings singleton) and a deleted
+    target is only ever referenced, never joined.
+
+    **Never pruned.** This is the compliance trail; ``retention.prune_expired``
+    deliberately excludes it (a bounded-retention setting is a follow-up).
+    """
+
+    __table_args__ = (
+        # Newest-first listing is the only read pattern (admin page + API).
+        Index("ix_auditlog_at_desc", desc("at"), desc("id")),
+        # "What happened to X?" — the forensic drill-down.
+        Index("ix_auditlog_target", "target_type", "target_id"),
+    )
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    actor_id: Optional[int] = Field(default=None, foreign_key="user.id", ondelete="SET NULL", index=True)
+    actor: str  # username snapshot at the time of the action
+    action: str  # dotted "<target_type>.<verb>", e.g. "extension.delete", "user.role_sync"
+    target_type: str
+    target_id: Optional[str] = None
+    detail: Optional[str] = None  # JSON-in-str: action-specific, NEVER secrets (see audit.record)
+    ip: Optional[str] = None  # client IP as uvicorn saw it (the Caddy-canonical XFF, #77)
+    at: datetime = Field(default_factory=_utcnow, sa_column=_tz_column(nullable=False))
+
+    def detail_dict(self) -> dict[str, Any]:
+        """Stored detail as a dict; {} when missing/malformed (the #167 single-parse rule)."""
+        return json_object(self.detail, "audit_log_detail", self.id) or {}

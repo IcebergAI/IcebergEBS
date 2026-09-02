@@ -14,7 +14,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.config import settings
 from app.database import engine, get_session
-from app.models import User
+from app.models import Role, User
 
 logger = logging.getLogger(__name__)
 
@@ -258,7 +258,7 @@ async def require_api_auth(
         # Keys minted before the user's password_changed_at are revoked, mirroring
         # the session-cookie cutoff (#278). Local password change already deletes
         # keys outright; this fence is what makes the IdP-driven bump (the #32
-        # is_admin sync, which revokes cookies via the same marker) revoke bearer
+        # role sync, which revokes cookies via the same marker) revoke bearer
         # tokens too, instead of leaving them as a side door.
         if not _api_key_after_password_change(user, created_at):
             raise HTTPException(status_code=401, detail="API key revoked")
@@ -294,23 +294,54 @@ async def require_api_auth(
     raise HTTPException(status_code=401, detail="Authentication required")
 
 
-async def require_admin(current_user: Annotated[User, Depends(require_api_auth)]):
-    """FastAPI dependency for JSON API routes — requires admin, raises 401/403."""
-    if not current_user.is_admin:
-        raise HTTPException(status_code=403, detail="Admin access required")
-    return current_user
+def _role_label(roles: tuple[Role, ...]) -> str:
+    return " or ".join(r.value for r in roles)
 
 
-async def require_admin_ui(current_user: Annotated[User, Depends(require_auth)]):
-    """FastAPI dependency for HTML admin routes — redirect semantics, not JSON errors.
+def require_role(*roles: Role):
+    """Build a JSON-API dependency that admits only users whose role is in ``roles``.
+
+    Generalises the pre-#33 ``require_admin``: ``require_role(Role.ADMIN)`` is the
+    old admin gate; ``require_role(Role.ADMIN, Role.ANALYST)`` is the write gate on
+    the extension routes; ``require_role(Role.ADMIN, Role.AUDITOR)`` reads the audit
+    log. The allowed set is **explicit** rather than a rank so a route can't
+    accidentally admit a role by being "at least" something. Built on
+    ``require_api_auth`` (Bearer or cookie; 401, never a redirect); a wrong role is
+    a 403 with the same generic message whatever the caller's actual role, so the
+    response doesn't enumerate roles.
+    """
+    allowed = frozenset(r.value for r in roles)
+    if not allowed:
+        raise ValueError("require_role needs at least one role")
+    label = _role_label(roles)
+
+    async def _dependency(current_user: Annotated[User, Depends(require_api_auth)]) -> User:
+        if current_user.role not in allowed:
+            raise HTTPException(status_code=403, detail=f"{label} access required")
+        return current_user
+
+    _dependency.__name__ = f"require_role_{'_'.join(r.value for r in roles)}"
+    return _dependency
+
+
+def require_role_ui(*roles: Role):
+    """HTML counterpart of ``require_role`` — redirect semantics, not JSON errors.
 
     Built on ``require_auth`` so an expired/absent session redirects to /login (303)
-    like every other UI route, and a non-admin is bounced to the dashboard instead
-    of receiving a raw JSON 403 (M2 / #7).
+    like every other UI route, and a user with the wrong role is bounced to the
+    dashboard instead of receiving a raw JSON 403 (M2 / #7).
     """
-    if not current_user.is_admin:
-        raise HTTPException(status_code=303, headers={"Location": "/"})
-    return current_user
+    allowed = frozenset(r.value for r in roles)
+    if not allowed:
+        raise ValueError("require_role_ui needs at least one role")
+
+    async def _dependency(current_user: Annotated[User, Depends(require_auth)]) -> User:
+        if current_user.role not in allowed:
+            raise HTTPException(status_code=303, headers={"Location": "/"})
+        return current_user
+
+    _dependency.__name__ = f"require_role_ui_{'_'.join(r.value for r in roles)}"
+    return _dependency
 
 
 def set_session(response, username: str, *, max_age: int | None = None) -> None:
@@ -370,7 +401,7 @@ async def seed_admin() -> None:
         user = User(
             username=settings.admin_username,
             password_hash=await hash_password(settings.admin_password.get_secret_value()),
-            is_admin=True,
+            role=Role.ADMIN.value,
         )
         session.add(user)
         await session.commit()

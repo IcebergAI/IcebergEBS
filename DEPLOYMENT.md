@@ -516,10 +516,12 @@ Setting up a provider:
    Auth0/Okta **domain** (Okta optionally an authorization-server id).
 3. Behind Caddy/the ingress, set `ICEBERG_EBS_OIDC_REDIRECT_BASE_URL` to the public origin so the
    callback URL is built with the browser-visible host/scheme rather than the app-observed one.
-4. To map IdP groups to admin, configure the provider's group claim (`…_ROLE_CLAIM`, e.g.
-   `groups`) and an allowlist `…_ROLE_MAP` of `group=admin|user` pairs. Only groups mapped to
-   `admin` grant admin; the default is a regular user (no self-elevation). The mapped flag is
-   re-synced on every SSO login and revokes that user's older sessions when it changes.
+4. To map IdP groups to roles, configure the provider's group claim (`…_ROLE_CLAIM`, e.g.
+   `groups`) and an allowlist `…_ROLE_MAP` of `group=admin|analyst|auditor` pairs (`user` is still
+   accepted as an alias of `analyst`). A user in several mapped groups gets the most privileged
+   role; the default for an unmapped user is `analyst` (no self-elevation — map a group to
+   `auditor` for read-only). The mapped role is re-synced on every SSO login, revokes that user's
+   older sessions when it changes, and is recorded in the audit log.
 
 Operational notes:
 

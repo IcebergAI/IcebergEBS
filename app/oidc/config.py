@@ -26,10 +26,12 @@ AUTH_MODES = (AUTH_MODE_LOCAL, AUTH_MODE_OIDC, AUTH_MODE_BOTH)
 # these to adapter implementations (registered at import in app/oidc/service.py).
 PROVIDER_KEYS = ("entra", "authentik", "auth0", "okta")
 
-# role_map values an IdP group may map to. "admin" grants is_admin; "user" is an
-# explicit non-admin mapping. Widens to the role enum when RBAC lands (#33) —
-# which is also why the User provenance column is named role_managed_by_idp.
-ROLE_MAP_VALUES = ("admin", "user")
+# role_map values an IdP group may map to (#33): the three ``models.Role`` values
+# plus "user", the pre-RBAC spelling of a non-admin mapping, kept as an alias of
+# "analyst" so an existing ``group=user`` config keeps working unchanged. Resolved
+# in service.map_role (highest matched role wins; no match ⇒ analyst).
+ROLE_MAP_VALUES = ("admin", "analyst", "auditor", "user")
+ROLE_MAP_ALIASES = {"user": "analyst"}
 
 # Fields an admin may change (also the OIDCRuntimeConfig field list). Client
 # secrets are intentionally absent — they are env-only and never reach the DB.
@@ -78,16 +80,16 @@ class OIDCProviderConfig:
     client_secret: str = field(repr=False)
     metadata_url: str
     scopes: str = "openid email profile"
-    # Optional group claim → is_admin allowlist. Empty ⇒ nobody is elevated
-    # (no self-elevation).
+    # Optional group claim → role allowlist. Empty ⇒ nobody is elevated
+    # (no self-elevation): every SSO user is an analyst.
     role_claim: str = ""
     role_map: dict[str, str] = field(default_factory=dict)
 
 
 def _parse_role_map(raw: str) -> dict[str, str]:
-    """Parse a "group=admin,group2=user" allowlist into a dict.
+    """Parse a "group=admin,group2=auditor" allowlist into a dict.
 
-    Unknown values are dropped where the map is applied (service.map_is_admin);
+    Unknown values are dropped where the map is applied (service.map_role);
     validate_config rejects them up front for admin-visible feedback.
     """
     result: dict[str, str] = {}

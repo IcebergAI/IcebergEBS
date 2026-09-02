@@ -50,8 +50,21 @@ production, with a server-side maximum age.
 
 **Revocation.** Changing a password bumps a server-side cutoff that invalidates
 every session issued before it, and deletes all of that user's API keys. An
-IdP-driven change to a user's admin status bumps the same cutoff, so a demotion
+IdP-driven change to a user's role bumps the same cutoff, so a demotion
 takes effect immediately rather than at the next session expiry.
+
+**Roles.** Every account is an `admin`, `analyst` or `auditor`. Auditors are
+read-only — every mutating route is refused with `403` — but keep control of their
+own password and API keys so a leaked credential can be rotated without an admin.
+Analysts add and triage extensions; only admins manage users, alert routing and
+settings. The JSON API is the enforcement point; the UI merely hides what a role
+cannot do.
+
+**Audit trail.** Every mutating action is recorded — actor, action, target, client
+address — in the same database transaction as the change, so a saved change cannot
+lack its entry and a rejected request leaves none. Entries survive deletion of the
+actor and the target, are never pruned by the retention job, and never contain
+secrets. Admins and auditors read them at `/admin/audit` or `GET /api/audit`.
 
 **API keys** are shown once at creation and stored only as a hash. They can be
 marked read-only.
@@ -66,8 +79,8 @@ than an application check alone, so two concurrent first-logins cannot both pass
 
 - **Client secrets are environment-only** — never persisted to the database, exposed
   through the API or UI, or logged.
-- **Group → admin mapping defaults to non-admin**, and role sync only ever touches
-  accounts explicitly marked as IdP-managed. The seeded break-glass admin is
+- **Group → role mapping defaults to `analyst`, never admin**, and role sync only
+  ever touches accounts explicitly marked as IdP-managed. The seeded break-glass admin is
   therefore immune to IdP changes: a compromised or misconfigured directory cannot
   demote it or lock you out.
 - **SSO sessions expire faster than local ones**, because an IdP-side account
@@ -200,8 +213,8 @@ GitHub Actions, and container images. All GitHub Actions are **SHA-pinned**.
 
 Stated plainly, because a security page that only lists strengths is not useful:
 
-- **Admin is a user-management role**, not a data-isolation boundary. An admin can
-  create further admins, and an admin's API key inherits those rights.
+- **Roles gate capabilities, not data.** Ownership still scopes what each account
+  sees; an admin can create further admins, and any API key inherits its owner's role.
 - **Horizontal scaling is not supported.** Rate-limiter state and the scheduler are
   process-local; running multiple workers weakens login throttling and duplicates
   alerts.

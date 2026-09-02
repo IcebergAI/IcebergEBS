@@ -8,11 +8,11 @@ key is a 422, not silently dropped, and responses expose only per-provider
 
 from datetime import datetime
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, field_validator
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from app import oidc_settings
+from app import audit, oidc_settings
 from app.deps import AdminUser, SessionDep
 from app.oidc.config import EDITABLE_FIELDS, client_secret_status
 
@@ -95,13 +95,28 @@ async def get_oidc_settings(_: AdminUser, session: SessionDep) -> OIDCSettingsOu
 
 
 @router.put("/oidc/settings")
-async def put_oidc_settings(body: OIDCSettingsUpdate, _: AdminUser, session: SessionDep) -> OIDCSettingsOut:
+async def put_oidc_settings(
+    body: OIDCSettingsUpdate, request: Request, current_user: AdminUser, session: SessionDep
+) -> OIDCSettingsOut:
     # Validation runs inside update_settings, on the RESULTING config under a
     # FOR UPDATE row lock — a route-level pre-check would be a TOCTOU against a
     # concurrent PUT (e.g. one sets auth_mode=oidc while another disables the last
     # complete provider; each pre-check passes, the merge locks everyone out).
+    changes = body.model_dump(exclude_unset=True)
+    # Field names only (client secrets are env-only and never in `changes`, but the
+    # role maps + URLs are still config, not something the trail needs verbatim);
+    # the auth_mode value IS recorded — flipping to oidc-only is the lockout-relevant
+    # change an auditor asks about. Committed by update_settings with the row (#34).
+    trail = audit.build(
+        current_user,
+        "settings.oidc.update",
+        "settings",
+        "oidc",
+        {"fields": sorted(changes), "auth_mode": changes.get("auth_mode")},
+        request=request,
+    )
     try:
-        await oidc_settings.update_settings(session, body.model_dump(exclude_unset=True))
+        await oidc_settings.update_settings(session, changes, audit=trail)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from None
     return await _public_settings(session)
