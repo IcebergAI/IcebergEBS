@@ -6,9 +6,9 @@
 # because Dependabot's Docker parser reads `FROM` lines only — an image referenced
 # straight from a COPY is invisible to it, so the pin would silently never be updated.
 # Same layers, same image; do not "simplify" this back into the COPY form.
-FROM ghcr.io/astral-sh/uv:0.12.10 AS uv
+FROM ghcr.io/astral-sh/uv:0.13.8 AS uv
 
-FROM python:3.14-slim AS builder
+FROM python:3.15-slim AS builder
 
 COPY --from=uv /uv /bin/uv
 
@@ -38,7 +38,7 @@ RUN uv sync --frozen --no-dev
 # surface identical to what input.css declares. The version must match the
 # TAILWINDCSS_VERSION pin in the Makefile `css` target and the ci.yml lint job;
 # bumping it means refreshing the checksums below from the release's sha256sums.txt.
-FROM python:3.14-slim AS tailwind-builder
+FROM python:3.15-slim AS tailwind-builder
 
 ARG TARGETARCH
 RUN set -eux; \
@@ -60,7 +60,7 @@ COPY app/templates/ app/templates/
 RUN tailwindcss -i static/css/input.css -o static/css/output.css --minify
 
 
-FROM python:3.14-slim
+FROM python:3.15-slim
 
 WORKDIR /app
 
